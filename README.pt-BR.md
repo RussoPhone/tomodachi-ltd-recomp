@@ -151,7 +151,11 @@ Os ajustes que este projeto precisou fazer no suyu estão em [`patches/`](patche
 
 ## Estado do projeto
 
-🧪 **Experimental.** O jogo abre e roda com o código 100% nativo (sem JIT), com áudio e vídeo. Foram testados a abertura e o início do jogo. Pode haver bugs em partes que ainda não foram jogadas. Se encontrar algum, abra uma *issue* contando o que aconteceu.
+🧪 **Experimental — primeira versão pública.**
+
+- ✅ O jogo abre e roda com **código 100% nativo** (sem JIT), com áudio e vídeo. Foram testados a abertura e o início do jogo.
+- 🆕 O **instalador é novo**. Ele foi montado e conferido passo a passo na máquina do autor, e a execução completa numa máquina limpa ainda está sendo validada. Se algum passo falhar, abra uma [issue](https://github.com/RussoPhone/tomodachi-ltd-recomp/issues) e anexe o arquivo de log indicado pelo instalador (em `local/logs/`). **Nunca anexe suas chaves nem arquivos do jogo.**
+- 🐞 Pode haver bugs em partes do jogo que ainda não foram jogadas. Relate do mesmo jeito.
 
 ## Créditos e licença
 
