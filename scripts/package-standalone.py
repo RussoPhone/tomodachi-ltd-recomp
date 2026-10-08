@@ -153,6 +153,32 @@ def windows_tools():
     return glslang, qt
 
 
+def build_modules_clang_cl(src, build, exefs, mods, env, recomp_jobs):
+    """Windows: compile the generated modules with clang-cl (upstream's src/suyu_cmd/recomp_modules project).
+
+    Returns the folder of the resulting .lib files, for SUYU_CMD_RECOMP_PREBUILT_DIR."""
+    modules = [m for m in mods if (exefs / m / 'CMakeLists.txt').exists()]
+    out = build / 'recomp_clang'
+    meter = ROOT / 'scripts/compile-meter.py'
+    configure = ['cmake', '-G', 'Ninja', '-S', src / 'src/suyu_cmd/recomp_modules', '-B', out,
+                 '-DCMAKE_BUILD_TYPE=Release', '-DCMAKE_C_COMPILER=clang-cl',
+                 f'-DCMAKE_C_COMPILER_LAUNCHER={Path(sys.executable).as_posix()};{meter.as_posix()}',
+                 f'-DSUYU_CMD_RECOMP_DIR={exefs.as_posix()}', f'-DSUYU_RECOMP_MODULES={";".join(modules)}',
+                 f'-DRECOMP_JOBS={recomp_jobs}']
+    log = ROOT / 'artifacts/recomp-clang-configure.log'
+    with log.open('w') as f:
+        if subprocess.run([str(c) for c in configure], cwd=ROOT, env=env, stdout=f, stderr=subprocess.STDOUT).returncode:
+            sys.exit(f'clang-cl module project did not configure (see {log.relative_to(ROOT)})')
+    log = ROOT / 'artifacts/recomp-clang-build.log'
+    with log.open('w') as f:
+        for m in modules:
+            print(f'compiling module {m} with clang-cl', flush=True)
+            if subprocess.run(['cmake', '--build', str(out), '--target', f'recomp_static_{m}'], cwd=ROOT, env=env,
+                              stdout=f, stderr=subprocess.STDOUT).returncode:
+                sys.exit(f'module {m} did not compile (see {log.relative_to(ROOT)})')
+    return (out / 'lib').as_posix()
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('--hybrid', action='store_true', help='keep a JIT fallback (default: strict, no JIT)')
@@ -189,13 +215,14 @@ def main():
     if args.mem_budget_mb:
         env['COMPILE_MEM_BUDGET_MB'] = str(args.mem_budget_mb)
     meter = ROOT / 'scripts/compile-meter.py'
+    prebuilt = ''
     if plat.IS_WINDOWS:
-        # MSVC for suyu's C++ (as upstream), clang-cl for C: the generated game code compiles about twice as
-        # fast with it. Both use the MSVC ABI, so they link together.
+        # suyu is built with MSVC, as upstream does. CMake allows one C compiler per project, so the game's
+        # generated C is compiled with clang-cl in a project of its own and linked in as prebuilt libraries.
         glslang, qt = windows_tools()
-        toolchain = ['-DCMAKE_CXX_COMPILER=cl', '-DCMAKE_C_COMPILER=clang-cl',
-                     f'-DQt6_DIR={qt.as_posix()}', f'-DCMAKE_PREFIX_PATH={qt.as_posix()}',
-                     f'-DCMAKE_C_COMPILER_LAUNCHER={Path(sys.executable).as_posix()};{meter.as_posix()}']
+        toolchain = [f'-DQt6_DIR={qt.as_posix()}', f'-DCMAKE_PREFIX_PATH={qt.as_posix()}']
+        if exefs:
+            prebuilt = build_modules_clang_cl(src, build, exefs, mods, env, args.recomp_jobs)
     else:
         glslang = shutil.which('glslangValidator')
         toolchain = [*([f'-DCMAKE_PREFIX_PATH={deps}'] if deps.is_dir() else []),
@@ -208,7 +235,7 @@ def main():
                  f'-DSUYU_NO_JIT={"OFF" if args.hybrid else "ON"}',
                  f'-DSUYU_RECOMP_HYBRID={"ON" if args.hybrid else "OFF"}',
                  # Added later in the same tree: adding the game's modules only adds targets, the C++ is reused.
-                 *([f'-DSUYU_CMD_RECOMP_DIR={exefs.as_posix()}', '-DSUYU_CMD_RECOMP_PREBUILT_DIR='] if exefs else []),
+                 *([f'-DSUYU_CMD_RECOMP_DIR={exefs.as_posix()}', f'-DSUYU_CMD_RECOMP_PREBUILT_DIR={prebuilt}'] if exefs else []),
                  f'-DRECOMP_JOBS={args.recomp_jobs}']
     stage = 'backend' if args.backend_only else 'game'
     log = ROOT / f'artifacts/{name}-{stage}-configure.log'
