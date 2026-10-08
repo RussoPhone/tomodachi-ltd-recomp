@@ -31,7 +31,7 @@ def main():
         text = re.sub(rf'^{key}\\default=.*$', f'{key}\\\\default=false', text, flags=re.M)
         text, n = re.subn(rf'^{key}=.*$', f'{key}=true', text, flags=re.M)
         if not n:
-            text = text.replace('[Debugging]\n', f'[Debugging]\n{key}\\\\default=false\n{key}=true\n', 1)
+            text = text.replace('[Debugging]\n', f'[Debugging]\n{key}\\default=false\n{key}=true\n', 1)
     dump_ini.write_text(text)
 
     env = os.environ.copy()
