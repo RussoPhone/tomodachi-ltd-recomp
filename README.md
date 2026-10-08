@@ -125,6 +125,12 @@ Yes, but it will be slow, because compiling uses almost all the memory and CPU. 
 </details>
 
 <details>
+<summary><b>The compile step is very slow (KDE Plasma)</b></summary>
+
+KDE's file indexer (Baloo) tries to read the gigabytes of generated code and can take several GB of RAM, leaving less memory for compiling. Pause it while installing with `balooctl6 suspend`, and turn it back on afterwards with `balooctl6 resume`.
+</details>
+
+<details>
 <summary><b>Does it work on Windows?</b></summary>
 
 Not yet. A Windows build (`.exe`) is the project's next goal.
@@ -154,7 +160,8 @@ The fixes this project needed in suyu are in [`patches/`](patches/), each explai
 🧪 **Experimental — first public version.**
 
 - ✅ The game boots and runs with **100% native code** (no JIT), with audio and video. The opening and the start of the game have been tested.
-- 🆕 The **installer is brand new**. It was built and checked step by step on the author's machine, and a full run on a clean machine is still being validated. If a step fails for you, please open an [issue](https://github.com/RussoPhone/tomodachi-ltd-recomp/issues) and attach the log file the installer points to (in `local/logs/`). **Never attach your keys or game files.**
+- ✅ The **installer was tested end to end on a fresh clone**: all 10 steps passed and the resulting game started. It took about **2 hours** on a laptop with an Intel i5-13450HX and 16 GB of RAM (about 9 minutes for suyu, the rest compiling the game).
+- 🆕 It is still new, so it has only been run on that one machine. If a step fails for you, please open an [issue](https://github.com/RussoPhone/tomodachi-ltd-recomp/issues) and attach the log file the installer points to (in `local/logs/`). **Never attach your keys or game files.**
 - 🐞 There may be bugs in parts of the game nobody has played yet. Report them the same way.
 
 ## Credits and license
