@@ -155,12 +155,29 @@ def fetch():
 
 @step("Apply this project's fixes")
 def patches():
-    for patch in sorted((ROOT / 'patches').glob('*.patch')):
-        if subprocess.run(['git', '-C', SUYU, 'apply', '--reverse', '--check', patch], capture_output=True).returncode == 0:
-            say(f'   already applied: {patch.name}')
-            continue
-        run(['git', '-C', SUYU, 'apply', patch], f'patch-{patch.stem}.log')
-        say(f'   applied: {patch.name}')
+    import re
+    import tempfile
+    files = sorted({m for p in sorted((ROOT / 'patches').glob('*.patch'))
+                    for m in re.findall(r'^\+\+\+ b/(\S+)', p.read_text(), re.M)})
+    plist = sorted((ROOT / 'patches').glob('*.patch'))
+    # Build the expected result (pristine files + every patch, in order) in a scratch folder and compare:
+    # checking patches one by one cannot tell "applied" apart when two of them touch the same lines.
+    with tempfile.TemporaryDirectory() as tmp:
+        for f in files:
+            content = subprocess.run(['git', '-C', SUYU, 'show', f'HEAD:{f}'], capture_output=True).stdout
+            (Path(tmp) / f).parent.mkdir(parents=True, exist_ok=True)
+            (Path(tmp) / f).write_bytes(content)
+        for p in plist:
+            if subprocess.run(['git', 'apply', p], cwd=tmp, capture_output=True).returncode:
+                fail(f'{p.name} does not apply to the pinned suyu version.')
+        if all((Path(tmp) / f).read_bytes() == (SUYU / f).read_bytes() for f in files):
+            say(f'   all {len(plist)} fixes already applied')
+            return
+    # Not (fully) applied: start these files from the pinned version, then apply every fix in order.
+    run(['git', '-C', SUYU, 'checkout', '--', *files], 'patch-reset.log')
+    for p in plist:
+        run(['git', '-C', SUYU, 'apply', p], f'patch-{p.stem}.log')
+        say(f'   applied: {p.name}')
 
 
 def jobs():
