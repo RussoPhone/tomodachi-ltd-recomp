@@ -67,6 +67,17 @@ def estimated_mb(args):
     return max(300, int(size_mb * 95))  # heavy units peak at ~94 MB per MB of C (clang -O2)
 
 
+def available_mb():
+    with open('/proc/meminfo') as f:
+        for line in f:
+            if line.startswith('MemAvailable:'):
+                return int(line.split()[1]) // 1024
+    return 1 << 30
+
+
+RESERVE_MB = int(os.environ.get('COMPILE_MEM_RESERVE_MB', '2048'))  # keep the desktop alive
+
+
 class MemorySlot:
     """Cross-process admission control: {pid: mb} in a JSON file guarded by flock."""
 
@@ -90,7 +101,8 @@ class MemorySlot:
     def __enter__(self):
         me = str(os.getpid())
         def take(state):
-            if not state or sum(state.values()) + self.want <= self.budget:
+            fits = sum(state.values()) + self.want <= self.budget and available_mb() - self.want >= RESERVE_MB
+            if not state or fits:
                 state[me] = self.want
                 return True
             return False
@@ -122,8 +134,13 @@ if status != '\thit':
     budget = int(os.environ.get('COMPILE_MEM_BUDGET_MB', '0') or 0)
     if budget and unit != 'link' and '-c' in argv:
         state_dir = Path(os.environ.get('COMPILE_MEM_STATE', '/tmp/compile-meter-' + str(os.getuid())))
-        with MemorySlot(budget, estimated_mb(argv), state_dir):
-            rc = subprocess.call(argv)
+        for attempt in range(3):
+            with MemorySlot(budget, estimated_mb(argv), state_dir):
+                rc = subprocess.call(argv)
+            if rc != -9:  # SIGKILL: something reclaimed memory under pressure; wait and try again
+                break
+            status = f'{status}\tretry{attempt + 1}'
+            time.sleep(15)
     else:
         rc = subprocess.call(argv)
     if key and rc == 0:
