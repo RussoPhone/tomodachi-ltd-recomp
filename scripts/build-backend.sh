@@ -6,7 +6,7 @@ SRC="$LAB_ROOT/upstream/mk8-recomp/third_party/suyu"
 BUILD="$LAB_ROOT/upstream/mk8-recomp/build/${SUYU_BUILD_NAME:-suyu}"
 LOG_SUFFIX="${SUYU_BUILD_NAME:+-$SUYU_BUILD_NAME}"
 # Optional extra prefix for dependencies not installed system-wide (e.g. a locally extracted Qt Charts).
-EXTRA_PREFIX="${EXTRA_PREFIX:-$( [ -d "$LAB_ROOT/local/deps/usr" ] && echo "$LAB_ROOT/local/deps/usr" )}"
+EXTRA_PREFIX="${EXTRA_PREFIX:-$( [ -d "$LAB_ROOT/local/deps/usr" ] && echo "$LAB_ROOT/local/deps/usr" || true )}"
 mkdir -p "$LAB_ROOT/artifacts"
 cmake -S "$SRC" -B "$BUILD" -G Ninja \
  ${EXTRA_PREFIX:+-DCMAKE_PREFIX_PATH="$EXTRA_PREFIX"} -DCMAKE_BUILD_TYPE=Release -DENABLE_QT=ON -DYUZU_USE_BUNDLED_QT=OFF \
