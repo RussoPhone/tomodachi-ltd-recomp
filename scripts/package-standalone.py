@@ -182,6 +182,7 @@ def main():
     build = ROOT / f'upstream/mk8-recomp/build/{name}'
     src = ROOT / 'upstream/mk8-recomp/third_party/suyu'
     deps = ROOT / 'local/deps/usr'
+    (ROOT / 'artifacts').mkdir(exist_ok=True)
     env = os.environ.copy()
     env['COMPILE_METER_LOG'] = str(ROOT / f'artifacts/{name}-compile.tsv')
     env['COMPILE_OBJ_CACHE'] = str(ROOT / 'local/aot/objcache')
