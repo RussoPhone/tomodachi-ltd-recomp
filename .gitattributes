@@ -1,0 +1,6 @@
+# Keep the patches byte-exact (they must apply to LF sources) and the Windows scripts CRLF.
+* text=auto eol=lf
+*.patch -text
+*.bat text eol=crlf
+*.ps1 text eol=crlf
+*.svg text eol=lf

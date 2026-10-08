@@ -36,9 +36,10 @@ def main():
 
     env = os.environ.copy()
     env['LD_LIBRARY_PATH'] = str(ROOT / 'local/deps/usr/lib')
+    lab.portable_profile()
     log_path = ROOT / 'local/m2/dump-run.log'
     with log_path.open('w') as log:
-        proc = subprocess.Popen([str(lab.BIN / 'suyu-cmd'), '-c', str(dump_ini),
+        proc = subprocess.Popen([str(lab.tool('suyu-cmd')), '-c', str(dump_ini),
                                  '-g', config['dump_path']], cwd=ROOT / 'local/runtime', env=env,
                                 stdout=log, stderr=subprocess.STDOUT)
         try:

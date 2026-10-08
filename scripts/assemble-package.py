@@ -2,12 +2,12 @@
 """Assemble the final, self-contained game folder from the standalone executable and the local install.
 
 local/package/<target>/
-  <name>             the standalone executable (hardlink: no second copy of 2+ GB)
+  <name>[.exe]       the standalone executable (hardlink: no second copy of 2+ GB), plus its DLLs on Windows
   game/              exefs + romfs.bin + control metadata from local/install/<target> (hardlinks)
   user/              the game's own profile: config, saves, shader cache, logs; keys are never needed
-  run.sh             launcher with relative paths (the folder can be moved as a whole);
+  run.sh / run.bat   launcher with relative paths (the folder can be moved as a whole);
                      options: --scale 1|1.5|2|3|4 (internal resolution), --fullscreen
-  <name>.desktop     menu entry template (not installed automatically)
+  <name>.desktop     Linux menu entry template (not installed automatically)
   icon.jpg           the title's own icon, from its control data
   README.txt
 
@@ -25,6 +25,14 @@ import sys
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / 'scripts'))
 import lab  # noqa: E402
+import plat  # noqa: E402
+
+
+def link_or_copy(src, dst):
+    try:
+        os.link(src, dst)
+    except OSError:  # another drive, or a file system without hard links
+        shutil.copyfile(src, dst)
 
 
 def hardlink_tree(src, dst):
@@ -36,7 +44,7 @@ def hardlink_tree(src, dst):
             target.parent.mkdir(parents=True, exist_ok=True)
             if target.exists():
                 target.unlink()
-            os.link(path, target)
+            link_or_copy(path, target)
 
 
 SCALES = {'0.5': 1, '1': 3, '1.5': 5, '2': 6, '3': 7, '4': 8}  # Settings::ResolutionSetup values
@@ -78,13 +86,47 @@ def seed_shader_cache(pkg, title):
     return 'kept (already the largest)'
 
 
+def write_windows_launcher(pkg, name):
+    scales = '; '.join(f"'{k}' = {v}" for k, v in SCALES.items())
+    (pkg / 'run.ps1').write_text(f'''# Start the native build from this folder; the folder can be moved as a whole.
+#   run.bat [--scale 0.5|1|1.5|2|3|4] [--fullscreen]
+Set-Location -LiteralPath $PSScriptRoot
+$ini = 'user\\config\\sdl2-config.ini'
+$scales = @{{ {scales} }}
+$argv = $args  # switch blocks have their own $args
+$extra = @()
+for ($i = 0; $i -lt $argv.Count; $i++) {{
+  switch ($argv[$i]) {{
+    '--scale' {{
+      $value = $scales[[string]$argv[$i + 1]]
+      if ($null -eq $value) {{ Write-Host "unknown scale $($argv[$i + 1]) (use 0.5 1 1.5 2 3 4)"; exit 2 }}
+      if (Test-Path $ini) {{
+        $text = [IO.File]::ReadAllText($ini)
+        $text = $text -replace '(?m)^resolution_setup\\\\default=[^\\r\\n]*', 'resolution_setup\\default=false'
+        $text = $text -replace '(?m)^resolution_setup=[^\\r\\n]*', "resolution_setup=$value"
+        [IO.File]::WriteAllText($ini, $text)
+      }}
+      $i++
+    }}
+    '--fullscreen' {{ $extra += '-f' }}
+    default {{ $extra += $argv[$i] }}
+  }}
+}}
+& ".\\{name}.exe" @extra -g 'game\\main'
+exit $LASTEXITCODE
+''')
+    (pkg / 'run.bat').write_text(
+        '@echo off\r\nrem Start the game. Options: --fullscreen   --scale 2 (sharper image; 1, 1.5, 2, 3 or 4)\r\n'
+        'powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0run.ps1" %*\r\n', newline='')
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('--name', default=None)
     args = parser.parse_args()
     target = lab.target_name()
     name = args.name or f'{target}-native'
-    exe = ROOT / 'upstream/mk8-recomp/build/suyu-static/bin/suyu-cmd-static'
+    exe = ROOT / f'upstream/mk8-recomp/build/suyu-static/bin/suyu-cmd-static{plat.EXE}'
     install = ROOT / f'local/install/{target}/exefs'
     if not exe.exists():
         sys.exit('no standalone executable: run `switchpiler.py package` first')
@@ -93,17 +135,21 @@ def main():
     pkg = ROOT / f'local/package/{target}'
     pkg.mkdir(parents=True, exist_ok=True)
 
-    binary = pkg / name
+    binary = pkg / (name + plat.EXE)
     if binary.exists():
         binary.unlink()
-    os.link(exe, binary)
+    link_or_copy(exe, binary)
+    for dll in exe.parent.glob('*.dll'):  # Windows: SDL3, FFmpeg, OpenSSL, ... beside the .exe
+        if (pkg / dll.name).exists():
+            (pkg / dll.name).unlink()
+        link_or_copy(dll, pkg / dll.name)
     if (pkg / 'game').exists():
         shutil.rmtree(pkg / 'game')
     hardlink_tree(install, pkg / 'game')
     (pkg / 'user/config').mkdir(parents=True, exist_ok=True)
     # The export reads keys/firmware from the "installed suyu" this file names; naming the
     # executable itself makes that the package's own user/ (and a self-contained install needs neither).
-    (pkg / 'user/config/suyu-install.txt').write_text(f'../../{name}\n')
+    (pkg / 'user/config/suyu-install.txt').write_text(f'../../{name}{plat.EXE}\n')
 
     print('shader cache:', seed_shader_cache(pkg, lab.title_id(target)))
     set_ini(pkg / 'user/config/sdl2-config.ini', 'Renderer',
@@ -112,6 +158,8 @@ def main():
     icon = install / 'icon_AmericanEnglish.dat'
     if icon.exists():
         shutil.copyfile(icon, pkg / 'icon.jpg')
+    if plat.IS_WINDOWS:
+        write_windows_launcher(pkg, name)
     run = pkg / 'run.sh'
     scale_cases = '\n'.join(f'      {k}) set_res {v} ;;' for k, v in SCALES.items())
     run.write_text(f'''#!/bin/sh

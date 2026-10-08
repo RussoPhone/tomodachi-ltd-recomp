@@ -11,20 +11,29 @@ estimated peak (generated C needs ~100 MB of compiler heap per MB of source at a
 on this title) fits in the budget next to the compiles already running. Light units then run many at
 once and heavy ones alone, so the Ninja pool can be wide without the heavy region exhausting RAM.
 """
-import fcntl
 import hashlib
 import json
 import os
 from pathlib import Path
-import resource
 import shutil
 import subprocess
 import sys
+import tempfile
 import time
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import plat  # noqa: E402
+
+if plat.IS_WINDOWS:
+    import msvcrt
+else:
+    import fcntl
+    import resource
 
 argv = sys.argv[1:]
 unit = next((os.path.basename(a) for a in argv if a.endswith('.c')), 'link')
 cache_dir = os.environ.get('COMPILE_OBJ_CACHE')
+is_compile = unit != 'link' and ('-c' in argv or '/c' in argv)  # gcc/clang or clang-cl/cl
 
 
 def cache_key(args):
@@ -40,7 +49,9 @@ def cache_key(args):
         if arg in ('-o', '-MF', '-MT', '-MQ'):
             skip_next = True
             continue
-        if arg.startswith('-I'):
+        if arg.startswith(('/Fo', '-Fo', '/Fd', '-Fd')):  # clang-cl output paths
+            continue
+        if arg.startswith(('-I', '/I')):
             include_dirs.append(arg[2:].strip('"'))
             digest.update(b'-I\0')
             continue
@@ -61,25 +72,41 @@ def option(args, name):
     return args[args.index(name) + 1] if name in args else None
 
 
+def output_path(args):
+    out = option(args, '-o')
+    return out or next((a[3:] for a in args if a.startswith(('/Fo', '-Fo'))), None)
+
+
 def estimated_mb(args):
     sources = [a for a in args if a.endswith('.c') and not a.startswith('-')]
     size_mb = sum(os.path.getsize(s) for s in sources if os.path.exists(s)) / 2**20
     return max(300, int(size_mb * 95))  # heavy units peak at ~94 MB per MB of C (clang -O2)
 
 
-def available_mb():
-    with open('/proc/meminfo') as f:
-        for line in f:
-            if line.startswith('MemAvailable:'):
-                return int(line.split()[1]) // 1024
-    return 1 << 30
-
-
 RESERVE_MB = int(os.environ.get('COMPILE_MEM_RESERVE_MB', '2048'))  # keep the desktop alive
 
 
+def exclusive(f):
+    if not plat.IS_WINDOWS:
+        fcntl.flock(f, fcntl.LOCK_EX)
+        return
+    f.seek(0)
+    while True:
+        try:
+            msvcrt.locking(f.fileno(), msvcrt.LK_LOCK, 1)
+            return
+        except OSError:  # LK_LOCK gives up after ~10 s; keep waiting
+            pass
+
+
+def release(f):
+    if plat.IS_WINDOWS:
+        f.seek(0)
+        msvcrt.locking(f.fileno(), msvcrt.LK_UNLCK, 1)
+
+
 class MemorySlot:
-    """Cross-process admission control: {pid: mb} in a JSON file guarded by flock."""
+    """Cross-process admission control: {pid: mb} in a JSON file guarded by a file lock."""
 
     def __init__(self, budget_mb, want_mb, state_dir):
         self.budget, self.want = budget_mb, min(want_mb, budget_mb)
@@ -88,20 +115,24 @@ class MemorySlot:
 
     def _update(self, change):
         with open(self.lock_path, 'a+') as lock:
-            fcntl.flock(lock, fcntl.LOCK_EX)
+            exclusive(lock)
             try:
-                state = json.loads(self.state_path.read_text()) if self.state_path.exists() else {}
-            except ValueError:
-                state = {}
-            state = {pid: mb for pid, mb in state.items() if os.path.exists(f'/proc/{pid}')}
-            result = change(state)
-            self.state_path.write_text(json.dumps(state))
-            return result
+                try:
+                    state = json.loads(self.state_path.read_text()) if self.state_path.exists() else {}
+                except ValueError:
+                    state = {}
+                state = {pid: mb for pid, mb in state.items() if plat.pid_alive(pid)}
+                result = change(state)
+                self.state_path.write_text(json.dumps(state))
+                return result
+            finally:
+                release(lock)
 
     def __enter__(self):
         me = str(os.getpid())
         def take(state):
-            fits = sum(state.values()) + self.want <= self.budget and available_mb() - self.want >= RESERVE_MB
+            fits = (sum(state.values()) + self.want <= self.budget
+                    and plat.available_ram_mb() - self.want >= RESERVE_MB)
             if not state or fits:
                 state[me] = self.want
                 return True
@@ -117,10 +148,10 @@ class MemorySlot:
 start = time.monotonic()
 status = ''
 key = None
-if cache_dir and unit != 'link' and '-c' in argv:
+if cache_dir and is_compile:
     key, sources, include_dirs = cache_key(argv)
     cached = Path(cache_dir) / f'{key}.o'
-    output = option(argv, '-o')
+    output = output_path(argv)
     if cached.exists() and output:
         shutil.copyfile(cached, output)
         depfile = option(argv, '-MF')
@@ -132,12 +163,13 @@ if cache_dir and unit != 'link' and '-c' in argv:
         status = '\tmiss'
 if status != '\thit':
     budget = int(os.environ.get('COMPILE_MEM_BUDGET_MB', '0') or 0)
-    if budget and unit != 'link' and '-c' in argv:
-        state_dir = Path(os.environ.get('COMPILE_MEM_STATE', '/tmp/compile-meter-' + str(os.getuid())))
+    if budget and is_compile:
+        state_dir = Path(os.environ.get('COMPILE_MEM_STATE') or
+                         Path(tempfile.gettempdir()) / f'compile-meter-{os.environ.get("USERNAME") or os.getuid()}')
         for attempt in range(3):
             with MemorySlot(budget, estimated_mb(argv), state_dir):
                 rc = subprocess.call(argv)
-            if rc != -9:  # SIGKILL: something reclaimed memory under pressure; wait and try again
+            if plat.IS_WINDOWS or rc != -9:  # SIGKILL: something reclaimed memory under pressure; wait and try again
                 break
             status = f'{status}\tretry{attempt + 1}'
             time.sleep(15)
@@ -146,9 +178,9 @@ if status != '\thit':
     if key and rc == 0:
         Path(cache_dir).mkdir(parents=True, exist_ok=True)
         tmp = Path(cache_dir) / f'.{key}.{os.getpid()}'
-        shutil.copyfile(option(argv, '-o'), tmp)
+        shutil.copyfile(output_path(argv), tmp)
         os.replace(tmp, Path(cache_dir) / f'{key}.o')
-rss = resource.getrusage(resource.RUSAGE_CHILDREN).ru_maxrss
+rss = 0 if plat.IS_WINDOWS else resource.getrusage(resource.RUSAGE_CHILDREN).ru_maxrss
 with open(os.environ['COMPILE_METER_LOG'], 'a') as log:
     log.write(f'{unit}\t{time.monotonic() - start:.1f}\t{rss}\t{rc}{status}\n')
 sys.exit(rc)

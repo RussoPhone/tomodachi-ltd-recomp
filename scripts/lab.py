@@ -7,9 +7,25 @@ import json
 import os
 from pathlib import Path
 
+import plat
+
 ROOT = Path(__file__).resolve().parents[1]
 # Which suyu build tree provides the tools (the installer uses its single no-JIT tree, suyu-static).
 BIN = ROOT / 'upstream/mk8-recomp/build' / os.environ.get('SWITCHPILER_SUYU_BUILD', 'suyu') / 'bin'
+
+
+def tool(name):
+    """A suyu binary from the tools tree (suyu, suyu-cmd, ...), with .exe on Windows."""
+    return BIN / (name + plat.EXE)
+
+
+def portable_profile():
+    """Point suyu at the private profile local/runtime/user.
+
+    Linux suyu reads ./user from its working directory (the scripts run it from local/runtime);
+    Windows suyu reads <folder of the .exe>/user, so that folder becomes a junction to the profile."""
+    if plat.IS_WINDOWS:
+        plat.link_dir(BIN / 'user', ROOT / 'local/runtime/user')
 
 
 def runtime():

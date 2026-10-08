@@ -19,6 +19,9 @@ import subprocess
 import sys
 import time
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import plat  # noqa: E402
+
 ROOT = Path(__file__).resolve().parents[1]
 STATE = ROOT / 'local/state'
 UPSTREAM = ROOT / 'upstream/mk8-recomp'
@@ -27,6 +30,11 @@ TARGET = 'tomodachi'
 # One no-JIT suyu tree serves dump, export and the final executable (the C++ is compiled once).
 os.environ['SWITCHPILER_SUYU_BUILD'] = 'suyu-static'
 GREEN, YELLOW, RED, BOLD, RESET = '\033[32m', '\033[33m', '\033[31m', '\033[1m', '\033[0m'
+RERUN = 'install.bat' if plat.IS_WINDOWS else './install.sh'
+PLAY = 'play.bat' if plat.IS_WINDOWS else './play.sh'
+if plat.IS_WINDOWS:
+    os.system('')  # turns on ANSI colours in the classic Windows console
+    sys.stdout.reconfigure(encoding='utf-8')
 
 
 def say(text=''):
@@ -35,11 +43,13 @@ def say(text=''):
 
 def fail(text):
     say(f'\n{RED}{BOLD}✗ {text}{RESET}')
-    say('Fix the problem above and run ./install.sh again: it resumes where it stopped.')
+    say(f'Fix the problem above and run {RERUN} again: it resumes where it stopped.')
     sys.exit(1)
 
 
 def run(cmd, log, env=None, cwd=ROOT):
+    if cmd and cmd[0] == 'git':
+        env = plat.git_env(env)
     log = ROOT / 'local/logs' / log
     log.parent.mkdir(parents=True, exist_ok=True)
     with log.open('w') as out:
@@ -51,21 +61,29 @@ def run(cmd, log, env=None, cwd=ROOT):
 
 
 def ram_gb():
-    for line in open('/proc/meminfo'):
-        if line.startswith('MemTotal'):
-            return int(line.split()[1]) / 2**20
-    return 8
+    return plat.total_ram_mb() / 1024
 
 
 def swap_gb():
-    for line in open('/proc/meminfo'):
-        if line.startswith('SwapTotal'):
-            return int(line.split()[1]) / 2**20
-    return 0
+    return plat.swap_mb() / 1024
 
 
 def pick(kind, title):
     """Ask for a file or folder with a graphical dialog when available, otherwise in the terminal."""
+    if plat.IS_WINDOWS:
+        try:
+            import tkinter
+            from tkinter import filedialog
+            root = tkinter.Tk()
+            root.withdraw()
+            root.attributes('-topmost', True)
+            chosen = (filedialog.askdirectory(title=title) if kind == 'dir' else
+                      filedialog.askopenfilename(title=title, filetypes=[('Switch game', '*.nsp'), ('All files', '*')]))
+            root.destroy()
+            if chosen:
+                return chosen
+        except Exception:  # no Tk: fall back to typing the path
+            pass
     if shutil.which('zenity') and (os.environ.get('DISPLAY') or os.environ.get('WAYLAND_DISPLAY')):
         args = ['zenity', '--file-selection', f'--title={title}'] + (['--directory'] if kind == 'dir' else [])
         res = subprocess.run(args, capture_output=True, text=True)
@@ -84,8 +102,38 @@ def step(title):
     return deco
 
 
+def check_windows():
+    missing = [t for t in ('git', 'cmake', 'ninja', 'cl', 'clang-cl') if not shutil.which(t)]
+    try:
+        import cryptography  # noqa: F401
+    except ImportError:
+        missing.append('the Python package "cryptography"')
+    if missing:
+        fail('Missing software: ' + ', '.join(missing) + '.\n  Start the installer with install.bat: it installs these.')
+
+
 @step('Check this computer')
 def check():
+    if plat.IS_WINDOWS:
+        check_windows()
+    else:
+        check_linux()
+    mem, swap = ram_gb(), swap_gb()
+    free = shutil.disk_usage(ROOT).free / 2**30
+    say(f'   Memory: {mem:.0f} GB (+ {swap:.0f} GB {"page file" if plat.IS_WINDOWS else "swap"}) · Free space: {free:.0f} GB')
+    if CI:
+        return
+    if plat.IS_WINDOWS and mem < 15:
+        fail('Compiling the game needs at least 16 GB of RAM.')
+    if not plat.IS_WINDOWS and mem + swap < 24:
+        fail('Compiling the game needs at least 16 GB of RAM plus 8 GB of swap (24 GB combined).')
+    if free < 35:
+        fail(f'About 35 GB of free disk space is needed (you have {free:.0f} GB).')
+
+
+def check_linux():
+    if sys.platform != 'linux':
+        fail('This installer works on Linux and Windows.')
     missing = [t for t in ('git', 'cmake', 'ninja', 'clang', 'g++', 'glslangValidator') if not shutil.which(t)]
     try:
         import cryptography  # noqa: F401
@@ -101,15 +149,6 @@ def check():
         missing.append('ffmpeg')
     if missing:
         fail('Missing software: ' + ', '.join(missing) + '.\n  Install it with the command in "Step 1 — Prepare your computer" in the README.')
-    if sys.platform != 'linux':
-        fail('For now the installer only works on Linux.')
-    mem, swap = ram_gb(), swap_gb()
-    free = shutil.disk_usage(ROOT).free / 2**30
-    say(f'   Memory: {mem:.0f} GB (+ {swap:.0f} GB swap) · Free space: {free:.0f} GB')
-    if mem + swap < 24:
-        fail('Compiling the game needs at least 16 GB of RAM plus 8 GB of swap (24 GB combined).')
-    if free < 35:
-        fail(f'About 35 GB of free disk space is needed (you have {free:.0f} GB).')
 
 
 @step('Choose your game and your keys')
@@ -166,11 +205,12 @@ def patches():
     # checking patches one by one cannot tell "applied" apart when two of them touch the same lines.
     with tempfile.TemporaryDirectory() as tmp:
         for f in files:
-            content = subprocess.run(['git', '-C', SUYU, 'show', f'HEAD:{f}'], capture_output=True).stdout
+            content = subprocess.run(['git', '-C', SUYU, 'show', f'HEAD:{f}'], capture_output=True,
+                                     env=plat.git_env()).stdout
             (Path(tmp) / f).parent.mkdir(parents=True, exist_ok=True)
             (Path(tmp) / f).write_bytes(content)
         for p in plist:
-            if subprocess.run(['git', 'apply', p], cwd=tmp, capture_output=True).returncode:
+            if subprocess.run(['git', 'apply', p], cwd=tmp, capture_output=True, env=plat.git_env()).returncode:
                 fail(f'{p.name} does not apply to the pinned suyu version.')
         if all((Path(tmp) / f).read_bytes() == (SUYU / f).read_bytes() for f in files):
             say(f'   all {len(plist)} fixes already applied')
@@ -210,7 +250,7 @@ def dump():
 
 @step("Translate the game's code to C — a few seconds (a window opens and closes by itself)")
 def export():
-    if not (os.environ.get('DISPLAY') or os.environ.get('WAYLAND_DISPLAY')):
+    if not plat.IS_WINDOWS and not (os.environ.get('DISPLAY') or os.environ.get('WAYLAND_DISPLAY')):
         fail('This step needs your desktop session (run the installer from a terminal window, not over SSH).')
     unit = json.loads((ROOT / f'adapters/{TARGET}/target.json').read_text())['aot']['unit_insns']
     run([sys.executable, 'scripts/export-aot.py', '--backend', 'hybrid', '--unit-insns', str(unit)], 'export-aot.log')
@@ -232,6 +272,9 @@ def install():
 @step('Assemble the folder you play from')
 def bundle():
     run([sys.executable, 'scripts/assemble-package.py', '--name', 'tomodachi-native'], 'assemble-package.log')
+    if plat.IS_WINDOWS:
+        windows_shortcut()
+        return
     desktop = ROOT / 'local/package/tomodachi/tomodachi-native.desktop'
     apps = Path.home() / '.local/share/applications'
     if desktop.exists() and sys.stdin.isatty():
@@ -242,6 +285,25 @@ def bundle():
             say('   Shortcut added: look for "Tomodachi" in your menu.')
 
 
+def windows_shortcut():
+    pkg = ROOT / 'local/package/tomodachi'
+    if not sys.stdin.isatty():
+        return
+    answer = input('   Add a shortcut to your Start menu? [Y/n] ').strip().lower()
+    if answer not in ('', 'y', 'yes', 's', 'sim'):
+        return
+    link = Path(os.environ['APPDATA']) / 'Microsoft/Windows/Start Menu/Programs/Tomodachi Life (native).lnk'
+    script = ('$s = (New-Object -ComObject WScript.Shell).CreateShortcut($env:LNK); '
+              '$s.TargetPath = $env:EXE; $s.Arguments = \'-g "game\\main"\'; $s.WorkingDirectory = $env:PKG; $s.Save()')
+    env = dict(os.environ, LNK=str(link), EXE=str(pkg / 'tomodachi-native.exe'), PKG=str(pkg))
+    if subprocess.run(['powershell', '-NoProfile', '-Command', script], env=env).returncode == 0:
+        say('   Shortcut added: look for "Tomodachi" in your Start menu.')
+
+
+CI = '--ci' in sys.argv  # build check without a game: steps 1, 3, 4 and 5 only
+CI_STEPS = ('check', 'fetch', 'patches', 'backend')
+
+
 def main():
     STATE.mkdir(parents=True, exist_ok=True)
     say(f'{BOLD}Tomodachi Life: Living the Dream — native build installer{RESET}')
@@ -249,6 +311,9 @@ def main():
     started = time.time()
     for i, (key, title, fn) in enumerate(STEPS, 1):
         marker = STATE / f'{i:02d}-{key}.ok'
+        if CI and key not in CI_STEPS:
+            say(f'- {i}/{len(STEPS)} {title} (skipped: needs a game)')
+            continue
         if marker.exists():
             say(f'{GREEN}✓{RESET} {i}/{len(STEPS)} {title} (already done)')
             continue
@@ -258,12 +323,13 @@ def main():
         marker.write_text(time.strftime('%Y-%m-%d %H:%M:%S'))
         say(f'{GREEN}✓{RESET} done ({(time.time() - t0) / 60:.0f} min)\n')
     say(f'{GREEN}{BOLD}All done!{RESET} ({(time.time() - started) / 60:.0f} min this run)')
-    say('To play:  ./play.sh          (fullscreen: ./play.sh --fullscreen)')
+    if not CI:
+        say(f'To play:  {PLAY}          (fullscreen: {PLAY} --fullscreen)')
 
 
 if __name__ == '__main__':
     try:
         main()
     except KeyboardInterrupt:
-        say('\nInterrupted. Run ./install.sh again to continue where it stopped.')
+        say(f'\nInterrupted. Run {RERUN} again to continue where it stopped.')
         sys.exit(130)

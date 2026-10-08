@@ -24,6 +24,7 @@ import sys
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / 'scripts'))
 import lab  # noqa: E402
+import plat  # noqa: E402
 
 LOAD_ORDER = ['rtld', 'main'] + [f'subsdk{i}' for i in range(10)] + ['sdk']
 
@@ -117,6 +118,41 @@ def write_markers(root, features):
             path.unlink()
 
 
+GLSLANG_TAG = '16.5.0'  # same tools as upstream scripts/bootstrap.ps1
+GLSLANG_SHA256 = '06b71298b750268c127f2ee7ae0ef7525e2068120c6c8a3a08b2f58ca6f325ce'
+QT_VERSION = '6.9.3'
+
+
+def windows_tools():
+    """glslang and an MSVC build of Qt (with Charts), fetched once into local/tools like upstream does."""
+    import urllib.request
+    import zipfile
+    tools = ROOT / 'local/tools'
+    glslang = tools / 'glslang/bin/glslang.exe'
+    if not glslang.exists():
+        name = f'glslang-{GLSLANG_TAG}-windows-x86_64-release.zip'
+        archive = tools / name
+        tools.mkdir(parents=True, exist_ok=True)
+        print(f'downloading {name}', flush=True)
+        urllib.request.urlretrieve(
+            f'https://github.com/KhronosGroup/glslang/releases/download/{GLSLANG_TAG}/{name}', archive)
+        import hashlib
+        if hashlib.sha256(archive.read_bytes()).hexdigest() != GLSLANG_SHA256:
+            archive.unlink()
+            sys.exit(f'{name}: checksum mismatch, refusing to use it')
+        with zipfile.ZipFile(archive) as z:
+            z.extractall(tools / 'glslang')
+    qt = tools / f'Qt/{QT_VERSION}/msvc2022_64'
+    if not qt.exists():
+        pydeps = tools / 'pydeps'
+        subprocess.run([sys.executable, '-m', 'pip', 'install', '--quiet', '--target', str(pydeps), 'aqtinstall'],
+                       check=True)
+        env = dict(os.environ, PYTHONPATH=str(pydeps))
+        subprocess.run([sys.executable, '-m', 'aqt', 'install-qt', 'windows', 'desktop', QT_VERSION,
+                        'win64_msvc2022_64', '-m', 'qtcharts', '-O', str(tools / 'Qt')], check=True, env=env)
+    return glslang, qt
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('--hybrid', action='store_true', help='keep a JIT fallback (default: strict, no JIT)')
@@ -131,7 +167,9 @@ def main():
 
     exefs = None
     if not args.backend_only:
-        export = next((ROOT / 'local/aot' / lab.export_name()).glob('*.AppDir')) / 'usr/bin/aot_cache'
+        # <name>.AppDir/usr/bin/aot_cache on Linux; the Windows export uses another folder layout
+        export = next(p for p in (ROOT / 'local/aot' / lab.export_name()).rglob('aot_cache')
+                      if (p / 'aot_manifest.json').exists())
         manifest = json.loads((export / 'aot_manifest.json').read_text())
         exefs = export / 'exefs'
         mods = ordered([m['name'] for m in manifest['modules']])
@@ -149,18 +187,27 @@ def main():
     env['COMPILE_OBJ_CACHE'] = str(ROOT / 'local/aot/objcache')
     if args.mem_budget_mb:
         env['COMPILE_MEM_BUDGET_MB'] = str(args.mem_budget_mb)
-    configure = ['cmake', '-S', src, '-B', build, '-G', 'Ninja', '-DCMAKE_BUILD_TYPE=Release',
-                 *([f'-DCMAKE_PREFIX_PATH={deps}'] if deps.is_dir() else []),
+    meter = ROOT / 'scripts/compile-meter.py'
+    if plat.IS_WINDOWS:
+        # MSVC for suyu's C++ (as upstream), clang-cl for C: the generated game code compiles about twice as
+        # fast with it. Both use the MSVC ABI, so they link together.
+        glslang, qt = windows_tools()
+        toolchain = ['-DCMAKE_CXX_COMPILER=cl', '-DCMAKE_C_COMPILER=clang-cl',
+                     f'-DQt6_DIR={qt.as_posix()}', f'-DCMAKE_PREFIX_PATH={qt.as_posix()}',
+                     f'-DCMAKE_C_COMPILER_LAUNCHER={Path(sys.executable).as_posix()};{meter.as_posix()}']
+    else:
+        glslang = shutil.which('glslangValidator')
+        toolchain = [*([f'-DCMAKE_PREFIX_PATH={deps}'] if deps.is_dir() else []),
+                     f'-DCMAKE_C_COMPILER={shutil.which("clang")}', f'-DCMAKE_C_COMPILER_LAUNCHER={meter}']
+    configure = ['cmake', '-S', src, '-B', build, '-G', 'Ninja', '-DCMAKE_BUILD_TYPE=Release', *toolchain,
                  '-DENABLE_QT=ON', '-DYUZU_USE_BUNDLED_QT=OFF',
-                 f'-DGLSLANGVALIDATOR={shutil.which("glslangValidator")}', '-DYUZU_CMD=ON', '-DYUZU_TESTS=OFF',
+                 f'-DGLSLANGVALIDATOR={glslang}', '-DYUZU_CMD=ON', '-DYUZU_TESTS=OFF',
                  '-DENABLE_WEB_SERVICE=OFF', '-DYUZU_ROOM=OFF', '-DYUZU_ROOM_STANDALONE=OFF',
                  '-DENABLE_QT_TRANSLATION=OFF', '-DUSE_DISCORD_PRESENCE=OFF', '-Dfmt_FORCE_BUNDLED=ON',
                  f'-DSUYU_NO_JIT={"OFF" if args.hybrid else "ON"}',
                  f'-DSUYU_RECOMP_HYBRID={"ON" if args.hybrid else "OFF"}',
                  # Added later in the same tree: adding the game's modules only adds targets, the C++ is reused.
-                 *([f'-DSUYU_CMD_RECOMP_DIR={exefs}', '-DSUYU_CMD_RECOMP_PREBUILT_DIR='] if exefs else []),
-                 f'-DCMAKE_C_COMPILER={shutil.which("clang")}',
-                 f'-DCMAKE_C_COMPILER_LAUNCHER={ROOT / "scripts/compile-meter.py"}',
+                 *([f'-DSUYU_CMD_RECOMP_DIR={exefs.as_posix()}', '-DSUYU_CMD_RECOMP_PREBUILT_DIR='] if exefs else []),
                  f'-DRECOMP_JOBS={args.recomp_jobs}']
     stage = 'backend' if args.backend_only else 'game'
     log = ROOT / f'artifacts/{name}-{stage}-configure.log'
@@ -179,7 +226,7 @@ def main():
     if args.backend_only:
         print(f'build rc={rc}; tools in {(build / "bin").relative_to(ROOT)}')
         return rc
-    exe = build / 'bin/suyu-cmd-static'
+    exe = build / f'bin/suyu-cmd-static{plat.EXE}'
     print(f'build rc={rc}; executable: {exe if exe.exists() else "missing"}')
     return rc
 

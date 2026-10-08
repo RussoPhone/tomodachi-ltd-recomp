@@ -1,0 +1,31 @@
+# Checks the Windows installer path that needs no game: tools, download, patches and the suyu build (steps 1, 3, 4, 5).
+# No game file, key or firmware is ever used here.
+name: Windows build check
+
+on:
+  push:
+    branches: [main]
+    paths: ['scripts/**', 'patches/**', 'upstream.lock.json', 'install.bat', '.github/workflows/windows.yml']
+  workflow_dispatch:
+
+jobs:
+  build-tools:
+    runs-on: windows-2022
+    timeout-minutes: 350
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Installer, CI mode (no game)
+        shell: pwsh
+        run: ./scripts/windows/install.ps1 -CI
+      - name: Upload logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-logs
+          path: |
+            local/logs/
+            artifacts/*.log
+          if-no-files-found: ignore
