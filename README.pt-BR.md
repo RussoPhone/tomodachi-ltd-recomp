@@ -178,7 +178,8 @@ Os ajustes que este projeto precisou fazer no suyu estão em [`patches/`](patche
 
 🧪 **Experimental — primeira versão pública.**
 
-- ✅ O jogo abre e roda com **código 100% nativo** (sem JIT), com áudio e vídeo. Foram testados a abertura e o início do jogo.
+- ✅ **Todo o código do jogo roda como x86-64 nativo** (recompilação estática: sem emulação de CPU, sem JIT), num executável próprio que não precisa de `.nsp`, chaves nem firmware depois de instalado. Áudio e vídeo funcionam. Foram testados a abertura e o início do jogo.
+- ℹ️ O que ainda não é nativo: gráficos, áudio e serviços do sistema vêm das bibliotecas de runtime do suyu, embutidas no executável. A GPU do Switch ainda é emulada no nível de comandos; um renderizador nativo NVN → Vulkan está em desenvolvimento e vai chegar como opção experimental.
 - ✅ O **instalador foi testado do início ao fim num clone limpo**: os 10 passos passaram e o jogo gerado abriu. Levou cerca de **2 horas** num notebook com Intel i5-13450HX e 16 GB de RAM (uns 9 minutos para o suyu, o resto compilando o jogo).
 - 🆕 Ele ainda é novo e só rodou nessa máquina. Se algum passo falhar, abra uma [issue](https://github.com/RussoPhone/tomodachi-ltd-recomp/issues) e anexe o arquivo de log indicado pelo instalador (em `local/logs/`). **Nunca anexe suas chaves nem arquivos do jogo.**
 - 🐞 Pode haver bugs em partes do jogo que ainda não foram jogadas. Relate do mesmo jeito.
