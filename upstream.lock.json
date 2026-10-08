@@ -194,15 +194,5 @@
       "commit": "9d8ff37306f39c6a71cf998078cbe880ce5dc224",
       "state": "matched"
     }
-  ],
-  "local_dependencies": [
-    {
-      "name": "qt6-charts",
-      "version": "6.11.2-1",
-      "url": "https://fastly.mirror.pkgbuild.com/extra/os/x86_64/qt6-charts-6.11.2-1-x86_64.pkg.tar.zst",
-      "sha256": "e3bfccc66152780137df5a651150210928c95dcf3e761980289646bb3428b77b",
-      "signature_verified": true,
-      "signer_fingerprint": "1519D5ABA65BF6FC2B73C7567A4E76095D8A52E4"
-    }
   ]
 }
