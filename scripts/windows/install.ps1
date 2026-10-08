@@ -39,20 +39,62 @@ function Test-RealCommand ($Name) {
     return $true
 }
 
-function Install-Tool ($Id, $Probe, $Override, [switch]$Admin) {
+# winget is an "App Execution Alias" of the App Installer package: it can be installed and still be missing from
+# PATH (an elevated window, another user, an old PATH). Look in every place it can be.
+function Find-Winget {
+    $c = Get-Command winget -CommandType Application -ErrorAction SilentlyContinue | Select-Object -First 1
+    if ($c) { return $c.Source }
+    $alias = Join-Path $env:LOCALAPPDATA 'Microsoft\WindowsApps\winget.exe'
+    if (Test-Path -LiteralPath $alias) { return $alias }
+    foreach ($all in $false, $true) {
+        try {
+            $pkg = if ($all) { Get-AppxPackage -AllUsers Microsoft.DesktopAppInstaller -ErrorAction Stop }
+                   else { Get-AppxPackage Microsoft.DesktopAppInstaller -ErrorAction Stop }
+            foreach ($p in @($pkg)) {
+                $exe = Join-Path $p.InstallLocation 'winget.exe'
+                if (Test-Path -LiteralPath $exe) { return $exe }
+            }
+        } catch { }
+    }
+    $found = Get-ChildItem -Path (Join-Path $env:ProgramFiles 'WindowsApps\Microsoft.DesktopAppInstaller_*_x64__8wekyb3d8bbwe\winget.exe') `
+        -ErrorAction SilentlyContinue | Sort-Object FullName -Descending | Select-Object -First 1
+    if ($found) { return $found.FullName }
+    return $null
+}
+
+$script:Winget = $null
+function Get-Winget {
+    if (-not $script:Winget) { $script:Winget = Find-Winget }
+    if (-not $script:Winget) {
+        Fail (@(
+            'winget was not found, and some build tools are missing.'
+            '  - If winget works in a normal PowerShell window, run install.bat by double-clicking it'
+            '    (not "Run as administrator").'
+            '  - Otherwise update "App Installer" in the Microsoft Store, or install by hand:'
+            '    Git, CMake, Ninja, Python 3.12 (tick "Add to PATH"), LLVM, and Visual Studio 2022'
+            '    Build Tools with "Desktop development with C++". Then run install.bat again.'
+        ) -join "`n")
+    }
+    return $script:Winget
+}
+
+function Install-Tool ($Id, $Probe, $Override, [switch]$Admin, [string]$File) {
     if ($Probe -and (Test-RealCommand $Probe)) { return }
+    if ($File -and (Test-Path -LiteralPath $File)) { return }
+    $winget = Get-Winget
     Say "Installing $Id ..."
     $wargs = @('install', '--id', $Id, '--exact', '--source', 'winget', '--silent',
                '--accept-package-agreements', '--accept-source-agreements', '--disable-interactivity')
     if ($Override) { $wargs += @('--override', $Override) }
     if ($Admin) {
         # Visual Studio installs for the whole machine: Windows asks for permission once.
-        Start-Process winget -ArgumentList $wargs -Verb RunAs -Wait
+        Start-Process $winget -ArgumentList $wargs -Verb RunAs -Wait
     } else {
-        & winget @wargs | Out-Host
+        & $winget @wargs | Out-Host
     }
     Refresh-Path
-    if ($Probe -and -not (Test-RealCommand $Probe)) { Fail "$Id did not install. Install it by hand and run install.bat again." }
+    $ok = (-not $Probe -and -not $File) -or ($Probe -and (Test-RealCommand $Probe)) -or ($File -and (Test-Path -LiteralPath $File))
+    if (-not $ok) { Fail "$Id did not install. Install it by hand and run install.bat again." }
 }
 
 function Find-VcVars {
@@ -83,15 +125,12 @@ if ($Root.Length -gt 40) {
 }
 
 if (-not $CI) {
-    if (-not (Get-Command winget -ErrorAction SilentlyContinue)) {
-        Fail 'winget was not found. Install "App Installer" from the Microsoft Store (or update Windows), then run install.bat again.'
-    }
     Write-Host '> Preparing the build tools (only the first time; can take a while)' -ForegroundColor Yellow
     Install-Tool 'Git.Git' 'git'
     Install-Tool 'Kitware.CMake' 'cmake'
     Install-Tool 'Ninja-build.Ninja' 'ninja'
     Install-Tool 'Python.Python.3.12' 'python' '/quiet InstallAllUsers=0 PrependPath=1 Include_launcher=1 Include_tcltk=1'
-    Install-Tool 'LLVM.LLVM' $null
+    Install-Tool 'LLVM.LLVM' 'clang-cl' -File (Join-Path $env:ProgramFiles 'LLVM\bin\clang-cl.exe')
     if (-not (Find-VcVars)) {
         Say 'Installing Visual Studio 2022 Build Tools (several GB; Windows will ask for permission) ...'
         Install-Tool 'Microsoft.VisualStudio.2022.BuildTools' $null `
