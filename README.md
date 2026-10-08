@@ -25,7 +25,7 @@ This project **does not contain the game**. You bring **your own copy**, and the
 
 | | |
 |---|---|
-| 🖥️ **System** | Linux. Tested on **Arch Linux / EndeavourOS**. A Windows version is in development. |
+| 🖥️ **System** | **Linux**, tested on Arch Linux / EndeavourOS. **Windows 10/11**: experimental, see [Windows](#windows-experimental). |
 | 🧠 **Memory** | **16 GB of RAM** and at least **8 GB of swap** (virtual memory) |
 | 💾 **Free space** | **35 GB** |
 | 🎮 **Graphics card** | Any with **Vulkan** (recent NVIDIA, AMD or Intel) |
@@ -35,6 +35,8 @@ This project **does not contain the game**. You bring **your own copy**, and the
 > The game and the keys must be dumped from **your own** Switch with the tools made for that. This project does not provide them.
 
 ---
+
+> 🪟 **On Windows?** Skip to [Windows (experimental)](#windows-experimental). Steps 1 to 4 below are for Linux.
 
 ## Step 1 — Prepare your computer
 
@@ -99,6 +101,23 @@ Once installed, the game **no longer needs the `.nsp` or the keys**. Everything 
 
 ---
 
+## Windows (experimental)
+
+> [!NOTE]
+> The Windows installer is **new and not yet tested with the game on a real Windows PC**. An automatic check on GitHub builds the tools on Windows (steps 1–5 pass, about 45 minutes), but the full install still needs a first tester. If you try it, please open an [issue](https://github.com/RussoPhone/tomodachi-ltd-recomp/issues) with the result and the log from `local\logs\`. **Never attach your keys or game files.**
+
+1. Click the green **Code → Download ZIP** button here on GitHub.
+2. Extract it to a **short folder**, for example `C:\tomodachi`. Long paths can break the Windows build tools.
+3. Double-click **`install.bat`**.
+   - The first time, it installs the build tools with **winget**: Git, CMake, Ninja, Python, LLVM and the **Visual Studio 2022 Build Tools** (several GB). Windows asks for permission once.
+   - Then it does the same 10 steps as on Linux. A window asks for your **`.nsp`**, another for the **folder with your `prod.keys`**.
+   - It takes **2 to 4 hours**. If it stops, double-click `install.bat` again: it picks up where it left off.
+4. To play, open **Tomodachi Life (native)** from the Start menu, or double-click **`play.bat`**. The same options work: `play.bat --fullscreen`, `play.bat --scale 2`.
+
+You need the same as on Linux: 16 GB of RAM, about 35 GB of free space (plus ~10 GB for Visual Studio) and a Vulkan graphics card.
+
+---
+
 ## FAQ
 
 <details>
@@ -133,7 +152,7 @@ KDE's file indexer (Baloo) tries to read the gigabytes of generated code and can
 <details>
 <summary><b>Does it work on Windows?</b></summary>
 
-Not yet. A Windows build (`.exe`) is the project's next goal.
+Experimentally. See [Windows (experimental)](#windows-experimental). It builds the `.exe` on your own PC, like on Linux, and still needs its first full test with the game.
 </details>
 
 <details>
