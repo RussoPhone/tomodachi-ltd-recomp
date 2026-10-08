@@ -27,9 +27,9 @@
   },
   "aot": {
     "backend": "hybrid",
-    "unit_insns": 30000,
+    "unit_insns": 15000,
     "jobs": 2,
     "compiler": "clang",
-    "note": "unit_insns requires patch 0002; heavy units need ~6.5 GB of compiler RAM each"
+    "note": "unit_insns needs patch 0002; 15000 keeps the heaviest generated units near 3.3 GB of compiler RAM so several compile at once"
   }
 }

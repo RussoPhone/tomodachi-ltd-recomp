@@ -18,6 +18,8 @@ import sys
 import time
 
 ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT / 'scripts'))
+import lab  # noqa: E402
 sys.path.insert(0, str(ROOT / 'upstream/mk8-recomp/scripts'))
 from mcp import rpc  # noqa: E402
 
@@ -72,7 +74,7 @@ def main():
     env['XDG_CONFIG_HOME'] = str(ROOT / 'local/xdg-config')
     env['LD_LIBRARY_PATH'] = str(ROOT / 'local/deps/usr/lib') + (
         ':' + env['LD_LIBRARY_PATH'] if env.get('LD_LIBRARY_PATH') else '')
-    exe = ROOT / 'upstream/mk8-recomp/build/suyu/bin/suyu'
+    exe = lab.BIN / 'suyu'
     with gui_log.open('w') as log:
         gui = subprocess.Popen([str(exe), '-hacker'], cwd=ROOT / 'local/runtime', env=env,
                                stdout=log, stderr=subprocess.STDOUT)

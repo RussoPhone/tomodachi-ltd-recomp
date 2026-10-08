@@ -8,7 +8,8 @@ import os
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-BIN = ROOT / 'upstream/mk8-recomp/build/suyu/bin'
+# Which suyu build tree provides the tools (the installer uses its single no-JIT tree, suyu-static).
+BIN = ROOT / 'upstream/mk8-recomp/build' / os.environ.get('SWITCHPILER_SUYU_BUILD', 'suyu') / 'bin'
 
 
 def runtime():

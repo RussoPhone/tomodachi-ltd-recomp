@@ -123,18 +123,22 @@ def main():
     parser.add_argument('--jobs', type=int, default=4)
     parser.add_argument('--recomp-jobs', type=int, default=2, help='concurrent generated-C compiles (RAM-bound)')
     parser.add_argument('--configure-only', action='store_true')
+    parser.add_argument('--backend-only', action='store_true',
+                        help='build suyu + suyu-cmd in the same no-JIT tree (no game modules yet): the tools for dump/export')
     parser.add_argument('--mem-budget-mb', type=int, default=0,
                         help='memory-aware scheduling of generated-C compiles (use with a wide --recomp-jobs)')
     args = parser.parse_args()
 
-    export = next((ROOT / 'local/aot' / lab.export_name()).glob('*.AppDir')) / 'usr/bin/aot_cache'
-    manifest = json.loads((export / 'aot_manifest.json').read_text())
-    exefs = export / 'exefs'
-    mods = ordered([m['name'] for m in manifest['modules']])
-    features = manifest['image_features']
-    (exefs / 'recomp_registration.c').write_text(registration(mods, features))
-    write_markers(exefs, features)
-    print(f'registry: {", ".join(mods)} (ABI {manifest["image_abi"]}, features {features})')
+    exefs = None
+    if not args.backend_only:
+        export = next((ROOT / 'local/aot' / lab.export_name()).glob('*.AppDir')) / 'usr/bin/aot_cache'
+        manifest = json.loads((export / 'aot_manifest.json').read_text())
+        exefs = export / 'exefs'
+        mods = ordered([m['name'] for m in manifest['modules']])
+        features = manifest['image_features']
+        (exefs / 'recomp_registration.c').write_text(registration(mods, features))
+        write_markers(exefs, features)
+        print(f'registry: {", ".join(mods)} (ABI {manifest["image_abi"]}, features {features})')
 
     name = 'suyu-static' + ('-hybrid' if args.hybrid else '')
     build = ROOT / f'upstream/mk8-recomp/build/{name}'
@@ -153,11 +157,13 @@ def main():
                  '-DENABLE_QT_TRANSLATION=OFF', '-DUSE_DISCORD_PRESENCE=OFF', '-Dfmt_FORCE_BUNDLED=ON',
                  f'-DSUYU_NO_JIT={"OFF" if args.hybrid else "ON"}',
                  f'-DSUYU_RECOMP_HYBRID={"ON" if args.hybrid else "OFF"}',
-                 f'-DSUYU_CMD_RECOMP_DIR={exefs}', '-DSUYU_CMD_RECOMP_PREBUILT_DIR=',
+                 # Added later in the same tree: adding the game's modules only adds targets, the C++ is reused.
+                 *([f'-DSUYU_CMD_RECOMP_DIR={exefs}', '-DSUYU_CMD_RECOMP_PREBUILT_DIR='] if exefs else []),
                  f'-DCMAKE_C_COMPILER={shutil.which("clang")}',
                  f'-DCMAKE_C_COMPILER_LAUNCHER={ROOT / "scripts/compile-meter.py"}',
                  f'-DRECOMP_JOBS={args.recomp_jobs}']
-    log = ROOT / f'artifacts/{name}-configure.log'
+    stage = 'backend' if args.backend_only else 'game'
+    log = ROOT / f'artifacts/{name}-{stage}-configure.log'
     with log.open('w') as out:
         rc = subprocess.run([str(c) for c in configure], cwd=ROOT, env=env, stdout=out, stderr=subprocess.STDOUT).returncode
     if rc:
@@ -165,10 +171,14 @@ def main():
     if args.configure_only:
         print(f'configured {build.relative_to(ROOT)}')
         return 0
-    log = ROOT / f'artifacts/{name}-build.log'
+    targets = ['suyu', 'suyu-cmd'] if args.backend_only else ['suyu-cmd-static']
+    log = ROOT / f'artifacts/{name}-{stage}-build.log'
     with log.open('w') as out:
-        rc = subprocess.run(['cmake', '--build', str(build), '--target', 'suyu-cmd-static', '--', f'-j{args.jobs}'],
+        rc = subprocess.run(['cmake', '--build', str(build), '--target', *targets, '--', f'-j{args.jobs}'],
                             cwd=ROOT, env=env, stdout=out, stderr=subprocess.STDOUT).returncode
+    if args.backend_only:
+        print(f'build rc={rc}; tools in {(build / "bin").relative_to(ROOT)}')
+        return rc
     exe = build / 'bin/suyu-cmd-static'
     print(f'build rc={rc}; executable: {exe if exe.exists() else "missing"}')
     return rc

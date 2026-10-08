@@ -24,6 +24,8 @@ STATE = ROOT / 'local/state'
 UPSTREAM = ROOT / 'upstream/mk8-recomp'
 SUYU = UPSTREAM / 'third_party/suyu'
 TARGET = 'tomodachi'
+# One no-JIT suyu tree serves dump, export and the final executable (the C++ is compiled once).
+os.environ['SWITCHPILER_SUYU_BUILD'] = 'suyu-static'
 GREEN, YELLOW, RED, BOLD, RESET = '\033[32m', '\033[33m', '\033[31m', '\033[1m', '\033[0m'
 
 
@@ -184,10 +186,9 @@ def jobs():
     return max(1, min(os.cpu_count() or 1, int((ram_gb() - 3) / 1.5)))
 
 
-@step('Build the tools (suyu) — about 20 to 40 minutes')
+@step('Build the tools (suyu) — about 15 to 30 minutes')
 def backend():
-    env = {**os.environ, 'BUILD_JOBS': str(jobs())}
-    run(['bash', 'scripts/build-backend.sh'], 'build-backend.log', env=env)
+    run([sys.executable, 'scripts/package-standalone.py', '--backend-only', '--jobs', str(jobs())], 'build-backend.log')
 
 
 @step("Extract your game's code")
@@ -211,10 +212,11 @@ def dump():
 def export():
     if not (os.environ.get('DISPLAY') or os.environ.get('WAYLAND_DISPLAY')):
         fail('This step needs your desktop session (run the installer from a terminal window, not over SSH).')
-    run([sys.executable, 'scripts/export-aot.py', '--backend', 'hybrid', '--unit-insns', '30000'], 'export-aot.log')
+    unit = json.loads((ROOT / f'adapters/{TARGET}/target.json').read_text())['aot']['unit_insns']
+    run([sys.executable, 'scripts/export-aot.py', '--backend', 'hybrid', '--unit-insns', str(unit)], 'export-aot.log')
 
 
-@step('Compile the native game — the long part (1 to 3 hours)')
+@step('Compile the native game — the long part (about 1 to 2 hours)')
 def package():
     budget = int((ram_gb() - 3) * 1024)
     say(f'   Using up to {budget // 1024} GB of RAM to compile. You can leave the computer working.')

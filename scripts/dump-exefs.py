@@ -38,7 +38,7 @@ def main():
     env['LD_LIBRARY_PATH'] = str(ROOT / 'local/deps/usr/lib')
     log_path = ROOT / 'local/m2/dump-run.log'
     with log_path.open('w') as log:
-        proc = subprocess.Popen([str(ROOT / 'upstream/mk8-recomp/build/suyu/bin/suyu-cmd'), '-c', str(dump_ini),
+        proc = subprocess.Popen([str(lab.BIN / 'suyu-cmd'), '-c', str(dump_ini),
                                  '-g', config['dump_path']], cwd=ROOT / 'local/runtime', env=env,
                                 stdout=log, stderr=subprocess.STDOUT)
         try:
