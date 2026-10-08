@@ -1,0 +1,30 @@
+--- a/src/core/crypto/aes_util.cpp
++++ b/src/core/crypto/aes_util.cpp
+@@ -128,6 +128,16 @@
+     if (size == 0)
+         return;
+ 
++    // SWITCHPILER lab patch 0007: a cipher built from an all-zero (absent) key is left
++    // uninitialized on purpose (see the constructor), but callers can still reach here - e.g.
++    // Loader::IdentifyFile probing a non-NCA file as an NCA without keys, or an NCA whose key
++    // generation the keyset lacks. Its block size is then 0 and the modulo below divided by zero
++    // (SIGFPE). Produce zeros instead: the caller's magic/hash checks then reject the data cleanly.
++    if (EVP_CIPHER_CTX_get0_cipher(context) == nullptr) {
++        std::memset(dest, 0, size);
++        return;
++    }
++
+     // reset
+     ASSERT(EVP_CipherInit_ex(context, nullptr, nullptr, nullptr, nullptr, -1));
+ 
+@@ -177,6 +187,10 @@
+ 
+ template <typename Key>
+ void AESCipher<Key>::SetIV(std::span<const u8> data) {
++    // Lab patch 0007: nothing to set on a keyless (uninitialized) cipher.
++    if (EVP_CIPHER_CTX_get0_cipher(ctx->encryption_context) == nullptr) {
++        return;
++    }
+     const int ret_enc = EVP_CipherInit_ex(ctx->encryption_context, nullptr, nullptr, nullptr, data.data(), -1);
+     const int ret_dec = EVP_CipherInit_ex(ctx->decryption_context, nullptr, nullptr, nullptr, data.data(), -1);
+     ASSERT(ret_enc == 1 && ret_dec == 1 && "Failed to set IV on OpenSSL contexts");

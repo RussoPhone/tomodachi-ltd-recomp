@@ -1,0 +1,101 @@
+--- a/src/core/arm/recomp/arm_recomp.cpp
++++ b/src/core/arm/recomp/arm_recomp.cpp
+@@ -4,6 +4,8 @@
+ #include <algorithm>
+ #include <atomic>
+ #include <chrono>
++#include <cstdio>
++#include <cstdlib>
+ #include <cstdlib>
+ #include <cstring>
+ #include <filesystem>
+@@ -194,6 +196,49 @@
+ // Refuse the JIT entirely. Without this, "the JIT was never reached" is an
+ // observation about one run; with it, reaching the JIT is a loud, fatal failure
+ // that names the address, which is the difference between evidence and proof.
++// SWITCHPILER lab patch 0008: optional map of every PC the dispatcher enters, for measuring which
++// functions a title really reaches through indirect calls (e.g. the graphics driver's entry points).
++// SUYU_RECOMP_DISPATCH_MAP=<file> enables it; the set is a lock-free open-addressing table and is
++// rewritten as "<module base hex>\t<module name>" / "<pc hex>" lines every few seconds. Off by default.
++namespace DispatchMap {
++constexpr size_t kSlots = size_t{1} << 21;
++const char* const kPath = [] {
++    const char* e = std::getenv("SUYU_RECOMP_DISPATCH_MAP");
++    return (e && *e) ? e : nullptr;
++}();
++std::atomic<u64>* Table() {
++    static std::atomic<u64>* table = kPath ? new std::atomic<u64>[kSlots]() : nullptr;
++    return table;
++}
++void Dump();
++inline void Note(u64 pc) {
++    std::atomic<u64>* table = Table();
++    if (!table || pc == 0) {
++        return;
++    }
++    size_t i = static_cast<size_t>((pc >> 2) * 0x9E3779B97F4A7C15ULL >> 43) & (kSlots - 1);
++    for (size_t probe = 0; probe < 64; ++probe, i = (i + 1) & (kSlots - 1)) {
++        u64 cur = table[i].load(std::memory_order_relaxed);
++        if (cur == pc) {
++            break;
++        }
++        if (cur == 0 && table[i].compare_exchange_strong(cur, pc, std::memory_order_relaxed)) {
++            break;
++        }
++        if (cur == pc) {
++            break;
++        }
++    }
++    static std::atomic<s64> last{0};
++    const s64 now = std::chrono::duration_cast<std::chrono::seconds>(
++                        std::chrono::steady_clock::now().time_since_epoch()).count();
++    s64 prev = last.load(std::memory_order_relaxed);
++    if (now - prev >= 5 && last.compare_exchange_strong(prev, now)) {
++        Dump();
++    }
++}
++} // namespace DispatchMap
++
+ bool StrictNoFallback() {
+     const char* e = std::getenv("SUYU_RECOMP_STRICT");
+     return e && *e && *e != '0';
+@@ -1755,6 +1800,31 @@
+ #endif
+ }
+ 
++void DispatchMap::Dump() {
++    std::atomic<u64>* table = Table();
++    if (!table) {
++        return;
++    }
++    std::string text;
++    {
++        std::scoped_lock lk{g_counters.hist_lock};
++        for (const auto& [base, name] : g_counters.modules) {
++            text += fmt::format("module\t{:#x}\t{}\n", base, name);
++        }
++    }
++    for (size_t i = 0; i < kSlots; ++i) {
++        if (const u64 pc = table[i].load(std::memory_order_relaxed)) {
++            text += fmt::format("{:#x}\n", pc);
++        }
++    }
++    const std::string tmp = std::string{kPath} + ".tmp";
++    if (std::FILE* f = std::fopen(tmp.c_str(), "w")) {
++        std::fwrite(text.data(), 1, text.size(), f);
++        std::fclose(f);
++        std::rename(tmp.c_str(), kPath);
++    }
++}
++
+ HaltReason ArmRecomp::RunFallback(Kernel::KThread* thread) {
+ #ifdef SUYU_NO_JIT
+     // Unreachable: EnterFallback never succeeds in this build. Kept so the one
+@@ -1982,6 +2052,7 @@
+             LOG_INFO(Core_ARM, "Early static dispatch #{}: pc={:#x}", early_dispatch,
+                      impl->ctx.pc);
+         }
++        DispatchMap::Note(impl->ctx.pc);
+         RecompBlockFn block = impl->lookup(impl->ctx.pc);
+         if (first_run) {
+             LOG_INFO(Core_ARM, "First static lookup: pc={:#x}, covered={}", impl->ctx.pc,

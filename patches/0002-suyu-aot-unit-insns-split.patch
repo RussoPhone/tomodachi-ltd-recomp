@@ -1,0 +1,86 @@
+diff --git a/src/core/recompiler/arm64_to_c.h b/src/core/recompiler/arm64_to_c.h
+index 6999802..7b382a9 100644
+--- a/src/core/recompiler/arm64_to_c.h
++++ b/src/core/recompiler/arm64_to_c.h
+@@ -5101,8 +5101,34 @@ inline RecompileStats EmitProject(const std::string& mod, const u8* text, size_t
+     // up outright. Splitting keeps each unit to a sane size and lets the build
+     // compile them in parallel.
+     constexpr size_t kBlocksPerUnit = 20000;
+-    const size_t unit_count =
+-        blocks.empty() ? 1 : (blocks.size() + kBlocksPerUnit - 1) / kBlocksPerUnit;
++    // SWITCHPILER lab patch 0002: optionally also close a unit once it holds
++    // SUYU_AOT_UNIT_INSNS guest instructions. Block counts alone let a unit of
++    // unusually long blocks reach hundreds of megabytes of C, and the compiler
++    // needs roughly 100 MB of heap per MB of it at any optimisation level.
++    // Unset or 0 keeps the upstream layout exactly.
++    size_t insns_per_unit = 0;
++    if (const char* env = std::getenv("SUYU_AOT_UNIT_INSNS")) {
++        insns_per_unit = static_cast<size_t>(std::strtoull(env, nullptr, 10));
++    }
++    std::vector<size_t> unit_begin{0};
++    {
++        size_t in_unit = 0, insns = 0;
++        for (size_t i = 0; i < blocks.size(); ++i) {
++            if (in_unit == kBlocksPerUnit ||
++                (insns_per_unit != 0 && in_unit != 0 && insns + blocks[i].count > insns_per_unit)) {
++                unit_begin.push_back(i);
++                in_unit = 0;
++                insns = 0;
++            }
++            ++in_unit;
++            insns += blocks[i].count;
++        }
++        unit_begin.push_back(blocks.size());
++    }
++    const size_t unit_count = blocks.empty() ? 1 : unit_begin.size() - 1;
++    if (blocks.empty()) {
++        unit_begin.assign({0, 0});
++    }
+     // Written straight to disk rather than buffered. A whole module is over a
+     // gigabyte of C, and holding every unit in memory before writing meant the
+     // exporter needed that much RAM on top of the game's own data - enough that
+@@ -5131,8 +5157,7 @@ inline RecompileStats EmitProject(const std::string& mod, const u8* text, size_t
+         if (u == 0) units.back() << "int g_recomp_guard_host_v2=0;\n";
+         if (EmitGuardGen()) {
+             // GG1: this unit's blocks' seen words, one per block in unit order.
+-            const size_t in_unit =
+-                std::min<size_t>(kBlocksPerUnit, blocks.size() - std::min(blocks.size(), u * kBlocksPerUnit));
++            const size_t in_unit = unit_begin[u + 1] - unit_begin[u];
+             units.back() << "static uint32_t recomp_gg_seen[" << std::max<size_t>(in_unit, 1)
+                          << "];\n";
+         }
+@@ -5173,11 +5198,8 @@ inline RecompileStats EmitProject(const std::string& mod, const u8* text, size_t
+     // declarations and compile across every core with the bodies.
+     std::vector<u64> seg_hi(unit_count, 0);
+     const auto emit_seg = [&](size_t u) {
+-        const size_t lo = u * kBlocksPerUnit;
+-        size_t hi = lo + kBlocksPerUnit;
+-        if (hi > blocks.size()) {
+-            hi = blocks.size();
+-        }
++        const size_t lo = unit_begin[u];
++        const size_t hi = unit_begin[u + 1];
+         char line[160];
+         snprintf(line, sizeof line, "\nconst struct _recomp_ent _seg_%s_%zu[] = {\n", mod.c_str(),
+                  u);
+@@ -5221,7 +5243,10 @@ inline RecompileStats EmitProject(const std::string& mod, const u8* text, size_t
+ 
+     size_t cur_unit = 0;
+     for (const auto& b : blocks) {
+-        const size_t unit = block_index / kBlocksPerUnit;
++        size_t unit = cur_unit;
++        while (block_index >= unit_begin[unit + 1]) {
++            ++unit;
++        }
+         if (unit != cur_unit) {
+             emit_seg(cur_unit);
+             flush_unit(cur_unit, true);
+@@ -5252,7 +5277,7 @@ inline RecompileStats EmitProject(const std::string& mod, const u8* text, size_t
+             // GG1: the same check, skipped while this block's seen word (its
+             // slot of the unit's recomp_gg_seen) matches the module generation.
+             rcu += "};\n    RECOMP_GG_GUARD(_expected," +
+-                   std::to_string((block_index - 1) % kBlocksPerUnit) + "U);\n";
++                   std::to_string((block_index - 1) - unit_begin[unit]) + "U);\n";
+         } else {
+             rcu += "};\n    recomp_code_guard(c,g_module_base+" + std::to_string(b.vaddr) +
+                    "ULL,_expected," + std::to_string(b.count) + "U,g_recomp_guard_host_v2);\n";

@@ -1,0 +1,32 @@
+--- a/src/core/recompiler/arm64_to_c.h	2026-10-07 00:17:53.027615950 -0300
++++ b/src/core/recompiler/arm64_to_c.h	2026-10-07 00:17:53.029615979 -0300
+@@ -5110,8 +5110,28 @@
+     if (const char* env = std::getenv("SUYU_AOT_UNIT_INSNS")) {
+         insns_per_unit = static_cast<size_t>(std::strtoull(env, nullptr, 10));
+     }
++    // SWITCHPILER lab patch 0003: SUYU_AOT_UNIT_SPAN=N (bytes of guest address space) starts a new
++    // unit at every N-aligned window instead, so a block added or removed later changes only the
++    // unit of its own window and an object cache can reuse every other unit. Takes precedence over
++    // the block and instruction caps. The unit number is the window number (empty windows still
++    // get a tiny unit), because the number is part of the generated symbols: renumbering after a
++    // change elsewhere would make every later unit's text differ. Blocks are in address order.
++    u64 unit_span = 0;
++    if (const char* env = std::getenv("SUYU_AOT_UNIT_SPAN")) {
++        unit_span = static_cast<u64>(std::strtoull(env, nullptr, 0));
++    }
+     std::vector<size_t> unit_begin{0};
+-    {
++    if (unit_span != 0 && !blocks.empty()) {
++        const u64 windows = (blocks.back().vaddr - base) / unit_span + 1;
++        size_t i = 0;
++        for (u64 w = 1; w < windows; ++w) {
++            while (i < blocks.size() && (blocks[i].vaddr - base) / unit_span < w) {
++                ++i;
++            }
++            unit_begin.push_back(i);
++        }
++        unit_begin.push_back(blocks.size());
++    } else {
+         size_t in_unit = 0, insns = 0;
+         for (size_t i = 0; i < blocks.size(); ++i) {
+             if (in_unit == kBlocksPerUnit ||

@@ -1,0 +1,26 @@
+--- a/src/suyu_cmd/suyu.cpp
++++ b/src/suyu_cmd/suyu.cpp
+@@ -1732,7 +1732,22 @@
+     // still reports keys that are present but unusable, handled further down.
+     const std::filesystem::path suyu_exe =
+         installed_nand.empty() ? std::filesystem::path{} : RecordedSuyuExecutable(export_user_root);
+-    if (!installed_nand.empty()) {
++    // SWITCHPILER lab patch 0006: a self-contained install - exefs/main with main.npdm and a
++    // decrypted romfs.bin beside it - has nothing left to decrypt, so neither keys nor firmware
++    // are prerequisites. Everything else keeps the upstream checks.
++    bool self_contained = false;
++    {
++        std::error_code sc_ec;
++        const std::filesystem::path game{filepath};
++        const auto game_dir = game.parent_path();
++        self_contained = game.filename() == "main" &&
++                         std::filesystem::is_regular_file(game_dir / "main.npdm", sc_ec) &&
++                         std::filesystem::is_regular_file(game_dir / "romfs.bin", sc_ec);
++        if (self_contained) {
++            LOG_INFO(Frontend, "Self-contained decrypted install: keys and firmware not required");
++        }
++    }
++    if (!installed_nand.empty() && !self_contained) {
+         const auto keys_dir = Common::FS::GetSuyuPath(Common::FS::SuyuPath::KeysDir);
+         std::error_code keys_ec;
+         // The same two names KeyManager loads production keys from. There is no

@@ -1,0 +1,33 @@
+diff --git a/src/core/arm/debug.cpp b/src/core/arm/debug.cpp
+index 1a42742..9c42042 100644
+--- a/src/core/arm/debug.cpp
++++ b/src/core/arm/debug.cpp
+@@ -279,6 +279,28 @@ Loader::AppLoader::Modules FindModules(Kernel::KProcess* process) {
+ 
+             if (memory.ReadBlock(svc_mem_info.base_address + svc_mem_info.size, &module_path,
+                                  sizeof(module_path))) {
++                // SWITCHPILER lab patch 0004: newer SDKs start .rodata with a versioned module
++                // header instead - u32 version (1), u32 header size, two u32s, u32 name length,
++                // then the name ("nnrtld", "nnSdk", or the build path for main). Without this,
++                // no module is found, the AOT images never learn their bases and every PC
++                // misses into the JIT.
++                if (module_path.zero == 1) {
++                    struct {
++                        u32 version;
++                        u32 header_size;
++                        u32 unknown0;
++                        u32 unknown1;
++                        s32 path_length;
++                        std::array<char, PathLengthMax> path;
++                    } module_v1;
++                    if (memory.ReadBlock(svc_mem_info.base_address + svc_mem_info.size,
++                                         &module_v1, sizeof(module_v1)) &&
++                        module_v1.path_length > 0) {
++                        module_path.zero = 0;
++                        module_path.path_length = module_v1.path_length;
++                        module_path.path = module_v1.path;
++                    }
++                }
+                 if (module_path.zero == 0 && module_path.path_length > 0) {
+                     // Truncate module name.
+                     module_path.path[PathLengthMax - 1] = '\0';

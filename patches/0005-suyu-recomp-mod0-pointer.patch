@@ -1,0 +1,19 @@
+--- a/src/core/arm/recomp/arm_recomp.cpp
++++ b/src/core/arm/recomp/arm_recomp.cpp
+@@ -1255,7 +1255,15 @@
+         // (typically mod+0x2000 for rtld), but the actual location is pointed
+         // to by a 4-byte offset at mod+4 (per NSO ABI). Scan the first few KB.
+         u64 mod0_va = 0;
+-        for (u64 off = 0; off < 0x4000; off += 4) {
++        // SWITCHPILER lab patch 0005: follow the pointer at mod+4 first. Newer SDKs place
++        // MOD0 at the start of .rodata, tens of megabytes into main and sdk, far past the
++        // 16 KiB scan below; without it sdk's exports are never indexed and rtld's weak
++        // imports into sdk are written as 0, so rtld branches to address 0 at boot.
++        if (const u32 ptr = mem.Read32(mod_base + 4); ptr != 0 &&
++            mem.Read32(mod_base + ptr) == 0x30444F4Du) {
++            mod0_va = mod_base + ptr;
++        }
++        for (u64 off = 0; !mod0_va && off < 0x4000; off += 4) {
+             if (mem.Read32(mod_base + off) == 0x30444F4Du) {
+                 mod0_va = mod_base + off;
+                 break;

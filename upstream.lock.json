@@ -1,0 +1,208 @@
+{
+  "schema_version": 1,
+  "repository": "https://github.com/dougchansan/mk8-recomp.git",
+  "commit": "db36cf53606e67977a26d6758215dfc89fa24724",
+  "license": "GPL-3.0-or-later",
+  "submodules": [
+    {
+      "path": "third_party/suyu",
+      "commit": "5949cab3ba93233ddd1c319bfc6f010f6cfa910a",
+      "state": "matched"
+    },
+    {
+      "path": "third_party/suyu/externals/SDL",
+      "commit": "517a3d20e8cf52cbd7bc3b9ae48349017e87c095",
+      "state": "matched"
+    },
+    {
+      "path": "third_party/suyu/externals/SPIRV-Tools",
+      "commit": "60aa9839160112e44678d044485f3b2b0f0786b9",
+      "state": "matched"
+    },
+    {
+      "path": "third_party/suyu/externals/Vulkan-Headers",
+      "commit": "8a1e5840e7833a90b79c3fddb639f57c3772a641",
+      "state": "matched"
+    },
+    {
+      "path": "third_party/suyu/externals/Vulkan-Utility-Libraries",
+      "commit": "3e303cbe2bb165887c94d96498eef33b4309b5bd",
+      "state": "matched"
+    },
+    {
+      "path": "third_party/suyu/externals/VulkanMemoryAllocator",
+      "commit": "e722e57c891a8fbe3cc73ca56c19dd76be242759",
+      "state": "matched"
+    },
+    {
+      "path": "third_party/suyu/externals/breakpad",
+      "commit": "ff3487dcdfbc0de383362e2351ab0ad4ab5f511e",
+      "state": "matched"
+    },
+    {
+      "path": "third_party/suyu/externals/cpp-httplib",
+      "commit": "2de4c59bc20d2a81e3fb1fa0c859b259e8772b0d",
+      "state": "matched"
+    },
+    {
+      "path": "third_party/suyu/externals/cpp-jwt",
+      "commit": "7f24eb4c32145cf7520f5ebb45772e9b28217cff",
+      "state": "matched"
+    },
+    {
+      "path": "third_party/suyu/externals/cubeb",
+      "commit": "bed368eb0d901ec4b7921a8d704ca469b7fb4e19",
+      "state": "matched"
+    },
+    {
+      "path": "third_party/suyu/externals/cubeb/cmake/sanitizers-cmake",
+      "commit": "aab6948fa863bc1cbe5d0850bc46b9ef02ed4c1a",
+      "state": "matched"
+    },
+    {
+      "path": "third_party/suyu/externals/cubeb/googletest",
+      "commit": "40412d85124f7c6f3d88454583c4633e5e10fc8c",
+      "state": "matched"
+    },
+    {
+      "path": "third_party/suyu/externals/cubeb/src/cubeb-coreaudio-rs",
+      "commit": "2c5675cde871a07d1f456f47346386b02cc776b6",
+      "state": "matched"
+    },
+    {
+      "path": "third_party/suyu/externals/cubeb/src/cubeb-pulse-rs",
+      "commit": "a48302c91c7ba9d4dcc10c2a4287e18b0890f4c7",
+      "state": "matched"
+    },
+    {
+      "path": "third_party/suyu/externals/discord-rpc",
+      "commit": "b6086b0bf050c284619b6885942ea5cb7f3822b0",
+      "state": "matched"
+    },
+    {
+      "path": "third_party/suyu/externals/dynarmic",
+      "commit": "19249e8cbfb6e0d4c062bd7c4a111f55f220c211",
+      "state": "matched"
+    },
+    {
+      "path": "third_party/suyu/externals/enet",
+      "commit": "8be2368a8001f28db44e81d5939de5e613025023",
+      "state": "matched"
+    },
+    {
+      "path": "third_party/suyu/externals/ffmpeg/ffmpeg",
+      "commit": "9c1294eaddb88cb0e044c675ccae059a85fc9c6c",
+      "state": "matched"
+    },
+    {
+      "path": "third_party/suyu/externals/libadrenotools",
+      "commit": "5cd3f5c5ceea6d9e9d435ccdd922d9b99e55d10b",
+      "state": "matched"
+    },
+    {
+      "path": "third_party/suyu/externals/libadrenotools/lib/linkernsbypass",
+      "commit": "700fd357b912d6907ae3f9344ac2d8c4b48f262e",
+      "state": "matched"
+    },
+    {
+      "path": "third_party/suyu/externals/libusb/libusb",
+      "commit": "c060e9ce30ac2e3ffb49d94209c4dae77b6642f7",
+      "state": "matched"
+    },
+    {
+      "path": "third_party/suyu/externals/mbedtls",
+      "commit": "8c88150ca139e06aa2aae8349df8292a88148ea1",
+      "state": "matched"
+    },
+    {
+      "path": "third_party/suyu/externals/nx-optimizer",
+      "commit": "9f5b252939a631589619b9f41b51ffb0be474643",
+      "state": "matched"
+    },
+    {
+      "path": "third_party/suyu/externals/nx_tzdb/tzdb_to_nx",
+      "commit": "97929690234f2b4add36b33657fe3fe09bd57dfd",
+      "state": "matched"
+    },
+    {
+      "path": "third_party/suyu/externals/nx_tzdb/tzdb_to_nx/externals/tz/tz",
+      "commit": "16ce126a87c5f130cde8b8dce73b38952a19f085",
+      "state": "matched"
+    },
+    {
+      "path": "third_party/suyu/externals/nxapi",
+      "commit": "4888544f11e14b2d9220ec85d880f72cab57e9e3",
+      "state": "matched"
+    },
+    {
+      "path": "third_party/suyu/externals/nxdumptool",
+      "commit": "a7684c98cff0154ccf0b701e96115c1a06549d60",
+      "state": "matched"
+    },
+    {
+      "path": "third_party/suyu/externals/nxdumptool/libs/borealis",
+      "commit": "a4eaaf45824f1407b2a85e02d3ab8e47a83378e3",
+      "state": "matched"
+    },
+    {
+      "path": "third_party/suyu/externals/nxdumptool/libs/libnxtc",
+      "commit": "6b7f51770e46fe8d270a7af32d41480c8d5a92cb",
+      "state": "matched"
+    },
+    {
+      "path": "third_party/suyu/externals/nxdumptool/libs/libusbhsfs",
+      "commit": "1a17488663388e4fff6bdd0ee02fcf34244704ef",
+      "state": "matched"
+    },
+    {
+      "path": "third_party/suyu/externals/oaknut",
+      "commit": "9d091109deb445bc6e9289c6195a282b7c993d49",
+      "state": "matched"
+    },
+    {
+      "path": "third_party/suyu/externals/opus",
+      "commit": "101a71e03bbf860aaafb7090a0e440675cb27660",
+      "state": "matched"
+    },
+    {
+      "path": "third_party/suyu/externals/simpleini",
+      "commit": "382ddbb4b92c0b26aa1b32cefba2002119a5b1f2",
+      "state": "matched"
+    },
+    {
+      "path": "third_party/suyu/externals/sirit",
+      "commit": "8d028a3e8a4e43119e65285a98161e88a8293ac9",
+      "state": "matched"
+    },
+    {
+      "path": "third_party/suyu/externals/sirit/externals/SPIRV-Headers",
+      "commit": "c214f6f2d1a7253bb0e9f195c2dc5b0659dc99ef",
+      "state": "matched"
+    },
+    {
+      "path": "third_party/suyu/externals/unordered_dense",
+      "commit": "7b55cab8418da1603496462ce3ccdb4cb1dc3368",
+      "state": "matched"
+    },
+    {
+      "path": "third_party/suyu/externals/vcpkg",
+      "commit": "77df67cfff9c12ccfdb52284e07c87c75092f723",
+      "state": "matched"
+    },
+    {
+      "path": "third_party/suyu/externals/xbyak",
+      "commit": "9d8ff37306f39c6a71cf998078cbe880ce5dc224",
+      "state": "matched"
+    }
+  ],
+  "local_dependencies": [
+    {
+      "name": "qt6-charts",
+      "version": "6.11.2-1",
+      "url": "https://fastly.mirror.pkgbuild.com/extra/os/x86_64/qt6-charts-6.11.2-1-x86_64.pkg.tar.zst",
+      "sha256": "e3bfccc66152780137df5a651150210928c95dcf3e761980289646bb3428b77b",
+      "signature_verified": true,
+      "signer_fingerprint": "1519D5ABA65BF6FC2B73C7567A4E76095D8A52E4"
+    }
+  ]
+}

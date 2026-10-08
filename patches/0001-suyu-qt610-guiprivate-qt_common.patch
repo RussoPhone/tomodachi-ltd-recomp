@@ -1,0 +1,19 @@
+diff --git a/src/suyu/CMakeLists.txt b/src/suyu/CMakeLists.txt
+index 6da6d53..56567c8 100644
+--- a/src/suyu/CMakeLists.txt
++++ b/src/suyu/CMakeLists.txt
+@@ -448,6 +448,14 @@ target_link_libraries(suyu PRIVATE Vulkan::Headers)
+ if (NOT WIN32)
+     target_include_directories(suyu PRIVATE ${Qt${QT_MAJOR_VERSION}Gui_PRIVATE_INCLUDE_DIRS})
+ endif()
++# SWITCHPILER lab patch 0001: Qt >= 6.10 leaves Qt6Gui_PRIVATE_INCLUDE_DIRS empty when
++# GuiPrivate is found after Gui; give only qt_common.cpp the private QPA include dirs.
++# Keep only the versioned private dirs: the transitive set adds -isystem /usr/include,
++# which breaks libstdc++'s #include_next <stdlib.h>.
++if (UNIX AND NOT APPLE AND TARGET Qt6::GuiPrivate)
++    set_source_files_properties(qt_common.cpp PROPERTIES INCLUDE_DIRECTORIES
++        "$<FILTER:$<TARGET_PROPERTY:Qt6::GuiPrivate,INTERFACE_INCLUDE_DIRECTORIES>,INCLUDE,/Qt(Gui|Core)/[0-9]>")
++endif()
+ if (UNIX AND NOT APPLE)
+     target_link_libraries(suyu PRIVATE Qt${QT_MAJOR_VERSION}::DBus)
+ endif()

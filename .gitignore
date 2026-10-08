@@ -1,0 +1,6 @@
+# Tudo que é gerado a partir do SEU jogo fica fora do repositório.
+local/
+artifacts/
+upstream/
+__pycache__/
+*.pyc

@@ -1,0 +1,35 @@
+{
+  "schema_version": 1,
+  "name": "Tomodachi Life: Living the Dream",
+  "expected_title_id": "010051F0207B2000",
+  "supported_version": "1.0.0 (v0, sem update)",
+  "architecture": "AArch64",
+  "expected_modules": {
+    "rtld": {
+      "build_id": "1766344b3f61911645fcd17b22cb0f04139fe5ff000000000000000000000000",
+      "file_sha256": "2f99073e1bd3cd95b0c2de6dfe83b3beb34b88a5e4be94570925abcc469ae3e7"
+    },
+    "main": {
+      "build_id": "56bf85bd535413464cb75bb6c2683b6711e0bc0b000000000000000000000000",
+      "file_sha256": "753da2a73e19f350c3a117a84b862872079ca6bd53bee69ababf1e76f721a2f2"
+    },
+    "sdk": {
+      "build_id": "651781821e2c2e0b2bdfe905e8676f564190586a000000000000000000000000",
+      "file_sha256": "25cb36687a664e48f77fe8e8563ef13cc028336e621c6c8b396ee36f5199be64"
+    }
+  },
+  "content_requirements": {
+    "required_system_version": "21.1.0 (cnmt RequiredSystemVersion=1410334720)",
+    "key_generation_min": 18,
+    "nca_key_generation": "0x11",
+    "source": "v0 NSP cnmt.xml and NCA headers",
+    "confidence": "fact (parsed metadata)"
+  },
+  "aot": {
+    "backend": "hybrid",
+    "unit_insns": 30000,
+    "jobs": 2,
+    "compiler": "clang",
+    "note": "unit_insns requires patch 0002; heavy units need ~6.5 GB of compiler RAM each"
+  }
+}
