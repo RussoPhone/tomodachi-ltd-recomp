@@ -25,7 +25,7 @@
       <circle r="36" fill="none" stroke="#ef6f5e" stroke-width="10" stroke-dasharray="14 9"/>
       <circle r="16" fill="#ef6f5e"/>
     </g>
-    <text x="550" y="200" font-size="22" font-weight="800" fill="#173a5e">./instalar.sh</text>
+    <text x="550" y="200" font-size="22" font-weight="800" fill="#173a5e">./install.sh</text>
     <text x="550" y="230" font-size="16" fill="#4a6a86">traduz e compila no seu PC</text>
     <!-- arrow -->
     <line x1="700" y1="150" x2="770" y2="150" stroke="#9bb7cf" stroke-width="5" marker-end="url(#arrow)"/>
@@ -35,7 +35,7 @@
     <rect x="870" y="78" width="100" height="70" rx="10" fill="#e9f6ea" stroke="#4fae5d" stroke-width="3"/>
     <path d="M908 98 L908 128 L934 113 Z" fill="#4fae5d"/>
     <rect x="905" y="150" width="30" height="10" rx="3" fill="#4fae5d"/>
-    <text x="920" y="200" font-size="22" font-weight="800" fill="#173a5e">./jogar.sh</text>
+    <text x="920" y="200" font-size="22" font-weight="800" fill="#173a5e">./play.sh</text>
     <text x="920" y="230" font-size="16" fill="#4a6a86">nativo, sem emulador</text>
   </g>
 </svg>

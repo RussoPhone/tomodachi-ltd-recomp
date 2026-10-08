@@ -1,0 +1,58 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1280 420" width="1280" height="420" role="img" aria-labelledby="t d">
+  <title id="t">Tomodachi LTD Recomp</title>
+  <desc id="d">Original illustration: a small island with a house and speech bubbles, next to the project name.</desc>
+  <defs>
+    <linearGradient id="sky" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#7cc8f2"/>
+      <stop offset="1" stop-color="#c9ecff"/>
+    </linearGradient>
+    <linearGradient id="sea" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#4aa8de"/>
+      <stop offset="1" stop-color="#2f86c4"/>
+    </linearGradient>
+  </defs>
+  <rect width="1280" height="420" fill="url(#sky)"/>
+  <!-- clouds -->
+  <g fill="#ffffff" opacity="0.9">
+    <ellipse cx="180" cy="80" rx="70" ry="22"/><ellipse cx="225" cy="66" rx="42" ry="26"/>
+    <ellipse cx="1090" cy="60" rx="80" ry="20"/><ellipse cx="1050" cy="50" rx="40" ry="22"/>
+    <ellipse cx="760" cy="42" rx="52" ry="14"/>
+  </g>
+  <!-- sea -->
+  <rect y="300" width="1280" height="120" fill="url(#sea)"/>
+  <g stroke="#ffffff" stroke-width="3" stroke-linecap="round" opacity="0.5" fill="none">
+    <path d="M60 340 q20 -10 40 0 t40 0"/><path d="M1120 360 q20 -10 40 0 t40 0"/><path d="M880 390 q20 -10 40 0 t40 0"/>
+  </g>
+  <!-- island -->
+  <ellipse cx="300" cy="312" rx="230" ry="44" fill="#f5d98b"/>
+  <ellipse cx="300" cy="300" rx="200" ry="40" fill="#7bc96f"/>
+  <!-- tree -->
+  <rect x="130" y="210" width="16" height="80" rx="6" fill="#9a6b42"/>
+  <circle cx="138" cy="200" r="42" fill="#4fae5d"/><circle cx="110" cy="220" r="28" fill="#5cbc69"/><circle cx="168" cy="222" r="30" fill="#5cbc69"/>
+  <!-- house -->
+  <rect x="250" y="210" width="130" height="86" rx="10" fill="#fff6e6"/>
+  <path d="M236 216 L315 160 L394 216 Z" fill="#ef7d6e"/>
+  <rect x="300" y="246" width="30" height="50" rx="6" fill="#8fc4e8"/>
+  <rect x="266" y="232" width="24" height="22" rx="4" fill="#8fc4e8"/><rect x="342" y="232" width="24" height="22" rx="4" fill="#8fc4e8"/>
+  <!-- speech bubbles -->
+  <g>
+    <rect x="410" y="120" width="110" height="64" rx="22" fill="#ffffff"/>
+    <path d="M430 182 L424 206 L452 184 Z" fill="#ffffff"/>
+    <circle cx="442" cy="152" r="7" fill="#ef7d6e"/><circle cx="465" cy="152" r="7" fill="#f2b53a"/><circle cx="488" cy="152" r="7" fill="#4fae5d"/>
+    <rect x="186" y="96" width="92" height="56" rx="20" fill="#ffffff"/>
+    <path d="M226 150 L236 172 L246 150 Z" fill="#ffffff"/>
+    <path d="M216 124 c0 -10 14 -10 16 0 c2 -10 16 -10 16 0 c0 12 -16 20 -16 22 c0 -2 -16 -10 -16 -22 z" fill="#ef7d6e"/>
+  </g>
+  <!-- title -->
+  <g font-family="'Nunito','Trebuchet MS','Segoe UI',sans-serif" fill="#173a5e">
+    <text x="600" y="190" font-size="68" font-weight="800">Tomodachi LTD</text>
+    <text x="600" y="258" font-size="68" font-weight="800" fill="#ef6f5e">Recomp</text>
+    <text x="602" y="306" font-size="26" font-weight="600" fill="#1f4f7a">Native PC build · made from your own copy</text>
+  </g>
+  <g font-family="'Nunito','Trebuchet MS','Segoe UI',sans-serif" font-size="18" font-weight="700">
+    <rect x="602" y="330" width="270" height="36" rx="18" fill="#ffffff" opacity="0.92"/>
+    <text x="737" y="354" text-anchor="middle" fill="#2f86c4">educational · experimental</text>
+    <rect x="886" y="330" width="160" height="36" rx="18" fill="#ffffff" opacity="0.92"/>
+    <text x="966" y="354" text-anchor="middle" fill="#4fae5d">no emulator</text>
+  </g>
+</svg>

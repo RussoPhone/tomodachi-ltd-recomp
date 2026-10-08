@@ -1,161 +1,163 @@
 <p align="center">
-  <img src="docs/imagens/banner.svg" alt="Tomodachi LTD Recomp — versão nativa para PC" width="100%">
+  <img src="docs/images/banner.svg" alt="Tomodachi LTD Recomp — native PC build" width="100%">
 </p>
 
 # Tomodachi LTD Recomp
 
-Jogue **Tomodachi Life: Living the Dream** como um **programa nativo do seu PC**, sem rodar um emulador por trás.
+Play **Tomodachi Life: Living the Dream** as a **native program on your PC**, without an emulator running underneath.
 
-O projeto **não contém o jogo**. Você usa a **sua própria cópia**, e o instalador transforma o código dela, no seu computador, em um programa que roda direto no PC.
+This project **does not contain the game**. You bring **your own copy**, and the installer turns its code, on your own computer, into a program that runs directly on your PC.
+
+🇧🇷 [Leia em português](README.pt-BR.md)
 
 > [!WARNING]
-> **Projeto educacional e experimental.** Use só com uma cópia do jogo que **você comprou** e extraiu do **seu próprio Switch**.
-> Este projeto não tem ligação com a Nintendo, não distribui nenhum arquivo do jogo e não ajuda a obter jogos ou chaves por outros meios.
-> Leia o [aviso legal completo](LEGAL.md).
+> **Educational and experimental project.** Use it only with a copy of the game that **you bought** and dumped from **your own Switch**.
+> This project is not affiliated with Nintendo, does not distribute any game files, and does not help anyone obtain games or keys any other way.
+> Read the [full legal notice](LEGAL.md).
 
 <p align="center">
-  <img src="docs/imagens/como-funciona.svg" alt="1. Seu jogo e suas chaves → 2. ./instalar.sh → 3. ./jogar.sh" width="90%">
+  <img src="docs/images/how-it-works.svg" alt="1. Your game and keys → 2. ./install.sh → 3. ./play.sh" width="90%">
 </p>
 
 ---
 
-## O que você precisa
+## What you need
 
 | | |
 |---|---|
-| 🖥️ **Sistema** | Linux. Testado no **Arch Linux / EndeavourOS**. A versão para Windows ainda está em desenvolvimento. |
-| 🧠 **Memória** | **16 GB de RAM** e pelo menos **8 GB de swap** (memória virtual) |
-| 💾 **Espaço livre** | **35 GB** |
-| 🎮 **Placa de vídeo** | Qualquer uma com **Vulkan** (NVIDIA, AMD ou Intel recentes) |
-| 📦 **Seu jogo** | O arquivo **`.nsp`** do Tomodachi Life: Living the Dream, **versão 1.0.0, sem atualização** |
-| 🔑 **Suas chaves** | O arquivo **`prod.keys`** do seu console |
+| 🖥️ **System** | Linux. Tested on **Arch Linux / EndeavourOS**. A Windows version is in development. |
+| 🧠 **Memory** | **16 GB of RAM** and at least **8 GB of swap** (virtual memory) |
+| 💾 **Free space** | **35 GB** |
+| 🎮 **Graphics card** | Any with **Vulkan** (recent NVIDIA, AMD or Intel) |
+| 📦 **Your game** | The **`.nsp`** file of Tomodachi Life: Living the Dream, **version 1.0.0, without updates** |
+| 🔑 **Your keys** | The **`prod.keys`** file from your console |
 
-> O jogo e as chaves precisam ser extraídos do **seu** Switch, com ferramentas próprias para isso. Este projeto não fornece esses arquivos.
+> The game and the keys must be dumped from **your own** Switch with the tools made for that. This project does not provide them.
 
 ---
 
-## Passo 1 — Preparar o computador
+## Step 1 — Prepare your computer
 
-Abra o **Terminal**, cole o comando abaixo e aperte **Enter**. Ele vai pedir a sua senha:
+Open the **Terminal**, paste the command below and press **Enter**. It will ask for your password:
 
 ```bash
 sudo pacman -S --needed base-devel git cmake ninja clang python python-cryptography qt6-base qt6-svg qt6-5compat qt6-charts quazip-qt6 sdl3 ffmpeg opus zstd lz4 libusb openssl glslang nasm vulkan-icd-loader zenity
 ```
 
-Isso instala os programas usados para montar o jogo. Só precisa ser feito uma vez.
+This installs the programs used to build the game. You only need to do it once.
 
 ---
 
-## Passo 2 — Baixar este projeto
+## Step 2 — Download this project
 
-No mesmo Terminal:
+In the same Terminal:
 
 ```bash
 git clone https://github.com/RussoPhone/tomodachi-ltd-recomp.git
 cd tomodachi-ltd-recomp
 ```
 
-> Se preferir, clique no botão verde **Code → Download ZIP** aqui no GitHub, extraia a pasta e abra o Terminal dentro dela.
+> Prefer clicking? Use the green **Code → Download ZIP** button here on GitHub, extract the folder and open a Terminal inside it.
 
 ---
 
-## Passo 3 — Instalar
+## Step 3 — Install
 
 ```bash
-./instalar.sh
+./install.sh
 ```
 
-1. Uma janela pede o **arquivo do jogo (`.nsp`)**. Escolha e clique em OK.
-2. Outra janela pede a **pasta onde está o seu `prod.keys`**. Escolha e clique em OK.
-3. O instalador faz o resto sozinho e mostra o andamento em **10 passos**.
+1. A window asks for your **game file (`.nsp`)**. Pick it and click OK.
+2. Another window asks for **the folder that contains your `prod.keys`**. Pick it and click OK.
+3. The installer does the rest by itself and shows its progress in **10 steps**.
 
-⏱️ **Demora de 1 a 4 horas**, dependendo do computador. A maior parte é a compilação do jogo, e o PC vai ficar ocupado nesse tempo. Pode deixar rodando e voltar depois.
+⏱️ **It takes 1 to 4 hours**, depending on your computer. Most of that is compiling the game, and the PC will be busy meanwhile. You can leave it running and come back later.
 
-💡 **Precisou parar?** Feche o Terminal ou aperte `Ctrl+C`. Quando rodar `./instalar.sh` de novo, ele **continua de onde parou**.
+💡 **Need to stop?** Close the Terminal or press `Ctrl+C`. Next time you run `./install.sh` it **picks up where it left off**.
 
-Uma janela do emulador abre e fecha sozinha no passo 7. Isso é normal, não feche.
+During step 7 an emulator window opens and closes by itself. That is normal, don't close it.
 
-No final, ele pergunta se você quer um **atalho no menu de aplicativos**. Responda `S`.
+At the end it asks whether you want a **shortcut in your applications menu**. Answer `Y`.
 
 ---
 
-## Passo 4 — Jogar 🎉
+## Step 4 — Play 🎉
 
-Procure **Tomodachi** no menu de aplicativos, ou rode no Terminal:
+Look for **Tomodachi** in your applications menu, or run:
 
 ```bash
-./jogar.sh
+./play.sh
 ```
 
-| Para… | Use |
+| To… | Use |
 |---|---|
-| Tela cheia | `./jogar.sh --fullscreen` |
-| Imagem mais nítida | `./jogar.sh --scale 2` (pode ser `1`, `1.5`, `2`, `3` ou `4`) |
-| Configurar controles | Aperte **F12** dentro do jogo |
+| Play fullscreen | `./play.sh --fullscreen` |
+| Get a sharper image | `./play.sh --scale 2` (`1`, `1.5`, `2`, `3` or `4`) |
+| Set up controls | Press **F12** in the game |
 
-Depois de instalado, o jogo **não precisa mais do `.nsp` nem das chaves**. Tudo fica dentro da pasta do projeto.
-
----
-
-## Perguntas frequentes
-
-<details>
-<summary><b>Deu erro durante a instalação. E agora?</b></summary>
-
-O instalador mostra qual passo falhou e onde está o registro completo (pasta `local/logs/`). Os erros mais comuns:
-- **"Faltam programas"**: rode de novo o comando do Passo 1.
-- **"Versão diferente da suportada"**: seu jogo tem uma atualização ou é outra versão. Por enquanto só a 1.0.0 funciona.
-- **Falta de memória**: confira se você tem os 8 GB de swap. O instalador já limita o uso de RAM, mas abaixo disso não dá.
-
-Corrigiu? É só rodar `./instalar.sh` de novo.
-</details>
-
-<details>
-<summary><b>Onde ficam meus saves?</b></summary>
-
-Em `local/package/tomodachi/user/nand/user/save/`. Faça cópias dessa pasta de vez em quando.
-</details>
-
-<details>
-<summary><b>Posso usar o computador durante a instalação?</b></summary>
-
-Pode, mas ele vai estar lento, porque a compilação usa quase toda a memória e o processador. Evite atualizar o sistema (`pacman -Syu`) enquanto instala: trocar o compilador no meio obriga a compilar tudo de novo.
-</details>
-
-<details>
-<summary><b>Funciona no Windows?</b></summary>
-
-Ainda não. A versão para Windows (`.exe`) é o próximo objetivo do projeto.
-</details>
-
-<details>
-<summary><b>Como desinstalar?</b></summary>
-
-Apague a pasta `tomodachi-ltd-recomp` e o atalho em `~/.local/share/applications/tomodachi-native.desktop`.
-</details>
-
-<details>
-<summary><b>Como isso funciona por dentro?</b></summary>
-
-O jogo do Switch é feito para o processador ARM do console. O instalador:
-1. Lê o código do **seu** jogo e **traduz cada trecho para a linguagem C** (recompilação estática), usando o [mk8-recomp](https://github.com/dougchansan/mk8-recomp), baseado no suyu.
-2. **Compila** esse C para o processador do seu PC e junta tudo num executável próprio, **sem emulador de CPU**.
-3. Gráficos (Vulkan), áudio e serviços do sistema ficam a cargo das bibliotecas do suyu, compiladas nativamente junto com o jogo.
-
-Os ajustes que este projeto precisou fazer no suyu estão em [`patches/`](patches/), cada um com a explicação no próprio arquivo. O código C gerado é uma tradução da máquina. **Não é o código-fonte original do jogo.**
-</details>
+Once installed, the game **no longer needs the `.nsp` or the keys**. Everything lives inside the project folder.
 
 ---
 
-## Estado do projeto
+## FAQ
 
-🧪 **Experimental.** O jogo abre e roda com o código 100% nativo (sem JIT), com áudio e vídeo. Foram testados a abertura e o início do jogo. Pode haver bugs em partes que ainda não foram jogadas. Se encontrar algum, abra uma *issue* contando o que aconteceu.
+<details>
+<summary><b>The installation failed. What now?</b></summary>
 
-## Créditos e licença
+The installer tells you which step failed and where the full log is (the `local/logs/` folder). The most common causes:
+- **"Missing software"**: run the command from Step 1 again. The message lists exactly what is missing.
+- **"Different version than the supported one"**: your game has an update or is another version. Only 1.0.0 works for now.
+- **Out of memory**: make sure you have the 8 GB of swap. The installer already limits RAM use, but it cannot go below that.
 
-- [**mk8-recomp**](https://github.com/dougchansan/mk8-recomp) e o fork do **suyu**: o motor de recompilação e o ambiente de execução. O suyu é derivado do yuzu.
-- Este projeto: o instalador, os patches e o suporte ao Tomodachi Life: Living the Dream.
+Fixed it? Just run `./install.sh` again.
+</details>
 
-Licenciado sob a **GPL-3.0-or-later** (veja [`LICENSE`](LICENSE)), a mesma do suyu.
+<details>
+<summary><b>Where are my saves?</b></summary>
 
-*Tomodachi Life e Nintendo Switch são marcas registradas da Nintendo. Este projeto não tem relação com a Nintendo nem é endossado por ela.*
+In `local/package/tomodachi/user/nand/user/save/`. Back that folder up now and then.
+</details>
+
+<details>
+<summary><b>Can I use my computer while it installs?</b></summary>
+
+Yes, but it will be slow, because compiling uses almost all the memory and CPU. Avoid system updates (`pacman -Syu`) while installing: if the compiler changes in the middle, everything has to be compiled again.
+</details>
+
+<details>
+<summary><b>Does it work on Windows?</b></summary>
+
+Not yet. A Windows build (`.exe`) is the project's next goal.
+</details>
+
+<details>
+<summary><b>How do I uninstall it?</b></summary>
+
+Delete the `tomodachi-ltd-recomp` folder and the shortcut at `~/.local/share/applications/tomodachi-native.desktop`.
+</details>
+
+<details>
+<summary><b>How does it work under the hood?</b></summary>
+
+Switch games are built for the console's ARM processor. The installer:
+1. Reads the code of **your** game and **translates every piece of it into C** (static recompilation), using [mk8-recomp](https://github.com/dougchansan/mk8-recomp), which is based on suyu.
+2. **Compiles** that C for your PC's processor and links everything into one executable, **with no CPU emulator**.
+3. Graphics (Vulkan), audio and system services come from suyu's libraries, compiled natively together with the game.
+
+The fixes this project needed in suyu are in [`patches/`](patches/), each explained inside the file. The generated C is a machine translation. **It is not the game's original source code.**
+</details>
+
+---
+
+## Project status
+
+🧪 **Experimental.** The game boots and runs with 100% native code (no JIT), with audio and video. The opening and the start of the game have been tested. There may be bugs in parts nobody has played yet. If you find one, open an *issue* and describe what happened.
+
+## Credits and license
+
+- [**mk8-recomp**](https://github.com/dougchansan/mk8-recomp) and its **suyu** fork: the recompiler and runtime. suyu is derived from yuzu.
+- This project: the installer, the patches and the Tomodachi Life: Living the Dream support.
+
+Licensed under **GPL-3.0-or-later** (see [`LICENSE`](LICENSE)), the same as suyu.
+
+*Tomodachi Life and Nintendo Switch are trademarks of Nintendo. This project is not affiliated with or endorsed by Nintendo.*
