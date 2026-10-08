@@ -60,11 +60,21 @@ def pid_alive(pid):
     return os.path.exists(f'/proc/{pid}')
 
 
+def _is_junction(path):
+    """os.path.isjunction exists only from Python 3.12; read the reparse-point attribute instead."""
+    import stat
+    try:
+        st = os.lstat(path)
+    except OSError:
+        return False
+    return bool(getattr(st, 'st_file_attributes', 0) & stat.FILE_ATTRIBUTE_REPARSE_POINT) and not os.path.islink(path)
+
+
 def link_dir(link, target):
     """Make `link` point at the directory `target` (a junction on Windows: no admin rights needed)."""
     link, target = Path(link), Path(target)
     target.mkdir(parents=True, exist_ok=True)
-    junction = IS_WINDOWS and os.path.isjunction(link)  # Python 3.12+
+    junction = IS_WINDOWS and _is_junction(link)
     if link.is_symlink() or junction:
         if Path(os.path.realpath(link)) == target.resolve():
             return
