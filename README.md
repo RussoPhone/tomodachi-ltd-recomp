@@ -39,7 +39,7 @@ O projeto **não contém o jogo**. Você usa a **sua própria cópia**, e o inst
 Abra o **Terminal**, cole o comando abaixo e aperte **Enter**. Ele vai pedir a sua senha:
 
 ```bash
-sudo pacman -S --needed base-devel git cmake ninja clang python python-cryptography qt6-base qt6-svg qt6-5compat qt6-charts quazip-qt6 sdl3 ffmpeg opus zstd lz4 libusb openssl boost glslang nasm vulkan-icd-loader zenity
+sudo pacman -S --needed base-devel git cmake ninja clang python python-cryptography qt6-base qt6-svg qt6-5compat qt6-charts quazip-qt6 sdl3 ffmpeg opus zstd lz4 libusb openssl glslang nasm vulkan-icd-loader zenity
 ```
 
 Isso instala os programas usados para montar o jogo. Só precisa ser feito uma vez.

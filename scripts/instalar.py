@@ -89,8 +89,16 @@ def check():
         import cryptography  # noqa: F401
     except ImportError:
         missing.append('python-cryptography')
+    import glob
+    cmake_dirs = ['/usr/lib/cmake', '/usr/lib64/cmake', '/usr/lib/x86_64-linux-gnu/cmake', '/usr/local/lib/cmake']
+    for package, config in (('qt6-base', 'Qt6Widgets'), ('qt6-svg', 'Qt6Svg'), ('qt6-5compat', 'Qt6Core5Compat'),
+                            ('qt6-charts', 'Qt6Charts'), ('quazip-qt6', 'QuaZip-Qt6*'), ('sdl3', 'SDL3')):
+        if not any(glob.glob(f'{d}/{config}') for d in cmake_dirs):
+            missing.append(package)
+    if not any(glob.glob(f'{d}/libavcodec.so*') for d in ('/usr/lib', '/usr/lib64', '/usr/lib/x86_64-linux-gnu')):
+        missing.append('ffmpeg')
     if missing:
-        fail('Faltam programas: ' + ', '.join(missing) + '.\n  Instale com o comando da seção "1. Preparar o computador" do README.')
+        fail('Faltam programas: ' + ', '.join(missing) + '.\n  Instale com o comando do "Passo 1 — Preparar o computador" do README.')
     if sys.platform != 'linux':
         fail('Por enquanto o instalador funciona só no Linux.')
     mem, swap = ram_gb(), swap_gb()
