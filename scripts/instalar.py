@@ -141,7 +141,7 @@ def fetch():
         run(['git', 'clone', lock['repository'], UPSTREAM], 'git-clone.log')
     run(['git', '-C', UPSTREAM, 'checkout', '-q', lock['commit']], 'git-checkout.log')
     say('   Baixando os submódulos (pode levar alguns minutos)...')
-    run(['git', '-C', UPSTREAM, 'submodule', 'update', '--init', '--recursive'], 'git-submodules.log')
+    run(['git', '-C', UPSTREAM, 'submodule', 'update', '--init', '--recursive', '--jobs', '8'], 'git-submodules.log')
     run([sys.executable, 'scripts/verify-upstream.py'], 'verify-upstream.log')
 
 

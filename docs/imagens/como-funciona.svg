@@ -1,0 +1,41 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1100 300" width="1100" height="300" role="img" aria-labelledby="t d">
+  <title id="t">Como funciona</title>
+  <desc id="d">Três passos: 1, seu jogo e suas chaves; 2, o instalador traduz e compila no seu PC; 3, você joga, sem emulador.</desc>
+  <rect width="1100" height="300" rx="24" fill="#f4f9fd"/>
+  <defs>
+    <marker id="arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="8" markerHeight="8" orient="auto">
+      <path d="M0 0 L10 5 L0 10 Z" fill="#9bb7cf"/>
+    </marker>
+  </defs>
+  <g font-family="'Nunito','Trebuchet MS','Segoe UI',sans-serif" text-anchor="middle">
+    <!-- card 1 -->
+    <rect x="40" y="40" width="280" height="220" rx="20" fill="#ffffff" stroke="#dbe7f1" stroke-width="2"/>
+    <circle cx="80" cy="80" r="20" fill="#2f86c4"/><text x="80" y="88" font-size="22" font-weight="800" fill="#fff">1</text>
+    <rect x="135" y="80" width="90" height="70" rx="12" fill="#e8f2fb" stroke="#2f86c4" stroke-width="3"/>
+    <path d="M160 110 h40 M160 124 h28" stroke="#2f86c4" stroke-width="5" stroke-linecap="round"/>
+    <circle cx="236" cy="150" r="16" fill="#f2b53a"/><rect x="246" y="146" width="34" height="8" rx="4" fill="#f2b53a"/>
+    <text x="180" y="200" font-size="22" font-weight="800" fill="#173a5e">Seu jogo + suas chaves</text>
+    <text x="180" y="230" font-size="16" fill="#4a6a86">tirados do seu Switch</text>
+    <!-- arrow -->
+    <line x1="330" y1="150" x2="400" y2="150" stroke="#9bb7cf" stroke-width="5" marker-end="url(#arrow)"/>
+    <!-- card 2 -->
+    <rect x="410" y="40" width="280" height="220" rx="20" fill="#ffffff" stroke="#dbe7f1" stroke-width="2"/>
+    <circle cx="450" cy="80" r="20" fill="#ef6f5e"/><text x="450" y="88" font-size="22" font-weight="800" fill="#fff">2</text>
+    <g transform="translate(550 115)">
+      <circle r="36" fill="none" stroke="#ef6f5e" stroke-width="10" stroke-dasharray="14 9"/>
+      <circle r="16" fill="#ef6f5e"/>
+    </g>
+    <text x="550" y="200" font-size="22" font-weight="800" fill="#173a5e">./instalar.sh</text>
+    <text x="550" y="230" font-size="16" fill="#4a6a86">traduz e compila no seu PC</text>
+    <!-- arrow -->
+    <line x1="700" y1="150" x2="770" y2="150" stroke="#9bb7cf" stroke-width="5" marker-end="url(#arrow)"/>
+    <!-- card 3 -->
+    <rect x="780" y="40" width="280" height="220" rx="20" fill="#ffffff" stroke="#dbe7f1" stroke-width="2"/>
+    <circle cx="820" cy="80" r="20" fill="#4fae5d"/><text x="820" y="88" font-size="22" font-weight="800" fill="#fff">3</text>
+    <rect x="870" y="78" width="100" height="70" rx="10" fill="#e9f6ea" stroke="#4fae5d" stroke-width="3"/>
+    <path d="M908 98 L908 128 L934 113 Z" fill="#4fae5d"/>
+    <rect x="905" y="150" width="30" height="10" rx="3" fill="#4fae5d"/>
+    <text x="920" y="200" font-size="22" font-weight="800" fill="#173a5e">./jogar.sh</text>
+    <text x="920" y="230" font-size="16" fill="#4a6a86">nativo, sem emulador</text>
+  </g>
+</svg>
