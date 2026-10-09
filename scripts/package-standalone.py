@@ -26,6 +26,10 @@ sys.path.insert(0, str(ROOT / 'scripts'))
 import lab  # noqa: E402
 import plat  # noqa: E402
 
+# Native builds only: an MSYS2/Cygwin cmake earlier on PATH turns C:/... into a relative path.
+CMAKE = plat.native_tool('cmake')
+NINJA_ARGS = [f'-DCMAKE_MAKE_PROGRAM={Path(plat.native_tool("ninja")).as_posix()}'] if plat.IS_WINDOWS else []
+
 LOAD_ORDER = ['rtld', 'main'] + [f'subsdk{i}' for i in range(10)] + ['sdk']
 
 
@@ -160,7 +164,7 @@ def build_modules_clang_cl(src, build, exefs, mods, env, recomp_jobs):
     modules = [m for m in mods if (exefs / m / 'CMakeLists.txt').exists()]
     out = build / 'recomp_clang'
     meter = ROOT / 'scripts/compile-meter.py'
-    configure = ['cmake', '-G', 'Ninja', '-S', src / 'src/suyu_cmd/recomp_modules', '-B', out,
+    configure = [CMAKE, '-G', 'Ninja', *NINJA_ARGS, '-S', src / 'src/suyu_cmd/recomp_modules', '-B', out,
                  '-DCMAKE_BUILD_TYPE=Release', '-DCMAKE_C_COMPILER=clang-cl',
                  f'-DCMAKE_C_COMPILER_LAUNCHER={Path(sys.executable).as_posix()};{meter.as_posix()}',
                  f'-DSUYU_CMD_RECOMP_DIR={exefs.as_posix()}', f'-DSUYU_RECOMP_MODULES={";".join(modules)}',
@@ -173,7 +177,7 @@ def build_modules_clang_cl(src, build, exefs, mods, env, recomp_jobs):
     with log.open('w') as f:
         for m in modules:
             print(f'compiling module {m} with clang-cl', flush=True)
-            if subprocess.run(['cmake', '--build', str(out), '--target', f'recomp_static_{m}'], cwd=ROOT, env=env,
+            if subprocess.run([CMAKE, '--build', str(out), '--target', f'recomp_static_{m}'], cwd=ROOT, env=env,
                               stdout=f, stderr=subprocess.STDOUT).returncode:
                 sys.exit(f'module {m} did not compile (see {log.relative_to(ROOT)})')
     return (out / 'lib').as_posix()
@@ -227,7 +231,7 @@ def main():
         glslang = shutil.which('glslangValidator')
         toolchain = [*([f'-DCMAKE_PREFIX_PATH={deps}'] if deps.is_dir() else []),
                      f'-DCMAKE_C_COMPILER={shutil.which("clang")}', f'-DCMAKE_C_COMPILER_LAUNCHER={meter}']
-    configure = ['cmake', '-S', src, '-B', build, '-G', 'Ninja', '-DCMAKE_BUILD_TYPE=Release', *toolchain,
+    configure = [CMAKE, '-S', src, '-B', build, '-G', 'Ninja', *NINJA_ARGS, '-DCMAKE_BUILD_TYPE=Release', *toolchain,
                  '-DENABLE_QT=ON', '-DYUZU_USE_BUNDLED_QT=OFF',
                  f'-DGLSLANGVALIDATOR={glslang}', '-DYUZU_CMD=ON', '-DYUZU_TESTS=OFF',
                  '-DENABLE_WEB_SERVICE=OFF', '-DYUZU_ROOM=OFF', '-DYUZU_ROOM_STANDALONE=OFF',
@@ -249,7 +253,7 @@ def main():
     targets = ['suyu', 'suyu-cmd'] if args.backend_only else ['suyu-cmd-static']
     log = ROOT / f'artifacts/{name}-{stage}-build.log'
     with log.open('w') as out:
-        rc = subprocess.run(['cmake', '--build', str(build), '--target', *targets, '--', f'-j{args.jobs}'],
+        rc = subprocess.run([CMAKE, '--build', str(build), '--target', *targets, '--', f'-j{args.jobs}'],
                             cwd=ROOT, env=env, stdout=out, stderr=subprocess.STDOUT).returncode
     if args.backend_only:
         print(f'build rc={rc}; tools in {(build / "bin").relative_to(ROOT)}')

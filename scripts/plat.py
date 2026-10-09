@@ -89,6 +89,31 @@ def link_dir(link, target):
         link.symlink_to(target.resolve(), target_is_directory=True)
 
 
+def _posix_layer_dir(directory):
+    """MSYS2, Cygwin and Git-for-Windows "usr/bin" tools are POSIX builds: they take C:/... as a relative path."""
+    d = directory.replace('\\', '/').lower().rstrip('/')
+    return d.endswith('/usr/bin') or '/cygwin' in d or d.endswith('/msys64/bin')
+
+
+def native_tool(name):
+    """Full path of a native Windows build of `name` (cmake, ninja...), skipping POSIX-layer copies earlier on PATH.
+
+    On Linux this is just shutil.which. Returns `name` itself if nothing better is found, so callers keep working."""
+    import shutil
+    if not IS_WINDOWS:
+        return shutil.which(name) or name
+    for directory in os.environ.get('PATH', '').split(os.pathsep):
+        if not directory or _posix_layer_dir(directory):
+            continue
+        found = shutil.which(name, path=directory)
+        if found:
+            return found
+    for guess in (Path(os.environ.get('ProgramFiles', 'C:/Program Files')) / 'CMake/bin' / (name + EXE),):
+        if guess.exists():
+            return str(guess)
+    return name
+
+
 def git_env(base=None):
     """Environment for git: LF line endings (the patches are LF) and long paths on Windows."""
     env = dict(base if base is not None else os.environ)
