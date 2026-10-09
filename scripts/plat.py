@@ -92,7 +92,11 @@ def link_dir(link, target):
 def git_env(base=None):
     """Environment for git: LF line endings (the patches are LF) and long paths on Windows."""
     env = dict(base if base is not None else os.environ)
-    settings = [('core.autocrlf', 'false')] + ([('core.longpaths', 'true')] if IS_WINDOWS else [])
+    settings = [('core.autocrlf', 'false')]
+    if IS_WINDOWS:
+        # http.sslBackend=schannel (written globally by Git for Windows) breaks MSYS2/Cygwin builds of git, which
+        # only have OpenSSL; Git for Windows supports both, so OpenSSL works with either.
+        settings += [('core.longpaths', 'true'), ('http.sslBackend', 'openssl')]
     start = int(env.get('GIT_CONFIG_COUNT', '0') or 0)
     for i, (key, value) in enumerate(settings, start):
         env[f'GIT_CONFIG_KEY_{i}'], env[f'GIT_CONFIG_VALUE_{i}'] = key, value
