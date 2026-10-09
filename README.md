@@ -10,6 +10,11 @@ This project **does not contain the game**. You bring **your own copy**, and the
 
 🇧🇷 [Leia em português](README.pt-BR.md)
 
+> [!IMPORTANT]
+> **Looking for maintainers.** The original author has stepped back. The project works as described below, and
+> everything needed to continue it is documented: see [CONTRIBUTING.md](CONTRIBUTING.md) and [research/](research/).
+> Forks are welcome; to help maintain this repository, open an issue.
+
 > [!WARNING]
 > **Educational and experimental project.** Use it only with a copy of the game that **you bought** and dumped from **your own Switch**.
 > This project is not affiliated with Nintendo, does not distribute any game files, and does not help anyone obtain games or keys any other way.

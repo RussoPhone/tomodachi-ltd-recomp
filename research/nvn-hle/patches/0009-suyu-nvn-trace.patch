@@ -1,0 +1,329 @@
+SWITCHPILER lab patch 0009: NVN API trace (host hooks in the static dispatcher).
+
+Intercepts nvnBootstrapLoader and nvnDeviceGetProcAddress and hands the title a fake address per NVN
+entry point; each call comes back to the dispatcher, is counted (with its first argument registers)
+and continues at the driver's real function. Off unless SUYU_NVN_TRACE=<file> and
+SUYU_NVN_BOOTSTRAP=<module>:<offset> are set (Tomodachi Life v1.0.0: nnSdk:0x502d10).
+First step of answering NVN on the host (NVN -> Vulkan) instead of emulating the GPU's command stream.
+
+diff --git a/src/core/CMakeLists.txt b/src/core/CMakeLists.txt
+index 408daa6..43bb535 100644
+--- a/src/core/CMakeLists.txt
++++ b/src/core/CMakeLists.txt
+@@ -8,6 +8,8 @@ add_library(core STATIC
+     arm/arm_interface.cpp
+     arm/arm_interface.h
+     arm/recomp/arm_recomp.cpp
++    arm/recomp/nvn_trace.cpp
++    arm/recomp/nvn_trace.h
+     arm/recomp/arm_recomp.h
+     arm/recomp/recomp_gap_session.cpp
+     arm/recomp/recomp_gap_session.h
+diff --git a/src/core/arm/recomp/arm_recomp.cpp b/src/core/arm/recomp/arm_recomp.cpp
+index 7f3407c..3461026 100644
+--- a/src/core/arm/recomp/arm_recomp.cpp
++++ b/src/core/arm/recomp/arm_recomp.cpp
+@@ -22,6 +22,7 @@
+ #include "common/string_util.h"
+ #include "common/fs/path_util.h"
+ #include "core/arm/recomp/arm_recomp.h"
++#include "core/arm/recomp/nvn_trace.h"
+ #include "core/arm/recomp/guest_fp_env.h"
+ #include "core/arm/recomp/recomp_gap_session.h"
+ #include "core/arm/recomp/recomp_diagnostic_sampler.h"
+@@ -2046,6 +2047,24 @@ HaltReason ArmRecomp::RunThread(Kernel::KThread* thread) {
+             continue;
+         }
+ 
++        // SWITCHPILER lab patch 0009: NVN entry points answered or counted on the host (nvn_trace.h).
++        if (NvnTrace::Enabled()) {
++            static std::atomic<u64> nvn_bootstrap{0};
++            u64 boot = nvn_bootstrap.load(std::memory_order_relaxed);
++            if (!boot) {
++                std::scoped_lock lk{g_counters.hist_lock};
++                for (const auto& [base, name] : g_counters.modules) {
++                    if (name == NvnTrace::BootstrapModule()) {
++                        boot = base + NvnTrace::BootstrapOffset();
++                        nvn_bootstrap.store(boot, std::memory_order_relaxed);
++                    }
++                }
++            }
++            if (NvnTrace::Dispatch(impl->ctx.x, impl->ctx.pc, impl->system.ApplicationMemory(), boot)) {
++                continue;
++            }
++        }
++
+         static std::atomic<u64> early_dispatches{0};
+         const u64 early_dispatch = early_dispatches.fetch_add(1, std::memory_order_relaxed);
+         if (early_dispatch < 64) {
+diff --git a/src/core/arm/recomp/nvn_trace.cpp b/src/core/arm/recomp/nvn_trace.cpp
+new file mode 100644
+index 0000000..ec1ce5b
+--- /dev/null
++++ b/src/core/arm/recomp/nvn_trace.cpp
+@@ -0,0 +1,222 @@
++// SPDX-FileCopyrightText: 2026 SWITCHPILER
++// SPDX-License-Identifier: GPL-3.0-or-later
++
++#include "core/arm/recomp/nvn_trace.h"
++
++#include <array>
++#include <atomic>
++#include <chrono>
++#include <cstdio>
++#include <cstdlib>
++#include <cstring>
++#include <mutex>
++#include <string>
++#include <unordered_map>
++#include <vector>
++
++#include "core/memory.h"
++
++namespace NvnTrace {
++namespace {
++
++// Fake guest addresses: never mapped, below the unresolved-import trap (0xFFFF'FFFF'0000'0000).
++constexpr u64 kFakeBase = 0xFFFF'FFFE'0000'0000ULL;
++constexpr u64 kFakeGetProc = kFakeBase;              // our nvnDeviceGetProcAddress
++constexpr u64 kRetBootstrap = kFakeBase + 0x10;      // return trampolines
++constexpr u64 kRetGetProc = kFakeBase + 0x20;
++constexpr u64 kFirstEntry = kFakeBase + 0x1000;      // entry i at kFirstEntry + 4 * i
++constexpr size_t kMaxEntries = 4096;
++constexpr int kLoggedCalls = 3;
++
++const char* const kPath = [] {
++    const char* e = std::getenv("SUYU_NVN_TRACE");
++    return (e && *e) ? e : nullptr;
++}();
++
++std::string g_module;
++u64 g_offset = 0;
++const bool g_config = [] {
++    const char* e = std::getenv("SUYU_NVN_BOOTSTRAP");
++    if (!e || !*e) {
++        return false;
++    }
++    const char* colon = std::strchr(e, ':');
++    if (!colon) {
++        return false;
++    }
++    g_module.assign(e, colon);
++    g_offset = std::strtoull(colon + 1, nullptr, 0);
++    return true;
++}();
++
++struct Entry {
++    std::string name;
++    u64 real = 0;
++    std::atomic<u64> calls{0};
++    std::array<std::array<u64, 8>, kLoggedCalls> args{};
++};
++
++struct Pending {
++    u64 ret;
++    std::string name;
++};
++
++std::mutex g_lock;
++std::vector<Entry*> g_entries;                    // index = fake slot
++std::unordered_map<std::string, u32> g_by_name;
++std::unordered_map<u64, Pending> g_pending;       // guest SP at the call -> where to return
++std::atomic<u64> g_real_getproc{0};
++std::atomic<u64> g_bootstrap{0};
++
++u64 FakeFor(const std::string& name, u64 real) {
++    std::scoped_lock lk{g_lock};
++    if (auto it = g_by_name.find(name); it != g_by_name.end()) {
++        g_entries[it->second]->real = real;
++        return kFirstEntry + 4 * u64{it->second};
++    }
++    if (g_entries.size() >= kMaxEntries) {
++        return real;
++    }
++    auto* e = new Entry;
++    e->name = name;
++    e->real = real;
++    g_entries.push_back(e);
++    const u32 id = static_cast<u32>(g_entries.size() - 1);
++    g_by_name.emplace(name, id);
++    return kFirstEntry + 4 * u64{id};
++}
++
++void Dump() {
++    std::FILE* f = std::fopen(kPath, "w");
++    if (!f) {
++        return;
++    }
++    std::scoped_lock lk{g_lock};
++    const u64 boot = g_bootstrap.load();
++    std::fprintf(f, "# nvn trace: name\treal address\tdriver module offset (from nvnBootstrapLoader at %s+%#llx)\tcalls\n",
++                 g_module.c_str(), static_cast<unsigned long long>(g_offset));
++    for (const Entry* e : g_entries) {
++        const u64 calls = e->calls.load(std::memory_order_relaxed);
++        const u64 module_base = boot ? boot - g_offset : 0;
++        std::fprintf(f, "%s\t%#llx\t%#llx\t%llu\n", e->name.c_str(), static_cast<unsigned long long>(e->real),
++                     static_cast<unsigned long long>(e->real - module_base),
++                     static_cast<unsigned long long>(calls));
++        for (u64 i = 0; i < std::min<u64>(calls, kLoggedCalls); ++i) {
++            std::fprintf(f, "  args");
++            for (u64 a : e->args[i]) {
++                std::fprintf(f, " %#llx", static_cast<unsigned long long>(a));
++            }
++            std::fprintf(f, "\n");
++        }
++    }
++    std::fclose(f);
++}
++
++void MaybeDump() {
++    static std::atomic<s64> last{0};
++    const s64 now = std::chrono::duration_cast<std::chrono::seconds>(
++                        std::chrono::steady_clock::now().time_since_epoch())
++                        .count();
++    s64 prev = last.load(std::memory_order_relaxed);
++    if (now - prev >= 5 && last.compare_exchange_strong(prev, now)) {
++        Dump();
++    }
++}
++
++// Run `target` as if called from the original call site, but come back through `trampoline` first.
++void CallThrough(u64* x, u64& pc, u64 target, u64 trampoline, std::string name) {
++    {
++        std::scoped_lock lk{g_lock};
++        g_pending[x[31]] = Pending{x[30], std::move(name)};
++    }
++    x[30] = trampoline;
++    pc = target;
++}
++
++bool TakePending(u64 sp, Pending& out) {
++    std::scoped_lock lk{g_lock};
++    auto it = g_pending.find(sp);
++    if (it == g_pending.end()) {
++        return false;
++    }
++    out = std::move(it->second);
++    g_pending.erase(it);
++    return true;
++}
++
++} // namespace
++
++bool Enabled() {
++    return kPath != nullptr && g_config;
++}
++
++const char* BootstrapModule() {
++    return g_module.c_str();
++}
++
++u64 BootstrapOffset() {
++    return g_offset;
++}
++
++bool Dispatch(u64* x, u64& pc, Core::Memory::Memory& memory, u64 bootstrap) {
++    if (bootstrap) {
++        g_bootstrap.store(bootstrap, std::memory_order_relaxed);
++    }
++    if (pc >= kFirstEntry && pc < kFirstEntry + 4 * kMaxEntries) {
++        const size_t id = (pc - kFirstEntry) / 4;
++        Entry* e;
++        {
++            std::scoped_lock lk{g_lock};
++            if (id >= g_entries.size()) {
++                return false;
++            }
++            e = g_entries[id];
++        }
++        const u64 n = e->calls.fetch_add(1, std::memory_order_relaxed);
++        if (n < kLoggedCalls) {
++            for (size_t i = 0; i < 8; ++i) {
++                e->args[n][i] = x[i];
++            }
++        }
++        pc = e->real;  // tail call: x30 still returns to the title's call site
++        MaybeDump();
++        return true;
++    }
++    if (bootstrap && pc == bootstrap) {
++        // nvnBootstrapLoader(const char* name)
++        CallThrough(x, pc, bootstrap, kRetBootstrap, memory.ReadCString(x[0], 128));
++        return false;  // pc unchanged: run the real loader now, with x30 pointing at our trampoline
++    }
++    if (pc == kFakeGetProc) {
++        // nvnDeviceGetProcAddress(const NVNdevice*, const char* name)
++        const u64 real = g_real_getproc.load(std::memory_order_relaxed);
++        if (!real) {
++            x[0] = 0;
++            pc = x[30];
++            return true;
++        }
++        CallThrough(x, pc, real, kRetGetProc, memory.ReadCString(x[1], 128));
++        return true;
++    }
++    if (pc == kRetBootstrap || pc == kRetGetProc) {
++        Pending p;
++        if (!TakePending(x[31], p)) {
++            return false;
++        }
++        if (x[0] != 0) {
++            if (pc == kRetBootstrap && p.name == "nvnDeviceGetProcAddress") {
++                g_real_getproc.store(x[0], std::memory_order_relaxed);
++                FakeFor(p.name, x[0]);
++                x[0] = kFakeGetProc;
++            } else {
++                x[0] = FakeFor(p.name, x[0]);
++            }
++        }
++        pc = p.ret;
++        MaybeDump();
++        return true;
++    }
++    return false;
++}
++
++} // namespace NvnTrace
+diff --git a/src/core/arm/recomp/nvn_trace.h b/src/core/arm/recomp/nvn_trace.h
+new file mode 100644
+index 0000000..473814c
+--- /dev/null
++++ b/src/core/arm/recomp/nvn_trace.h
+@@ -0,0 +1,37 @@
++// SPDX-FileCopyrightText: 2026 SWITCHPILER
++// SPDX-License-Identifier: GPL-3.0-or-later
++
++#pragma once
++
++#include "common/common_types.h"
++
++namespace Core::Memory {
++class Memory;
++}
++
++// SWITCHPILER lab patch 0009: host-side interception of the NVN graphics API.
++//
++// A title gets every NVN entry point by name: nvnBootstrapLoader("nvnDeviceGetProcAddress"), then
++// nvnDeviceGetProcAddress(device, "nvnQueueSubmitCommands") and so on. Hooking those two hands the
++// host a reserved fake address for every entry point the title asks for; a call to one comes back
++// to the static dispatcher (an indirect branch out of a recompiled module always does), which
++// counts it and continues at the driver's real function, so behaviour is unchanged.
++//
++// SUYU_NVN_TRACE=<file>            enable; the file gets "name\tmodule+offset\tcalls" lines every few
++//                                  seconds, plus the first argument registers of each function
++// SUYU_NVN_BOOTSTRAP=<module>:<off> where nvnBootstrapLoader lives (e.g. "sdk:0x502d10")
++//
++// This is the measuring step towards answering NVN calls on the host directly (NVN -> Vulkan).
++namespace NvnTrace {
++
++bool Enabled();
++/// Module and module-relative offset of nvnBootstrapLoader, from SUYU_NVN_BOOTSTRAP.
++const char* BootstrapModule();
++u64 BootstrapOffset();
++
++/// Called by the dispatcher before looking up a block. `x` is the guest register file (x[31] = SP)
++/// and `bootstrap` the absolute address of nvnBootstrapLoader (0 while unknown). Returns true when
++/// it changed `pc` and the dispatcher should start over with the new PC.
++bool Dispatch(u64* x, u64& pc, Core::Memory::Memory& memory, u64 bootstrap);
++
++} // namespace NvnTrace

@@ -1,0 +1,1085 @@
+SWITCHPILER lab patch 0010: NVN calls followed on the host (stage 1, shadow model).
+
+Adds an observer interface to the NVN hooks of patch 0009 (before each call, and after it for the entry
+points whose result matters) and src/nvn_hle, which decodes every call into a host model of the title's
+pools, buffers, textures, samplers, programs and recorded command lists; state objects are read with the
+driver's own layout. Each 120 presented frames are summarised in SUYU_NVN_HLE_LOG. The driver still renders.
+Enable with SUYU_NVN_HLE=shadow and SUYU_NVN_BOOTSTRAP=nnSdk:0x502d10.
+
+diff --git a/src/CMakeLists.txt b/src/CMakeLists.txt
+index 3d98d9e..e34eff4 100644
+--- a/src/CMakeLists.txt
++++ b/src/CMakeLists.txt
+@@ -264,6 +264,7 @@ add_subdirectory(hid_core)
+ add_subdirectory(input_common)
+ add_subdirectory(frontend_common)
+ add_subdirectory(shader_recompiler)
++add_subdirectory(nvn_hle)
+ 
+ if (YUZU_TESTS)
+     add_subdirectory(tests)
+diff --git a/src/core/arm/recomp/arm_recomp.cpp b/src/core/arm/recomp/arm_recomp.cpp
+index 3461026..14ad8ab 100644
+--- a/src/core/arm/recomp/arm_recomp.cpp
++++ b/src/core/arm/recomp/arm_recomp.cpp
+@@ -2060,7 +2060,8 @@ HaltReason ArmRecomp::RunThread(Kernel::KThread* thread) {
+                     }
+                 }
+             }
+-            if (NvnTrace::Dispatch(impl->ctx.x, impl->ctx.pc, impl->system.ApplicationMemory(), boot)) {
++            if (NvnTrace::Dispatch(impl->ctx.x, impl->ctx.vreg, impl->ctx.pc, impl->system.ApplicationMemory(),
++                                   boot)) {
+                 continue;
+             }
+         }
+diff --git a/src/core/arm/recomp/nvn_trace.cpp b/src/core/arm/recomp/nvn_trace.cpp
+index ec1ce5b..941df44 100644
+--- a/src/core/arm/recomp/nvn_trace.cpp
++++ b/src/core/arm/recomp/nvn_trace.cpp
+@@ -24,6 +24,7 @@ constexpr u64 kFakeBase = 0xFFFF'FFFE'0000'0000ULL;
+ constexpr u64 kFakeGetProc = kFakeBase;              // our nvnDeviceGetProcAddress
+ constexpr u64 kRetBootstrap = kFakeBase + 0x10;      // return trampolines
+ constexpr u64 kRetGetProc = kFakeBase + 0x20;
++constexpr u64 kRetObserved = kFakeBase + 0x30;     // after an entry point whose result the observer wants
+ constexpr u64 kFirstEntry = kFakeBase + 0x1000;      // entry i at kFirstEntry + 4 * i
+ constexpr size_t kMaxEntries = 4096;
+ constexpr int kLoggedCalls = 3;
+@@ -52,6 +53,8 @@ const bool g_config = [] {
+ struct Entry {
+     std::string name;
+     u64 real = 0;
++    u32 id = 0;
++    bool wants_return = false;
+     std::atomic<u64> calls{0};
+     std::array<std::array<u64, 8>, kLoggedCalls> args{};
+ };
+@@ -59,8 +62,11 @@ struct Entry {
+ struct Pending {
+     u64 ret;
+     std::string name;
++    Entry* entry = nullptr;
+ };
+ 
++std::atomic<Observer*> g_observer{nullptr};
++
+ std::mutex g_lock;
+ std::vector<Entry*> g_entries;                    // index = fake slot
+ std::unordered_map<std::string, u32> g_by_name;
+@@ -80,13 +86,20 @@ u64 FakeFor(const std::string& name, u64 real) {
+     auto* e = new Entry;
+     e->name = name;
+     e->real = real;
++    e->id = static_cast<u32>(g_entries.size());
++    if (Observer* o = g_observer.load(std::memory_order_acquire)) {
++        e->wants_return = o->WantsReturn(e->name.c_str());
++    }
+     g_entries.push_back(e);
+-    const u32 id = static_cast<u32>(g_entries.size() - 1);
++    const u32 id = e->id;
+     g_by_name.emplace(name, id);
+     return kFirstEntry + 4 * u64{id};
+ }
+ 
+ void Dump() {
++    if (!kPath) {
++        return;
++    }
+     std::FILE* f = std::fopen(kPath, "w");
+     if (!f) {
+         return;
+@@ -124,10 +137,10 @@ void MaybeDump() {
+ }
+ 
+ // Run `target` as if called from the original call site, but come back through `trampoline` first.
+-void CallThrough(u64* x, u64& pc, u64 target, u64 trampoline, std::string name) {
++void CallThrough(u64* x, u64& pc, u64 target, u64 trampoline, std::string name, Entry* entry = nullptr) {
+     {
+         std::scoped_lock lk{g_lock};
+-        g_pending[x[31]] = Pending{x[30], std::move(name)};
++        g_pending[x[31]] = Pending{x[30], std::move(name), entry};
+     }
+     x[30] = trampoline;
+     pc = target;
+@@ -146,8 +159,12 @@ bool TakePending(u64 sp, Pending& out) {
+ 
+ } // namespace
+ 
++void SetObserver(Observer* observer) {
++    g_observer.store(observer, std::memory_order_release);
++}
++
+ bool Enabled() {
+-    return kPath != nullptr && g_config;
++    return (kPath != nullptr || g_observer.load(std::memory_order_relaxed) != nullptr) && g_config;
+ }
+ 
+ const char* BootstrapModule() {
+@@ -158,7 +175,7 @@ u64 BootstrapOffset() {
+     return g_offset;
+ }
+ 
+-bool Dispatch(u64* x, u64& pc, Core::Memory::Memory& memory, u64 bootstrap) {
++bool Dispatch(u64* x, const u64 (*v)[2], u64& pc, Core::Memory::Memory& memory, u64 bootstrap) {
+     if (bootstrap) {
+         g_bootstrap.store(bootstrap, std::memory_order_relaxed);
+     }
+@@ -178,7 +195,15 @@ bool Dispatch(u64* x, u64& pc, Core::Memory::Memory& memory, u64 bootstrap) {
+                 e->args[n][i] = x[i];
+             }
+         }
+-        pc = e->real;  // tail call: x30 still returns to the title's call site
++        Observer* observer = g_observer.load(std::memory_order_acquire);
++        if (observer) {
++            observer->OnCall(CallView{e->id, e->name.c_str(), x, v, memory});
++        }
++        if (observer && e->wants_return) {
++            CallThrough(x, pc, e->real, kRetObserved, {}, e);
++        } else {
++            pc = e->real;  // tail call: x30 still returns to the title's call site
++        }
+         MaybeDump();
+         return true;
+     }
+@@ -198,6 +223,17 @@ bool Dispatch(u64* x, u64& pc, Core::Memory::Memory& memory, u64 bootstrap) {
+         CallThrough(x, pc, real, kRetGetProc, memory.ReadCString(x[1], 128));
+         return true;
+     }
++    if (pc == kRetObserved) {
++        Pending p;
++        if (!TakePending(x[31], p)) {
++            return false;
++        }
++        if (Observer* observer = g_observer.load(std::memory_order_acquire); observer && p.entry) {
++            observer->OnReturn(CallView{p.entry->id, p.entry->name.c_str(), x, v, memory});
++        }
++        pc = p.ret;
++        return true;
++    }
+     if (pc == kRetBootstrap || pc == kRetGetProc) {
+         Pending p;
+         if (!TakePending(x[31], p)) {
+diff --git a/src/core/arm/recomp/nvn_trace.h b/src/core/arm/recomp/nvn_trace.h
+index 473814c..7112c44 100644
+--- a/src/core/arm/recomp/nvn_trace.h
++++ b/src/core/arm/recomp/nvn_trace.h
+@@ -24,6 +24,28 @@ class Memory;
+ // This is the measuring step towards answering NVN calls on the host directly (NVN -> Vulkan).
+ namespace NvnTrace {
+ 
++/// A host component that follows (and later answers) the title's NVN calls. Callbacks run on the
++/// guest thread that made the call, before the driver's function (OnCall) and, for the entry points
++/// it asks for, after it returns (OnReturn, with the result in x[0]).
++struct CallView {
++    u32 id;               // stable per name for this process
++    const char* name;     // "nvnCommandBufferDrawElementsBaseVertex"
++    u64* x;               // x0..x30, x[31] = SP; arguments in x0..x7
++    const u64 (*v)[2];    // SIMD registers: float arguments in v[0..7][0] (low 32 bits)
++    Core::Memory::Memory& memory;
++};
++class Observer {
++public:
++    virtual ~Observer() = default;
++    /// Asked once per entry point: whether OnReturn is wanted for it.
++    virtual bool WantsReturn(const char* name) = 0;
++    virtual void OnCall(const CallView& call) = 0;
++    virtual void OnReturn(const CallView& call) = 0;
++};
++/// Install the observer before the title starts (it stays for the process lifetime).
++void SetObserver(Observer* observer);
++
++/// True when tracing (SUYU_NVN_TRACE) or an observer is active and the bootstrap location is known.
+ bool Enabled();
+ /// Module and module-relative offset of nvnBootstrapLoader, from SUYU_NVN_BOOTSTRAP.
+ const char* BootstrapModule();
+@@ -32,6 +54,6 @@ u64 BootstrapOffset();
+ /// Called by the dispatcher before looking up a block. `x` is the guest register file (x[31] = SP)
+ /// and `bootstrap` the absolute address of nvnBootstrapLoader (0 while unknown). Returns true when
+ /// it changed `pc` and the dispatcher should start over with the new PC.
+-bool Dispatch(u64* x, u64& pc, Core::Memory::Memory& memory, u64 bootstrap);
++bool Dispatch(u64* x, const u64 (*v)[2], u64& pc, Core::Memory::Memory& memory, u64 bootstrap);
+ 
+ } // namespace NvnTrace
+diff --git a/src/nvn_hle/CMakeLists.txt b/src/nvn_hle/CMakeLists.txt
+new file mode 100644
+index 0000000..070a5f2
+--- /dev/null
++++ b/src/nvn_hle/CMakeLists.txt
+@@ -0,0 +1,12 @@
++# SPDX-FileCopyrightText: 2026 SWITCHPILER
++# SPDX-License-Identifier: GPL-3.0-or-later
++
++# SWITCHPILER lab patch 0010: the title's NVN calls followed (and later answered) on the host.
++add_library(nvn_hle STATIC
++    model.h
++    nvn_hle.h
++    recorder.cpp
++    recorder.h
++)
++target_link_libraries(nvn_hle PUBLIC common core)
++create_target_directory_groups(nvn_hle)
+diff --git a/src/nvn_hle/model.h b/src/nvn_hle/model.h
+new file mode 100644
+index 0000000..6b7a61f
+--- /dev/null
++++ b/src/nvn_hle/model.h
+@@ -0,0 +1,123 @@
++// SPDX-FileCopyrightText: 2026 SWITCHPILER
++// SPDX-License-Identifier: GPL-3.0-or-later
++
++#pragma once
++
++#include <array>
++#include <memory>
++#include <mutex>
++#include <unordered_map>
++#include <vector>
++
++#include "common/common_types.h"
++
++// Host-side model of the title's NVN objects.
++//
++// Builders and textures/samplers/pools are followed through their API calls (shadow copies keyed by
++// the guest address of the object). Small state objects (blend, depth-stencil, polygon...) are read
++// straight from guest memory when bound: their layout is the driver's, decoded from its setters
++// (docs/mission-5-native.md), which stays correct even when the title copies them around.
++namespace NvnHle {
++
++using GuestAddr = u64;  // CPU virtual address in the title's address space
++using GpuAddr = u64;    // GPU virtual address (what nvnBufferGetAddress / pools hand out)
++
++struct MemoryPool {
++    GuestAddr storage = 0;  // CPU address of the memory the title gave the pool
++    u64 size = 0;
++    u32 flags = 0;
++    GpuAddr gpu = 0;        // 0 until learnt from an address query
++};
++
++struct Buffer {
++    GuestAddr pool = 0;
++    u64 offset = 0;
++    u64 size = 0;
++};
++
++struct TextureDesc {
++    u32 flags = 0, target = 0, width = 0, height = 1, depth = 1, levels = 1, format = 0, samples = 0;
++    std::array<u32, 4> swizzle{2, 3, 4, 5};
++    u32 depth_stencil_mode = 0, stride = 0;
++    GuestAddr pool = 0;
++    u64 offset = 0;
++    GuestAddr packaged_data = 0;
++};
++
++struct Texture {
++    TextureDesc desc;
++    u64 serial = 0;  // bumps when re-initialised at the same address
++};
++
++struct TextureView {  // read from the title's NVNtextureView when given
++    bool valid = false;
++};
++
++struct SamplerDesc {
++    u32 min_filter = 0, mag_filter = 0;
++    std::array<u32, 3> wrap{};
++    float lod_bias = 0, lod_min = 0, lod_max = 1000, max_anisotropy = 1;
++    u32 compare_mode = 0, compare_func = 0, reduction = 0;
++    std::array<u32, 4> border{};
++};
++
++struct ShaderStage {
++    GpuAddr code = 0;      // NVNshaderData.data
++    GuestAddr control = 0; // NVNshaderData.control
++};
++
++struct Program {
++    std::vector<ShaderStage> stages;
++    u64 serial = 0;
++};
++
++enum class Op : u8 {
++    BindBlendState, BindColorState, BindChannelMaskState, BindDepthStencilState, BindPolygonState,
++    BindMultisampleState, BindVertexAttribState, BindVertexStreamState, BindProgram, BindVertexBuffer,
++    BindUniformBuffer, BindStorageBuffer, BindTexture, SetRenderTargets, SetViewport, SetScissor,
++    SetDepthRange, SetBlendColor, SetTexturePool, SetSamplerPool, ClearColor, ClearDepthStencil,
++    DrawArrays, DrawElements, Barrier, CallCommands, SetRenderEnable, Other,
++};
++
++struct Command {
++    Op op;
++    std::array<u64, 6> a{};            // decoded integer arguments
++    std::array<float, 4> f{};          // decoded float arguments
++    std::vector<u32> words;            // copied state words / handle lists
++};
++
++struct CommandList {
++    std::vector<Command> commands;
++};
++
++struct Window {
++    std::vector<GuestAddr> textures;
++    u32 acquired = 0;
++};
++
++struct FrameStats {
++    u64 submits = 0, commands = 0, draws = 0, clears = 0, render_target_sets = 0;
++    u64 unknown_handles = 0, unknown_textures = 0;
++};
++
++struct Model {
++    std::mutex lock;
++    std::unordered_map<GuestAddr, MemoryPool> pool_builders, pools;
++    std::unordered_map<GuestAddr, Buffer> buffer_builders, buffers;
++    std::unordered_map<GuestAddr, TextureDesc> texture_builders;
++    std::unordered_map<GuestAddr, Texture> textures;
++    std::unordered_map<GuestAddr, SamplerDesc> sampler_builders, samplers;
++    std::unordered_map<GuestAddr, Program> programs;
++    std::unordered_map<GuestAddr, Window> window_builders, windows;
++    // texture/sampler pools: descriptor index -> object
++    std::unordered_map<GuestAddr, std::unordered_map<u32, std::pair<GuestAddr, GuestAddr>>> texture_pools;
++    std::unordered_map<GuestAddr, std::unordered_map<u32, GuestAddr>> sampler_pools;
++    // command buffers being recorded, and finished lists by the handle EndRecording returned
++    std::unordered_map<GuestAddr, std::shared_ptr<CommandList>> recording;
++    std::unordered_map<u64, std::shared_ptr<CommandList>> finished;
++    u64 serial = 0;
++    FrameStats frame;
++    u64 frames = 0;
++};
++
++} // namespace NvnHle
+diff --git a/src/nvn_hle/nvn_hle.h b/src/nvn_hle/nvn_hle.h
+new file mode 100644
+index 0000000..0c84993
+--- /dev/null
++++ b/src/nvn_hle/nvn_hle.h
+@@ -0,0 +1,24 @@
++// SPDX-FileCopyrightText: 2026 SWITCHPILER
++// SPDX-License-Identifier: GPL-3.0-or-later
++
++#pragma once
++
++namespace Core {
++class System;
++}
++
++// SWITCHPILER: the title's NVN graphics calls followed on the host (lab patch 0010).
++//
++// Stage 1 ("shadow"): every NVN call is decoded into a host-side object model (memory pools, buffers,
++// textures, samplers, programs, state objects, recorded command lists) while the title's own driver
++// keeps rendering. Each presented frame is summarised in SUYU_NVN_HLE_LOG. Later stages render that
++// model with Vulkan and finally replace the driver.
++//
++// SUYU_NVN_HLE=shadow   enable (needs SUYU_NVN_BOOTSTRAP, see core/arm/recomp/nvn_trace.h)
++// SUYU_NVN_HLE_LOG=<file>  frame summaries (default: nvn-hle.log in the working directory)
++namespace NvnHle {
++
++/// Installs the NVN observer if SUYU_NVN_HLE asks for it. Call before the title is loaded.
++void InstallFromEnvironment(Core::System& system);
++
++} // namespace NvnHle
+diff --git a/src/nvn_hle/recorder.cpp b/src/nvn_hle/recorder.cpp
+new file mode 100644
+index 0000000..34d889f
+--- /dev/null
++++ b/src/nvn_hle/recorder.cpp
+@@ -0,0 +1,581 @@
++// SPDX-FileCopyrightText: 2026 SWITCHPILER
++// SPDX-License-Identifier: GPL-3.0-or-later
++
++#include <bit>
++#include <cstdio>
++#include <cstdlib>
++#include <cstring>
++#include <functional>
++#include <map>
++#include <string>
++
++#include "core/arm/recomp/nvn_trace.h"
++#include "core/core.h"
++#include "core/memory.h"
++#include "nvn_hle/model.h"
++#include "nvn_hle/nvn_hle.h"
++#include "nvn_hle/recorder.h"
++
++namespace NvnHle {
++
++namespace {
++
++float AsFloat(u64 v) {
++    return std::bit_cast<float>(static_cast<u32>(v));
++}
++
++} // namespace
++
++Recorder::Recorder(Core::System& system_) : system{system_} {
++    const char* path = std::getenv("SUYU_NVN_HLE_LOG");
++    log = std::fopen(path && *path ? path : "nvn-hle.log", "w");
++    Register();
++}
++
++Recorder::~Recorder() {
++    if (log) {
++        std::fclose(log);
++    }
++}
++
++bool Recorder::WantsReturn(const char* name) {
++    static const char* const kWithResult[] = {
++        "nvnCommandBufferEndRecording", "nvnMemoryPoolGetBufferAddress", "nvnBufferGetAddress",
++        "nvnWindowAcquireTexture",
++    };
++    for (const char* n : kWithResult) {
++        if (std::strcmp(n, name) == 0) {
++            return true;
++        }
++    }
++    return false;
++}
++
++void Recorder::OnCall(const NvnTrace::CallView& call) {
++    const Handler* h = Find(call.id, call.name);
++    if (h && h->on_call) {
++        Args a{call};
++        h->on_call(a);
++    }
++}
++
++void Recorder::OnReturn(const NvnTrace::CallView& call) {
++    const Handler* h = Find(call.id, call.name);
++    if (h && h->on_return) {
++        Args a{call};
++        h->on_return(a);
++    }
++}
++
++const Recorder::Handler* Recorder::Find(u32 id, const char* name) {
++    {
++        std::scoped_lock lk{handlers_lock};
++        if (id < by_id.size() && by_id[id].resolved) {
++            return by_id[id].handler;
++        }
++        if (id >= by_id.size()) {
++            by_id.resize(id + 1);
++        }
++        auto it = handlers.find(name);
++        by_id[id] = Slot{true, it == handlers.end() ? nullptr : &it->second};
++        return by_id[id].handler;
++    }
++}
++
++u64 Recorder::Args::x(size_t i) const {
++    return call.x[i];
++}
++
++float Recorder::Args::f(size_t i) const {
++    return AsFloat(call.v[i][0]);
++}
++
++u32 Recorder::Args::r32(GuestAddr addr) const {
++    return call.memory.Read32(addr);
++}
++
++u64 Recorder::Args::r64(GuestAddr addr) const {
++    return call.memory.Read64(addr);
++}
++
++void Recorder::On(const char* name, std::function<void(Args&)> on_call, std::function<void(Args&)> on_return) {
++    handlers[name] = Handler{std::move(on_call), std::move(on_return)};
++}
++
++std::shared_ptr<CommandList> Recorder::ListFor(GuestAddr cmd) {
++    auto& slot = model.recording[cmd];
++    if (!slot) {
++        slot = std::make_shared<CommandList>();
++    }
++    return slot;
++}
++
++void Recorder::Record(GuestAddr cmd, Command c) {
++    std::scoped_lock lk{model.lock};
++    ListFor(cmd)->commands.push_back(std::move(c));
++}
++
++void Recorder::Register() {
++    auto& m = model;
++    // ---- memory pools -------------------------------------------------------------------------
++    On("nvnMemoryPoolBuilderSetDefaults", [&m](Args& a) {
++        std::scoped_lock lk{m.lock};
++        m.pool_builders[a.x(0)] = {};
++    });
++    On("nvnMemoryPoolBuilderSetStorage", [&m](Args& a) {
++        std::scoped_lock lk{m.lock};
++        auto& b = m.pool_builders[a.x(0)];
++        b.storage = a.x(1);
++        b.size = a.x(2);
++    });
++    On("nvnMemoryPoolBuilderSetFlags", [&m](Args& a) {
++        std::scoped_lock lk{m.lock};
++        m.pool_builders[a.x(0)].flags = static_cast<u32>(a.x(1));
++    });
++    On("nvnMemoryPoolInitialize", [&m](Args& a) {
++        std::scoped_lock lk{m.lock};
++        m.pools[a.x(0)] = m.pool_builders[a.x(1)];
++    });
++    On("nvnMemoryPoolFinalize", [&m](Args& a) {
++        std::scoped_lock lk{m.lock};
++        m.pools.erase(a.x(0));
++    });
++    On("nvnMemoryPoolGetBufferAddress",
++       [this](Args& a) {
++           std::scoped_lock lk{model.lock};
++           pending_pool[a.call.x[31]] = a.x(0);
++       },
++       [&m, this](Args& a) {
++           std::scoped_lock lk{m.lock};
++           if (auto it = pending_pool.find(a.call.x[31]); it != pending_pool.end()) {
++               m.pools[it->second].gpu = a.x(0);
++               pending_pool.erase(it);
++           }
++       });
++    // ---- buffers ----------------------------------------------------------------------------------
++    On("nvnBufferBuilderSetDefaults", [&m](Args& a) {
++        std::scoped_lock lk{m.lock};
++        m.buffer_builders[a.x(0)] = {};
++    });
++    On("nvnBufferBuilderSetStorage", [&m](Args& a) {
++        std::scoped_lock lk{m.lock};
++        m.buffer_builders[a.x(0)] = Buffer{a.x(1), a.x(2), a.x(3)};
++    });
++    On("nvnBufferInitialize", [&m](Args& a) {
++        std::scoped_lock lk{m.lock};
++        m.buffers[a.x(0)] = m.buffer_builders[a.x(1)];
++    });
++    On("nvnBufferFinalize", [&m](Args& a) {
++        std::scoped_lock lk{m.lock};
++        m.buffers.erase(a.x(0));
++    });
++    On("nvnBufferGetAddress",
++       [this](Args& a) {
++           std::scoped_lock lk{model.lock};
++           pending_buffer[a.call.x[31]] = a.x(0);
++       },
++       [&m, this](Args& a) {
++           std::scoped_lock lk{m.lock};
++           auto it = pending_buffer.find(a.call.x[31]);
++           if (it == pending_buffer.end()) {
++               return;
++           }
++           if (auto b = m.buffers.find(it->second); b != m.buffers.end()) {
++               if (auto p = m.pools.find(b->second.pool); p != m.pools.end() && p->second.gpu == 0) {
++                   p->second.gpu = a.x(0) - b->second.offset;
++               }
++           }
++           pending_buffer.erase(it);
++       });
++    // ---- textures ---------------------------------------------------------------------------------
++    auto tb = [&m](Args& a) -> TextureDesc& { return m.texture_builders[a.x(0)]; };
++    On("nvnTextureBuilderSetDefaults", [&m](Args& a) {
++        std::scoped_lock lk{m.lock};
++        m.texture_builders[a.x(0)] = {};
++    });
++    auto tex_field = [&](const char* name, u32 TextureDesc::*field) {
++        On(name, [&m, tb, field](Args& a) {
++            std::scoped_lock lk{m.lock};
++            tb(a).*field = static_cast<u32>(a.x(1));
++        });
++    };
++    tex_field("nvnTextureBuilderSetFlags", &TextureDesc::flags);
++    tex_field("nvnTextureBuilderSetTarget", &TextureDesc::target);
++    tex_field("nvnTextureBuilderSetWidth", &TextureDesc::width);
++    tex_field("nvnTextureBuilderSetHeight", &TextureDesc::height);
++    tex_field("nvnTextureBuilderSetDepth", &TextureDesc::depth);
++    tex_field("nvnTextureBuilderSetLevels", &TextureDesc::levels);
++    tex_field("nvnTextureBuilderSetFormat", &TextureDesc::format);
++    tex_field("nvnTextureBuilderSetSamples", &TextureDesc::samples);
++    tex_field("nvnTextureBuilderSetDepthStencilMode", &TextureDesc::depth_stencil_mode);
++    tex_field("nvnTextureBuilderSetStride", &TextureDesc::stride);
++    On("nvnTextureBuilderSetSize2D", [&m, tb](Args& a) {
++        std::scoped_lock lk{m.lock};
++        tb(a).width = static_cast<u32>(a.x(1));
++        tb(a).height = static_cast<u32>(a.x(2));
++    });
++    On("nvnTextureBuilderSetSwizzle", [&m, tb](Args& a) {
++        std::scoped_lock lk{m.lock};
++        for (size_t i = 0; i < 4; ++i) {
++            tb(a).swizzle[i] = static_cast<u32>(a.x(1 + i));
++        }
++    });
++    On("nvnTextureBuilderSetStorage", [&m, tb](Args& a) {
++        std::scoped_lock lk{m.lock};
++        tb(a).pool = a.x(1);
++        tb(a).offset = a.x(2);
++    });
++    On("nvnTextureBuilderSetPackagedTextureData", [&m, tb](Args& a) {
++        std::scoped_lock lk{m.lock};
++        tb(a).packaged_data = a.x(1);
++    });
++    On("nvnTextureInitialize", [&m](Args& a) {
++        std::scoped_lock lk{m.lock};
++        m.textures[a.x(0)] = Texture{m.texture_builders[a.x(1)], ++m.serial};
++    });
++    On("nvnTextureFinalize", [&m](Args& a) {
++        std::scoped_lock lk{m.lock};
++        m.textures.erase(a.x(0));
++    });
++    On("nvnTexturePoolRegisterTexture", [&m](Args& a) {
++        std::scoped_lock lk{m.lock};
++        m.texture_pools[a.x(0)][static_cast<u32>(a.x(1))] = {a.x(2), a.x(3)};
++    });
++    // ---- samplers ---------------------------------------------------------------------------------
++    auto sb = [&m](Args& a) -> SamplerDesc& { return m.sampler_builders[a.x(0)]; };
++    On("nvnSamplerBuilderSetDefaults", [&m](Args& a) {
++        std::scoped_lock lk{m.lock};
++        m.sampler_builders[a.x(0)] = {};
++    });
++    On("nvnSamplerBuilderSetMinMagFilter", [&m, sb](Args& a) {
++        std::scoped_lock lk{m.lock};
++        sb(a).min_filter = static_cast<u32>(a.x(1));
++        sb(a).mag_filter = static_cast<u32>(a.x(2));
++    });
++    On("nvnSamplerBuilderSetWrapMode", [&m, sb](Args& a) {
++        std::scoped_lock lk{m.lock};
++        sb(a).wrap = {static_cast<u32>(a.x(1)), static_cast<u32>(a.x(2)), static_cast<u32>(a.x(3))};
++    });
++    On("nvnSamplerBuilderSetLodBias", [&m, sb](Args& a) {
++        std::scoped_lock lk{m.lock};
++        sb(a).lod_bias = a.f(0);
++    });
++    On("nvnSamplerBuilderSetLodClamp", [&m, sb](Args& a) {
++        std::scoped_lock lk{m.lock};
++        sb(a).lod_min = a.f(0);
++        sb(a).lod_max = a.f(1);
++    });
++    On("nvnSamplerBuilderSetMaxAnisotropy", [&m, sb](Args& a) {
++        std::scoped_lock lk{m.lock};
++        sb(a).max_anisotropy = a.f(0);
++    });
++    On("nvnSamplerBuilderSetCompare", [&m, sb](Args& a) {
++        std::scoped_lock lk{m.lock};
++        sb(a).compare_mode = static_cast<u32>(a.x(1));
++        sb(a).compare_func = static_cast<u32>(a.x(2));
++    });
++    On("nvnSamplerBuilderSetReductionFilter", [&m, sb](Args& a) {
++        std::scoped_lock lk{m.lock};
++        sb(a).reduction = static_cast<u32>(a.x(1));
++    });
++    On("nvnSamplerBuilderSetBorderColor", [&m, sb](Args& a) {
++        std::scoped_lock lk{m.lock};
++        for (size_t i = 0; i < 4; ++i) {
++            sb(a).border[i] = a.r32(a.x(1) + 4 * i);
++        }
++    });
++    On("nvnSamplerInitialize", [&m](Args& a) {
++        std::scoped_lock lk{m.lock};
++        m.samplers[a.x(0)] = m.sampler_builders[a.x(1)];
++    });
++    On("nvnSamplerPoolRegisterSampler", [&m](Args& a) {
++        std::scoped_lock lk{m.lock};
++        m.sampler_pools[a.x(0)][static_cast<u32>(a.x(1))] = a.x(2);
++    });
++    // ---- programs ---------------------------------------------------------------------------------
++    On("nvnProgramInitialize", [&m](Args& a) {
++        std::scoped_lock lk{m.lock};
++        m.programs[a.x(0)] = Program{{}, ++m.serial};
++    });
++    auto set_shaders = [&m](Args& a, u64 stride) {
++        std::scoped_lock lk{m.lock};
++        Program& p = m.programs[a.x(0)];
++        p.stages.clear();
++        p.serial = ++m.serial;
++        for (u64 i = 0; i < a.x(1); ++i) {
++            const GuestAddr e = a.x(2) + i * stride;
++            p.stages.push_back(ShaderStage{a.r64(e), a.r64(e + 8)});
++        }
++    };
++    On("nvnProgramSetShaders", [set_shaders](Args& a) { set_shaders(a, 16); });
++    On("nvnProgramSetShadersExt", [set_shaders](Args& a) { set_shaders(a, 24); });
++    // ---- window -----------------------------------------------------------------------------------
++    On("nvnWindowBuilderSetTextures", [&m](Args& a) {
++        std::scoped_lock lk{m.lock};
++        auto& w = m.window_builders[a.x(0)];
++        w.textures.clear();
++        for (u64 i = 0; i < a.x(1); ++i) {
++            w.textures.push_back(a.r64(a.x(2) + 8 * i));
++        }
++    });
++    On("nvnWindowInitialize", [&m](Args& a) {
++        std::scoped_lock lk{m.lock};
++        m.windows[a.x(0)] = m.window_builders[a.x(1)];
++    });
++    // ---- command buffers --------------------------------------------------------------------------
++    On("nvnCommandBufferBeginRecording", [&m](Args& a) {
++        std::scoped_lock lk{m.lock};
++        m.recording[a.x(0)] = std::make_shared<CommandList>();
++    });
++    On("nvnCommandBufferEndRecording",
++       [this](Args& a) {
++           std::scoped_lock lk{model.lock};
++           pending_cmd[a.call.x[31]] = a.x(0);
++       },
++       [&m, this](Args& a) {
++           std::scoped_lock lk{m.lock};
++           auto it = pending_cmd.find(a.call.x[31]);
++           if (it == pending_cmd.end()) {
++               return;
++           }
++           auto rec = m.recording.find(it->second);
++           if (rec != m.recording.end()) {
++               m.finished[a.x(0)] = rec->second;
++               m.recording.erase(rec);
++           }
++           pending_cmd.erase(it);
++       });
++    auto state = [this](const char* name, Op op, u32 words) {
++        On(name, [this, op, words](Args& a) {
++            Command c{op};
++            for (u32 i = 0; i < words; ++i) {
++                c.words.push_back(a.r32(a.x(1) + 4 * i));
++            }
++            Record(a.x(0), std::move(c));
++        });
++    };
++    state("nvnCommandBufferBindBlendState", Op::BindBlendState, 2);
++    state("nvnCommandBufferBindColorState", Op::BindColorState, 1);
++    state("nvnCommandBufferBindChannelMaskState", Op::BindChannelMaskState, 1);
++    state("nvnCommandBufferBindDepthStencilState", Op::BindDepthStencilState, 2);
++    state("nvnCommandBufferBindPolygonState", Op::BindPolygonState, 1);
++    state("nvnCommandBufferBindMultisampleState", Op::BindMultisampleState, 6);
++    auto array = [this](const char* name, Op op, u32 words_each) {
++        On(name, [this, op, words_each](Args& a) {
++            Command c{op};
++            c.a[0] = a.x(1);
++            for (u64 i = 0; i < a.x(1) * words_each; ++i) {
++                c.words.push_back(a.r32(a.x(2) + 4 * i));
++            }
++            Record(a.x(0), std::move(c));
++        });
++    };
++    array("nvnCommandBufferBindVertexAttribState", Op::BindVertexAttribState, 1);
++    array("nvnCommandBufferBindVertexStreamState", Op::BindVertexStreamState, 2);
++    auto ints = [this](const char* name, Op op, size_t count) {
++        On(name, [this, op, count](Args& a) {
++            Command c{op};
++            for (size_t i = 0; i < count; ++i) {
++                c.a[i] = a.x(1 + i);
++            }
++            Record(a.x(0), std::move(c));
++        });
++    };
++    ints("nvnCommandBufferBindProgram", Op::BindProgram, 2);
++    ints("nvnCommandBufferBindVertexBuffer", Op::BindVertexBuffer, 3);
++    ints("nvnCommandBufferBindUniformBuffer", Op::BindUniformBuffer, 4);
++    ints("nvnCommandBufferBindStorageBuffer", Op::BindStorageBuffer, 4);
++    ints("nvnCommandBufferBindTexture", Op::BindTexture, 3);
++    ints("nvnCommandBufferSetViewport", Op::SetViewport, 4);
++    ints("nvnCommandBufferSetScissor", Op::SetScissor, 4);
++    ints("nvnCommandBufferSetTexturePool", Op::SetTexturePool, 1);
++    ints("nvnCommandBufferSetSamplerPool", Op::SetSamplerPool, 1);
++    ints("nvnCommandBufferDrawArraysInstanced", Op::DrawArrays, 5);
++    ints("nvnCommandBufferDrawElementsBaseVertex", Op::DrawElements, 5);
++    ints("nvnCommandBufferBarrier", Op::Barrier, 1);
++    ints("nvnCommandBufferSetRenderEnable", Op::SetRenderEnable, 1);
++    On("nvnCommandBufferDrawElementsInstanced", [this](Args& a) {
++        // (cmd, mode, type, count, indexAddress, baseVertex, baseInstance, instanceCount)
++        Command c{Op::DrawElements};
++        for (size_t i = 0; i < 6; ++i) {
++            c.a[i] = a.x(1 + i);
++        }
++        c.words = {static_cast<u32>(a.x(7))};
++        Record(a.x(0), std::move(c));
++    });
++    On("nvnCommandBufferSetDepthRange", [this](Args& a) {
++        Command c{Op::SetDepthRange};
++        c.f = {a.f(0), a.f(1), 0, 0};
++        Record(a.x(0), std::move(c));
++    });
++    On("nvnCommandBufferSetBlendColor", [this](Args& a) {
++        Command c{Op::SetBlendColor};
++        for (size_t i = 0; i < 4; ++i) {
++            c.f[i] = AsFloat(a.r32(a.x(1) + 4 * i));
++        }
++        Record(a.x(0), std::move(c));
++    });
++    On("nvnCommandBufferClearColor", [this](Args& a) {
++        Command c{Op::ClearColor};
++        c.a[0] = a.x(1);
++        c.a[1] = a.x(3);
++        for (size_t i = 0; i < 4; ++i) {
++            c.f[i] = AsFloat(a.r32(a.x(2) + 4 * i));
++        }
++        Record(a.x(0), std::move(c));
++    });
++    On("nvnCommandBufferClearDepthStencil", [this](Args& a) {
++        Command c{Op::ClearDepthStencil};
++        c.f[0] = a.f(0);
++        c.a = {a.x(1), a.x(2), a.x(3)};
++        Record(a.x(0), std::move(c));
++    });
++    On("nvnCommandBufferSetRenderTargets", [this](Args& a) {
++        // (cmd, numColors, const NVNtexture** colors, const NVNtextureView** colorViews,
++        //  const NVNtexture* depthStencil, const NVNtextureView* depthStencilView)
++        Command c{Op::SetRenderTargets};
++        c.a[0] = a.x(1);
++        c.a[1] = a.x(4);
++        c.a[2] = a.x(5);
++        for (u64 i = 0; i < a.x(1); ++i) {
++            const u64 tex = a.x(2) ? a.r64(a.x(2) + 8 * i) : 0;
++            const u64 view = a.x(3) ? a.r64(a.x(3) + 8 * i) : 0;
++            c.words.push_back(static_cast<u32>(tex));
++            c.words.push_back(static_cast<u32>(tex >> 32));
++            c.words.push_back(static_cast<u32>(view));
++            c.words.push_back(static_cast<u32>(view >> 32));
++        }
++        Record(a.x(0), std::move(c));
++    });
++    On("nvnCommandBufferCallCommands", [this](Args& a) {
++        Command c{Op::CallCommands};
++        c.a[0] = a.x(1);
++        for (u64 i = 0; i < a.x(1); ++i) {
++            const u64 h = a.r64(a.x(2) + 8 * i);
++            c.words.push_back(static_cast<u32>(h));
++            c.words.push_back(static_cast<u32>(h >> 32));
++        }
++        Record(a.x(0), std::move(c));
++    });
++    // ---- queue --------------------------------------------------------------------------------------
++    On("nvnQueueSubmitCommands", [this](Args& a) {
++        std::scoped_lock lk{model.lock};
++        for (u64 i = 0; i < a.x(1); ++i) {
++            Submit(a.r64(a.x(2) + 8 * i), 0);
++        }
++        ++model.frame.submits;
++    });
++    On("nvnQueuePresentTexture", [this](Args& a) {
++        std::scoped_lock lk{model.lock};
++        EndFrame(a.x(1), static_cast<u32>(a.x(2)));
++    });
++}
++
++void Recorder::Submit(u64 handle, int depth) {
++    auto it = model.finished.find(handle);
++    if (it == model.finished.end()) {
++        ++model.frame.unknown_handles;
++        return;
++    }
++    const auto list = it->second;
++    for (const Command& c : list->commands) {
++        ++model.frame.commands;
++        switch (c.op) {
++        case Op::DrawArrays:
++        case Op::DrawElements:
++            ++model.frame.draws;
++            break;
++        case Op::ClearColor:
++        case Op::ClearDepthStencil:
++            ++model.frame.clears;
++            break;
++        case Op::SetRenderTargets: {
++            ++model.frame.render_target_sets;
++            for (size_t i = 0; i + 3 < c.words.size(); i += 4) {
++                const u64 tex = c.words[i] | (u64{c.words[i + 1]} << 32);
++                auto t = model.textures.find(tex);
++                if (t == model.textures.end()) {
++                    ++model.frame.unknown_textures;
++                } else {
++                    const auto& d = t->second.desc;
++                    ++render_targets[{d.width, d.height, d.format}];
++                }
++            }
++            break;
++        }
++        case Op::BindTexture: {
++            const u32 id = static_cast<u32>(c.a[2]) & 0xFFFFF;
++            bool found = false;
++            for (const auto& [pool, entries] : model.texture_pools) {
++                if (auto e = entries.find(id); e != entries.end()) {
++                    if (auto t = model.textures.find(e->second.first); t != model.textures.end()) {
++                        ++sampled_formats[t->second.desc.format];
++                        found = true;
++                    }
++                    break;
++                }
++            }
++            if (!found) {
++                ++model.frame.unknown_textures;
++            }
++            break;
++        }
++        case Op::CallCommands:
++            if (depth < 4) {
++                for (size_t i = 0; i + 1 < c.words.size(); i += 2) {
++                    Submit(c.words[i] | (u64{c.words[i + 1]} << 32), depth + 1);
++                }
++            }
++            break;
++        default:
++            break;
++        }
++    }
++}
++
++void Recorder::EndFrame(GuestAddr window, u32 index) {
++    ++model.frames;
++    totals.draws += model.frame.draws;
++    totals.commands += model.frame.commands;
++    totals.unknown_handles += model.frame.unknown_handles;
++    totals.unknown_textures += model.frame.unknown_textures;
++    if (log && model.frames % 120 == 0) {
++        std::fprintf(log,
++                     "frame %llu: last 120 frames: %.1f draws/frame, %.1f commands/frame, unknown handles %llu, "
++                     "unknown textures %llu | objects: %zu pools, %zu buffers, %zu textures, %zu samplers, "
++                     "%zu programs, %zu finished lists\n",
++                     static_cast<unsigned long long>(model.frames), totals.draws / 120.0,
++                     totals.commands / 120.0, static_cast<unsigned long long>(totals.unknown_handles),
++                     static_cast<unsigned long long>(totals.unknown_textures), model.pools.size(),
++                     model.buffers.size(), model.textures.size(), model.samplers.size(),
++                     model.programs.size(), model.finished.size());
++        std::fprintf(log, "  render targets (w x h fmt: binds):");
++        for (const auto& [k, n] : render_targets) {
++            std::fprintf(log, " %ux%u f%u:%llu", std::get<0>(k), std::get<1>(k), std::get<2>(k),
++                         static_cast<unsigned long long>(n));
++        }
++        std::fprintf(log, "\n  sampled formats (fmt: binds):");
++        for (const auto& [k, n] : sampled_formats) {
++            std::fprintf(log, " f%u:%llu", k, static_cast<unsigned long long>(n));
++        }
++        std::fprintf(log, "\n");
++        std::fflush(log);
++        totals = {};
++        render_targets.clear();
++        sampled_formats.clear();
++    }
++    model.frame = {};
++    (void)window;
++    (void)index;
++}
++
++void InstallFromEnvironment(Core::System& system) {
++    const char* mode = std::getenv("SUYU_NVN_HLE");
++    if (!mode || !*mode) {
++        return;
++    }
++    static Recorder* recorder = new Recorder(system);  // lives as long as the process
++    NvnTrace::SetObserver(recorder);
++}
++
++} // namespace NvnHle
+diff --git a/src/nvn_hle/recorder.h b/src/nvn_hle/recorder.h
+new file mode 100644
+index 0000000..ca2107d
+--- /dev/null
++++ b/src/nvn_hle/recorder.h
+@@ -0,0 +1,80 @@
++// SPDX-FileCopyrightText: 2026 SWITCHPILER
++// SPDX-License-Identifier: GPL-3.0-or-later
++
++#pragma once
++
++#include <cstdio>
++#include <functional>
++#include <map>
++#include <memory>
++#include <mutex>
++#include <string>
++#include <tuple>
++#include <unordered_map>
++#include <vector>
++
++#include "core/arm/recomp/nvn_trace.h"
++#include "nvn_hle/model.h"
++
++namespace Core {
++class System;
++}
++
++namespace NvnHle {
++
++/// Follows the title's NVN calls into the Model (stage 1: observe only).
++class Recorder final : public NvnTrace::Observer {
++public:
++    explicit Recorder(Core::System& system);
++    ~Recorder() override;
++
++    bool WantsReturn(const char* name) override;
++    void OnCall(const NvnTrace::CallView& call) override;
++    void OnReturn(const NvnTrace::CallView& call) override;
++
++    Model& GetModel() {
++        return model;
++    }
++
++private:
++    struct Args {
++        const NvnTrace::CallView& call;
++        u64 x(size_t i) const;
++        float f(size_t i) const;
++        u32 r32(GuestAddr addr) const;
++        u64 r64(GuestAddr addr) const;
++    };
++    struct Handler {
++        std::function<void(Args&)> on_call;
++        std::function<void(Args&)> on_return;
++    };
++    struct Slot {
++        bool resolved = false;
++        const Handler* handler = nullptr;
++    };
++
++    void Register();
++    void On(const char* name, std::function<void(Args&)> on_call, std::function<void(Args&)> on_return = {});
++    const Handler* Find(u32 id, const char* name);
++    std::shared_ptr<CommandList> ListFor(GuestAddr cmd);
++    void Record(GuestAddr cmd, Command c);
++    void Submit(u64 handle, int depth);
++    void EndFrame(GuestAddr window, u32 index);
++
++    Core::System& system;
++    Model model;
++    std::FILE* log = nullptr;
++
++    std::mutex handlers_lock;
++    std::unordered_map<std::string, Handler> handlers;
++    std::vector<Slot> by_id;
++
++    // calls waiting for their result, by guest SP (guarded by model.lock)
++    std::unordered_map<u64, GuestAddr> pending_pool, pending_buffer, pending_cmd;
++
++    FrameStats totals;
++    std::map<std::tuple<u32, u32, u32>, u64> render_targets;
++    std::map<u32, u64> sampled_formats;
++};
++
++} // namespace NvnHle
+diff --git a/src/suyu_cmd/CMakeLists.txt b/src/suyu_cmd/CMakeLists.txt
+index 5fbe66c..b62a36a 100644
+--- a/src/suyu_cmd/CMakeLists.txt
++++ b/src/suyu_cmd/CMakeLists.txt
+@@ -227,7 +227,7 @@ if (SUYU_CMD OR YUZU_CMD)
+             )
+         endif()
+ 
+-        target_link_libraries(${_t} PRIVATE common core input_common frontend_common)
++        target_link_libraries(${_t} PRIVATE common core input_common frontend_common nvn_hle)
+         target_link_libraries(${_t} PRIVATE glad)
+         if (MSVC)
+             target_link_libraries(${_t} PRIVATE getopt)
+diff --git a/src/suyu_cmd/suyu.cpp b/src/suyu_cmd/suyu.cpp
+index 9fa8621..08a1798 100644
+--- a/src/suyu_cmd/suyu.cpp
++++ b/src/suyu_cmd/suyu.cpp
+@@ -40,6 +40,7 @@
+ #include "core/arm/recomp/recomp_gap_session.h"
+ #include "core/arm/recomp/recomp_image_features.h"
+ #include "core/core.h"
++#include "nvn_hle/nvn_hle.h"
+ #include "core/perf_stats.h"
+ #include "core/core_timing.h"
+ #include "core/cpu_manager.h"
+@@ -1905,6 +1906,8 @@ int main(int argc, char** argv) {
+     } else {
+         load_parameters.applet_id = Service::AM::AppletId::Application;
+     }
++    // SWITCHPILER lab patch 0010: follow the title's NVN calls on the host when asked to.
++    NvnHle::InstallFromEnvironment(system);
+     LOG_INFO(Frontend, "suyu-cmd: Calling system.Load for '{}'...", filepath);
+     // A deconstructed ROM may have no control metadata for GetGameName.
+     // Preserve a reusable name from the chosen launch path for the status UI.

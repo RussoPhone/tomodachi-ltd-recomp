@@ -6,6 +6,11 @@
 
 🇺🇸 [Read in English](README.md)
 
+> [!IMPORTANT]
+> **Procura-se quem mantenha o projeto.** O autor original se afastou. O projeto funciona como descrito abaixo, e
+> tudo o que é preciso para continuar está documentado: veja [CONTRIBUTING.md](CONTRIBUTING.md) (em inglês) e
+> [research/](research/). Forks são bem-vindos; para ajudar a manter este repositório, abra uma issue.
+
 Jogue **Tomodachi Life: Living the Dream** como um **programa nativo do seu PC**, sem rodar um emulador por trás.
 
 O projeto **não contém o jogo**. Você usa a **sua própria cópia**, e o instalador transforma o código dela, no seu computador, em um programa que roda direto no PC.

@@ -1,0 +1,383 @@
+SWITCHPILER lab patch 0012: NVN calls also observed at the driver's real addresses; list handles computed on
+EndRecording entry (cmd+0x48 chunk); pool GPU addresses read lazily; window-composition diagnostics (stderr).
+
+diff --git a/src/core/arm/recomp/nvn_trace.cpp b/src/core/arm/recomp/nvn_trace.cpp
+index d642084..cd301c6 100644
+--- a/src/core/arm/recomp/nvn_trace.cpp
++++ b/src/core/arm/recomp/nvn_trace.cpp
+@@ -70,14 +70,29 @@ std::atomic<Observer*> g_observer{nullptr};
+ std::mutex g_lock;
+ std::vector<Entry*> g_entries;                    // index = fake slot
+ std::unordered_map<std::string, u32> g_by_name;
++// Real driver addresses too: code inside the driver's own module (nn::gfx) may call NVN through pointers it
++// got without our fake addresses; those indirect calls still come back to the dispatcher at the real address.
++std::unordered_map<u64, Entry*> g_by_real;
++std::atomic<u64> g_real_lo{~0ULL}, g_real_hi{0};
++thread_local u64 t_forwarded = 0;  // real address we just jumped to ourselves: do not observe it twice
+ std::unordered_map<u64, Pending> g_pending;       // guest SP at the call -> where to return
+ std::atomic<u64> g_real_getproc{0};
+ std::atomic<u64> g_bootstrap{0};
+ 
+ u64 FakeFor(const std::string& name, u64 real) {
+     std::scoped_lock lk{g_lock};
++    const auto note_real = [real](Entry* e) {
++        g_by_real[real] = e;
++        if (real < g_real_lo.load()) {
++            g_real_lo.store(real);
++        }
++        if (real > g_real_hi.load()) {
++            g_real_hi.store(real);
++        }
++    };
+     if (auto it = g_by_name.find(name); it != g_by_name.end()) {
+         g_entries[it->second]->real = real;
++        note_real(g_entries[it->second]);
+         return kFirstEntry + 4 * u64{it->second};
+     }
+     if (g_entries.size() >= kMaxEntries) {
+@@ -91,6 +106,7 @@ u64 FakeFor(const std::string& name, u64 real) {
+         e->wants_return = o->WantsReturn(e->name.c_str());
+     }
+     g_entries.push_back(e);
++    note_real(e);
+     const u32 id = e->id;
+     g_by_name.emplace(name, id);
+     return kFirstEntry + 4 * u64{id};
+@@ -208,9 +224,32 @@ bool Dispatch(u64* x, const u64 (*v)[2], u64& pc, Core::Memory::Memory& memory,
+         } else {
+             pc = e->real;  // tail call: x30 still returns to the title's call site
+         }
++        t_forwarded = e->real;
+         MaybeDump();
+         return true;
+     }
++    if (pc >= g_real_lo.load(std::memory_order_relaxed) && pc <= g_real_hi.load(std::memory_order_relaxed)) {
++        if (t_forwarded == pc) {
++            t_forwarded = 0;
++            return false;  // our own forward from a fake address: already observed
++        }
++        Observer* observer = g_observer.load(std::memory_order_acquire);
++        Entry* e = nullptr;
++        if (observer) {
++            std::scoped_lock lk{g_lock};
++            if (auto it = g_by_real.find(pc); it != g_by_real.end()) {
++                e = it->second;
++            }
++        }
++        if (e) {
++            e->calls.fetch_add(1, std::memory_order_relaxed);
++            // OnCall only: a return trampoline here would rely on the caller's stack layout, which calls made
++            // inside the driver's module do not guarantee.
++            observer->OnCall(CallView{e->id, e->name.c_str(), x, v, memory});
++            return false;  // run the driver's function now
++        }
++    }
++    t_forwarded = 0;
+     if (bootstrap && pc == bootstrap) {
+         // nvnBootstrapLoader(const char* name)
+         CallThrough(x, pc, bootstrap, kRetBootstrap, memory.ReadCString(x[0], 128));
+diff --git a/src/nvn_hle/draw.cpp b/src/nvn_hle/draw.cpp
+index ee04cc4..37afeaa 100644
+--- a/src/nvn_hle/draw.cpp
++++ b/src/nvn_hle/draw.cpp
+@@ -680,6 +680,21 @@ Pipeline* ShadowRenderer::Impl::GetPipeline(Maxwell::PrimitiveTopology topology)
+ }
+ 
+ void ShadowRenderer::Impl::Draw(const Command& c) {
++    {
++        static int shown = 0;
++        bool window = false;
++        for (const auto& [waddr, w] : model.windows) {
++            for (GuestAddr wt : w.textures) {
++                window |= num_color_targets > 0 && wt == color_targets[0];
++            }
++        }
++        if (window && shown < 5) {
++            ++shown;
++            std::fprintf(stderr, "nvn_hle draw into window: op %d mode %llu count %llu program %#llx\n",
++                         static_cast<int>(c.op), (unsigned long long)c.a[0], (unsigned long long)c.a[2],
++                         (unsigned long long)bound.program);
++        }
++    }
+     const auto skip = [this](const char* why) {
+         ++skipped_draws;
+         ++skip_reasons[why];
+diff --git a/src/nvn_hle/model.h b/src/nvn_hle/model.h
+index f0a8302..ed3b8eb 100644
+--- a/src/nvn_hle/model.h
++++ b/src/nvn_hle/model.h
+@@ -108,6 +108,12 @@ struct FrameStats {
+     u64 unknown_handles = 0, unknown_textures = 0;
+ };
+ 
++/// Command handles come in two forms (nvnCommandBufferEndRecording): control chunk + 0x10, or
++/// (chunk + 0x18) | count << 48 | 1. Both map to the same key.
++inline u64 NormalizeHandle(u64 h) {
++    return (h & 1) ? ((h & 0x0000'FFFF'FFFF'FFFEULL) - 8) : h;
++}
++
+ struct Model {
+     std::mutex lock;
+     std::unordered_map<GuestAddr, MemoryPool> pool_builders, pools;
+diff --git a/src/nvn_hle/recorder.cpp b/src/nvn_hle/recorder.cpp
+index f3ea86e..74cb401 100644
+--- a/src/nvn_hle/recorder.cpp
++++ b/src/nvn_hle/recorder.cpp
+@@ -9,6 +9,7 @@
+ #include <functional>
+ #include <map>
+ #include <string>
++#include <string_view>
+ 
+ #include "core/arm/recomp/nvn_trace.h"
+ #include "core/core.h"
+@@ -41,7 +42,7 @@ Recorder::~Recorder() {
+ 
+ bool Recorder::WantsReturn(const char* name) {
+     static const char* const kWithResult[] = {
+-        "nvnCommandBufferEndRecording", "nvnMemoryPoolGetBufferAddress", "nvnBufferGetAddress",
++        "nvnMemoryPoolGetBufferAddress", "nvnBufferGetAddress",
+         "nvnMemoryPoolInitialize",
+         "nvnWindowAcquireTexture",
+     };
+@@ -57,10 +58,44 @@ std::atomic<u64> g_nvn_calls{0};
+ 
+ void Recorder::OnCall(const NvnTrace::CallView& call) {
+     g_nvn_calls.fetch_add(1, std::memory_order_relaxed);
++    {
++        static int shown = 0;
++        std::scoped_lock lk{model.lock};
++        static int life = 0;
++        const std::string_view n{call.name};
++        if (model.frames > 200 && life < 120 &&
++            (n == "nvnCommandBufferInitialize" || n == "nvnCommandBufferBeginRecording" ||
++             n == "nvnCommandBufferEndRecording" || n == "nvnCommandBufferFinalize" ||
++             n == "nvnCommandBufferCallCommands" || n == "nvnQueueSubmitCommands")) {
++            ++life;
++            auto rl = model.recording.find(call.x[0]);
++            std::fprintf(stderr, "nvn_hle life f%llu %s cmd %#llx (recording %zu cmds)\n",
++                         (unsigned long long)model.frames, call.name + 16, (unsigned long long)call.x[0],
++                         rl == model.recording.end() ? size_t{0} : rl->second->commands.size());
++        }
++        if (shown < 60 && orphan_cmds.count(call.x[0])) {
++            ++shown;
++            std::fprintf(stderr, "nvn_hle orphan cmd %#llx: %s(x1=%#llx, x2=%#llx)\n", (unsigned long long)call.x[0],
++                         call.name, (unsigned long long)call.x[1], (unsigned long long)call.x[2]);
++        }
++    }
+     const Handler* h = Find(call.id, call.name);
+     if (h && h->on_call) {
+         Args a{call};
+         h->on_call(a);
++    } else if (!h) {
++        static std::mutex unhandled_lock;
++        static std::unordered_map<std::string, u64> unhandled;
++        static u64 total = 0;
++        std::scoped_lock lk{unhandled_lock};
++        ++unhandled[call.name];
++        if (++total == 2000000) {
++            for (const auto& [name, n] : unhandled) {
++                if (std::string_view{name}.starts_with("nvnCommandBuffer") || std::string_view{name}.starts_with("nvnQueue")) {
++                    std::fprintf(stderr, "nvn_hle unhandled %s x%llu\n", name.c_str(), (unsigned long long)n);
++                }
++            }
++        }
+     }
+ }
+ 
+@@ -366,24 +401,18 @@ void Recorder::Register() {
+         std::scoped_lock lk{m.lock};
+         m.recording[a.x(0)] = std::make_shared<CommandList>();
+     });
+-    On("nvnCommandBufferEndRecording",
+-       [this](Args& a) {
+-           std::scoped_lock lk{model.lock};
+-           pending_cmd[a.call.x[31]] = a.x(0);
+-       },
+-       [&m, this](Args& a) {
+-           std::scoped_lock lk{m.lock};
+-           auto it = pending_cmd.find(a.call.x[31]);
+-           if (it == pending_cmd.end()) {
+-               return;
+-           }
+-           auto rec = m.recording.find(it->second);
+-           if (rec != m.recording.end()) {
+-               m.finished[a.x(0)] = rec->second;
+-               m.recording.erase(rec);
+-           }
+-           pending_cmd.erase(it);
+-       });
++    On("nvnCommandBufferEndRecording", [&m, this](Args& a) {
++        // The handle EndRecording will return is known on entry: the list's control chunk (+0x48) + 0x10.
++        std::scoped_lock lk{m.lock};
++        ++end_calls;
++        const GuestAddr cmd = a.x(0);
++        const u64 handle = a.r64(cmd + 0x48) + 0x10;
++        auto rec = m.recording.find(cmd);
++        m.finished[handle] = rec != m.recording.end() ? rec->second : std::make_shared<CommandList>();
++        if (rec != m.recording.end()) {
++            m.recording.erase(rec);
++        }
++    });
+     auto state = [this](const char* name, Op op, u32 words) {
+         On(name, [this, op, words](Args& a) {
+             Command c{op};
+@@ -525,9 +554,22 @@ ShadowRenderer* Recorder::Renderer() {
+ }
+ 
+ void Recorder::Submit(u64 handle, int depth) {
+-    auto it = model.finished.find(handle);
++    auto it = model.finished.find(NormalizeHandle(handle));
+     if (it == model.finished.end()) {
+         ++model.frame.unknown_handles;
++        static int shown = 0;
++        if (shown < 8) {
++            ++shown;
++            std::fprintf(stderr, "nvn_hle unknown submitted handle %#llx (depth %d, %zu finished lists, %zu recording; "
++                         "EndRecording calls %llu returns %llu unmatched %llu no-list %llu):",
++                         (unsigned long long)handle, depth, model.finished.size(), model.recording.size(),
++                         (unsigned long long)end_calls, (unsigned long long)end_returns,
++                         (unsigned long long)end_unmatched, (unsigned long long)end_no_list);
++            for (const auto& [h, l] : model.finished) {
++                std::fprintf(stderr, " %#llx", (unsigned long long)h);
++            }
++            std::fprintf(stderr, "\n");
++        }
+         return;
+     }
+     const auto list = it->second;
+@@ -625,6 +667,14 @@ void Recorder::EndFrame(GuestAddr window, u32 index) {
+     model.frame = {};
+     if (ShadowRenderer* r = Renderer()) {
+         if (auto w = model.windows.find(window); w != model.windows.end() && index < w->second.textures.size()) {
++            if (model.frames >= 400 && model.frames < 406) {
++                std::fprintf(stderr, "nvn_hle present #%llu index %u of %zu:", (unsigned long long)model.frames, index,
++                             w->second.textures.size());
++                for (GuestAddr t : w->second.textures) {
++                    std::fprintf(stderr, " %#llx(draws %llu)", (unsigned long long)t, (unsigned long long)r->DrawsInto(t));
++                }
++                std::fprintf(stderr, "\n");
++            }
+             r->Present(w->second.textures[index], model.frames);
+         }
+     }
+diff --git a/src/nvn_hle/recorder.h b/src/nvn_hle/recorder.h
+index bdf23e9..d0de685 100644
+--- a/src/nvn_hle/recorder.h
++++ b/src/nvn_hle/recorder.h
+@@ -11,6 +11,7 @@
+ #include <string>
+ #include <tuple>
+ #include <unordered_map>
++#include <unordered_set>
+ #include <vector>
+ 
+ #include "core/arm/recomp/nvn_trace.h"
+@@ -76,6 +77,8 @@ private:
+     // calls waiting for their result, by guest SP (guarded by model.lock)
+     std::unordered_map<u64, GuestAddr> pending_pool, pending_buffer, pending_cmd, pending_pool_init;
+ 
++    std::unordered_set<GuestAddr> orphan_cmds;
++    u64 end_calls = 0, end_returns = 0, end_unmatched = 0, end_no_list = 0;
+     FrameStats totals;
+     std::map<std::tuple<u32, u32, u32>, u64> render_targets;
+     std::map<u32, u64> sampled_formats;
+diff --git a/src/nvn_hle/renderer.cpp b/src/nvn_hle/renderer.cpp
+index 88d3f82..edd429a 100644
+--- a/src/nvn_hle/renderer.cpp
++++ b/src/nvn_hle/renderer.cpp
+@@ -246,10 +246,14 @@ std::optional<GuestAddr> ShadowRenderer::Impl::GpuToCpu(GpuAddr va) {
+             return it->second.cpu + (va - it->first);
+         }
+     }
+-    for (const auto& [addr, pool] : model.pools) {
++    for (auto& [addr, pool] : model.pools) {
+         if (!pool.storage) {
+             continue;
+         }
++        if (!pool.gpu) {  // initialised where no return could be observed: read the pool object itself
++            pool.gpu = memory.Read64(addr + 0x18);
++            pool.gpu2 = memory.Read64(addr + 0x20);
++        }
+         if (pool.gpu && va >= pool.gpu && va < pool.gpu + pool.size) {
+             return pool.storage + (va - pool.gpu);
+         }
+@@ -453,7 +457,31 @@ void ShadowRenderer::Impl::Execute(const CommandList& list, int depth) {
+     if (!device || broken) {
+         return;
+     }
++    static int window_trace = 0;
++    static bool tracing = false;
+     for (const Command& c : list.commands) {
++        if (c.op == Op::SetRenderTargets) {
++            tracing = false;
++            if (window_trace < 3 && c.a[0] >= 1) {
++                const u64 tex = c.words[0] | (u64{c.words[1]} << 32);
++                for (const auto& [waddr, w] : model.windows) {
++                    for (GuestAddr wt : w.textures) {
++                        if (wt == tex) {
++                            tracing = true;
++                            ++window_trace;
++                            std::fprintf(stderr, "nvn_hle window target %#llx (list depth %d):", (unsigned long long)tex,
++                                         depth);
++                        }
++                    }
++                }
++            }
++        } else if (tracing) {
++            std::fprintf(stderr, " op%d", static_cast<int>(c.op));
++            if (c.op == Op::DrawArrays || c.op == Op::DrawElements) {
++                std::fprintf(stderr, "[a=%llu,%llu,%llu,%llu]", (unsigned long long)c.a[0], (unsigned long long)c.a[1],
++                             (unsigned long long)c.a[2], (unsigned long long)c.a[3]);
++            }
++        }
+         switch (c.op) {
+         case Op::BindBlendState: {
+             const u32 target = c.words[0] & 7;
+@@ -593,8 +621,10 @@ void ShadowRenderer::Impl::Execute(const CommandList& list, int depth) {
+             if (depth < 4) {
+                 for (size_t i = 0; i + 1 < c.words.size(); i += 2) {
+                     const u64 h = Pack(c.words[i], c.words[i + 1]);
+-                    if (auto it = model.finished.find(h); it != model.finished.end()) {
++                    if (auto it = model.finished.find(NormalizeHandle(h)); it != model.finished.end()) {
+                         Execute(*it->second, depth + 1);
++                    } else if (tracing) {
++                        std::fprintf(stderr, " [unknown called handle %#llx]", (unsigned long long)h);
+                     }
+                 }
+             }
+@@ -603,6 +633,9 @@ void ShadowRenderer::Impl::Execute(const CommandList& list, int depth) {
+             break;
+         }
+     }
++    if (tracing) {
++        std::fprintf(stderr, " <end of list>\n");
++    }
+     if (depth == 0) {
+         Flush();
+     }
+@@ -716,6 +749,11 @@ ShadowRenderer::ShadowRenderer(Model& model, Core::Memory::Memory& memory)
+ 
+ ShadowRenderer::~ShadowRenderer() = default;
+ 
++u64 ShadowRenderer::DrawsInto(GuestAddr texture) {
++    auto it = impl->images.find(impl->ImageKey(texture));
++    return it == impl->images.end() ? 0 : it->second.draws;
++}
++
+ bool ShadowRenderer::Ok() const {
+     return impl->device != nullptr;
+ }
+diff --git a/src/nvn_hle/renderer.h b/src/nvn_hle/renderer.h
+index de9a540..313b229 100644
+--- a/src/nvn_hle/renderer.h
++++ b/src/nvn_hle/renderer.h
+@@ -38,6 +38,8 @@ public:
+     void Execute(const CommandList& list, int depth = 0);
+     /// The title presented `texture`; every SUYU_NVN_HLE_DUMP_EVERY frames it is written as a PPM image.
+     void Present(GuestAddr texture, u64 frame);
++    /// Draws our renderer made into the image behind `texture` (diagnostics).
++    u64 DrawsInto(GuestAddr texture);
+ 
+     struct Impl;  // renderer_impl.h
+ 

@@ -1,0 +1,209 @@
+SWITCHPILER lab patch 0014 (work in progress): command-list handle forms kept apart, composite diagnostics,
+and SUYU_DEBUG_RT_VA in the emulated Maxwell3D draw path (which emulated draws write a render target).
+
+diff --git a/src/nvn_hle/draw.cpp b/src/nvn_hle/draw.cpp
+index 37afeaa..6613423 100644
+--- a/src/nvn_hle/draw.cpp
++++ b/src/nvn_hle/draw.cpp
+@@ -688,6 +688,22 @@ void ShadowRenderer::Impl::Draw(const Command& c) {
+                 window |= num_color_targets > 0 && wt == color_targets[0];
+             }
+         }
++        static int shown_prog = 0;
++        if (auto p = model.programs.find(bound.program); p != model.programs.end() && shown_prog < 6) {
++            for (const ShaderStage& st : p->second.stages) {
++                if (st.code == 0x400026000 || st.code == 0x400026400) {
++                    ++shown_prog;
++                    auto t = num_color_targets ? model.textures.find(color_targets[0]) : model.textures.end();
++                    std::fprintf(stderr, "nvn_hle composite program draw: op %d count %llu rt0 %#llx (%ux%u fmt %u) window=%d\n",
++                                 static_cast<int>(c.op), (unsigned long long)c.a[2],
++                                 (unsigned long long)(num_color_targets ? color_targets[0] : 0),
++                                 t != model.textures.end() ? t->second.desc.width : 0,
++                                 t != model.textures.end() ? t->second.desc.height : 0,
++                                 t != model.textures.end() ? t->second.desc.format : 0, window ? 1 : 0);
++                    break;
++                }
++            }
++        }
+         if (window && shown < 5) {
+             ++shown;
+             std::fprintf(stderr, "nvn_hle draw into window: op %d mode %llu count %llu program %#llx\n",
+diff --git a/src/nvn_hle/model.h b/src/nvn_hle/model.h
+index ed3b8eb..f8ee5ae 100644
+--- a/src/nvn_hle/model.h
++++ b/src/nvn_hle/model.h
+@@ -108,10 +108,11 @@ struct FrameStats {
+     u64 unknown_handles = 0, unknown_textures = 0;
+ };
+ 
+-/// Command handles come in two forms (nvnCommandBufferEndRecording): control chunk + 0x10, or
+-/// (chunk + 0x18) | count << 48 | 1. Both map to the same key.
++/// Command handles come in two forms (nvnCommandBufferEndRecording): an empty list gives control chunk + 0x10;
++/// a list with commands gives (chunk + 0x18) | count << 48 | 1. They are different lists even on the same chunk,
++/// so only the count bits are dropped.
+ inline u64 NormalizeHandle(u64 h) {
+-    return (h & 1) ? ((h & 0x0000'FFFF'FFFF'FFFEULL) - 8) : h;
++    return (h & 1) ? (h & 0x0000'FFFF'FFFF'FFFFULL) : h;
+ }
+ 
+ struct Model {
+diff --git a/src/nvn_hle/recorder.cpp b/src/nvn_hle/recorder.cpp
+index 5bc0975..e47aa17 100644
+--- a/src/nvn_hle/recorder.cpp
++++ b/src/nvn_hle/recorder.cpp
+@@ -152,6 +152,15 @@ std::shared_ptr<CommandList> Recorder::ListFor(GuestAddr cmd) {
+ 
+ void Recorder::Record(GuestAddr cmd, Command c) {
+     std::scoped_lock lk{model.lock};
++    if ((c.op == Op::DrawElements || c.op == Op::DrawArrays) && c.a[2] == 6) {
++        static int shown = 0;
++        if (shown++ < 6) {
++            std::fprintf(stderr, "nvn_hle recorded 6-index draw on cmd %#llx (list now %zu cmds, frame %llu)\n",
++                         (unsigned long long)cmd,
++                         model.recording.count(cmd) ? model.recording[cmd]->commands.size() : size_t{0},
++                         (unsigned long long)model.frames);
++        }
++    }
+     ListFor(cmd)->commands.push_back(std::move(c));
+ }
+ 
+@@ -383,6 +392,25 @@ void Recorder::Register() {
+     };
+     On("nvnProgramSetShaders", [set_shaders](Args& a) { set_shaders(a, 16); });
+     On("nvnProgramSetShadersExt", [set_shaders](Args& a) { set_shaders(a, 24); });
++    On("nvnCommandBufferBindProgram", [this](Args& a) {
++        // (cmd, program, stages): also note binds of the composite program (diagnostics)
++        Command c{Op::BindProgram};
++        c.a[0] = a.x(1);
++        c.a[1] = a.x(2);
++        static int shown = 0;
++        {
++            std::scoped_lock lk{model.lock};
++            if (auto p = model.programs.find(a.x(1)); p != model.programs.end() && shown < 4) {
++                for (const ShaderStage& st : p->second.stages) {
++                    if (st.code == 0x400026000) {
++                        ++shown;
++                        std::fprintf(stderr, "nvn_hle bind of composite program on cmd %#llx\n", (unsigned long long)a.x(0));
++                    }
++                }
++            }
++        }
++        Record(a.x(0), std::move(c));
++    });
+     // ---- window -----------------------------------------------------------------------------------
+     On("nvnWindowBuilderSetTextures", [&m](Args& a) {
+         std::scoped_lock lk{m.lock};
+@@ -406,17 +434,21 @@ void Recorder::Register() {
+         std::scoped_lock lk{m.lock};
+         ++end_calls;
+         const GuestAddr cmd = a.x(0);
+-        const u64 handle = a.r64(cmd + 0x48) + 0x10;
+         auto rec = m.recording.find(cmd);
+         const bool empty = rec == m.recording.end() || rec->second->commands.empty();
+-        auto& slot = m.finished[handle];
+-        // An empty recording ends on the chunk the previous list started at, so it yields that list's handle:
+-        // keep the list with commands (a list recorded once and called every frame).
+-        if (!empty || !slot) {
+-            slot = rec != m.recording.end() ? rec->second : std::make_shared<CommandList>();
++        const GuestAddr chunk = a.r64(cmd + 0x48);
++        const auto list = rec != m.recording.end() ? rec->second : std::make_shared<CommandList>();
++        // Lists with commands may be returned in either form; empty ones only untagged, and an empty list must
++        // never replace a list with commands on the same chunk (lists recorded once and called every frame).
++        auto& untagged = m.finished[chunk + 0x10];
++        if (!empty || !untagged || untagged->commands.empty()) {
++            untagged = list;
+         } else {
+             ++empty_kept;
+         }
++        if (!empty) {
++            m.finished[(chunk + 0x18) | 1] = list;
++        }
+         if (rec != m.recording.end()) {
+             m.recording.erase(rec);
+         }
+@@ -457,7 +489,6 @@ void Recorder::Register() {
+             Record(a.x(0), std::move(c));
+         });
+     };
+-    ints("nvnCommandBufferBindProgram", Op::BindProgram, 2);
+     ints("nvnCommandBufferBindVertexBuffer", Op::BindVertexBuffer, 3);
+     ints("nvnCommandBufferBindUniformBuffer", Op::BindUniformBuffer, 4);
+     ints("nvnCommandBufferBindStorageBuffer", Op::BindStorageBuffer, 4);
+diff --git a/src/nvn_hle/renderer.cpp b/src/nvn_hle/renderer.cpp
+index c616713..a4bdbd5 100644
+--- a/src/nvn_hle/renderer.cpp
++++ b/src/nvn_hle/renderer.cpp
+@@ -676,6 +676,11 @@ void ShadowRenderer::Impl::Present(GuestAddr texture, u64 frame) {
+     }
+     if (HostImage* img = ImageFor(texture)) {
+         if (auto t = model.textures.find(texture); t != model.textures.end()) {
++            if (auto p = model.pools.find(t->second.desc.pool); p != model.pools.end()) {
++                std::fprintf(stderr, "nvn_hle window gpu: pitch %#llx texture %#llx\n",
++                             (unsigned long long)(p->second.gpu + t->second.desc.offset),
++                             (unsigned long long)(p->second.gpu2 + t->second.desc.offset));
++            }
+             std::fprintf(stderr, "nvn_hle window tex: obj %#llx fmt %u pool %#llx off %#llx key %#llx\n",
+                          (unsigned long long)texture, t->second.desc.format, (unsigned long long)t->second.desc.pool,
+                          (unsigned long long)t->second.desc.offset, (unsigned long long)ImageKey(texture));
+diff --git a/src/video_core/engines/draw_manager.cpp b/src/video_core/engines/draw_manager.cpp
+index dabd7bb..60e30c0 100644
+--- a/src/video_core/engines/draw_manager.cpp
++++ b/src/video_core/engines/draw_manager.cpp
+@@ -1,3 +1,5 @@
++#include <cstdio>
++#include <cstdlib>
+ // SPDX-FileCopyrightText: Copyright 2026 suyu Emulator Project
+ // SPDX-License-Identifier: GPL-3.0-or-later
+ 
+@@ -13,6 +15,30 @@
+ 
+ namespace Tegra::Engines {
+ 
++namespace {
++// SWITCHPILER lab diagnostics: SUYU_DEBUG_RT_VA=<gpu va> prints the emulated draws that write that render target.
++void DebugRenderTargetDraw(Tegra::Engines::Maxwell3D& m, const char* kind, u32 count) {
++    static const u64 watch = [] {
++        const char* e = std::getenv("SUYU_DEBUG_RT_VA");
++        return e && *e ? std::strtoull(e, nullptr, 0) : 0ULL;
++    }();
++    static int shown = 0;
++    if (!watch || shown >= 40) {
++        return;
++    }
++    for (size_t i = 0; i < m.regs.rt.size(); ++i) {
++        if (m.regs.rt[i].Address() == watch) {
++            ++shown;
++            std::fprintf(stderr, "suyu draw into watched rt%zu: %s count %u topology %u program_base %#llx vs+%#x fs+%#x\n",
++                         i, kind, count, static_cast<u32>(m.regs.draw.topology.Value()),
++                         static_cast<unsigned long long>(m.regs.program_region.Address()),
++                         m.regs.pipelines[1].offset, m.regs.pipelines[5].offset);
++            return;
++        }
++    }
++}
++} // namespace
++
+ void Maxwell3D::DrawManager::ProcessMethodCall(Maxwell3D& maxwell3d, u32 method, u32 argument) {
+     switch (method) {
+     case MAXWELL3D_REG_INDEX(clear_surface):
+@@ -245,6 +271,7 @@ void Maxwell3D::DrawManager::DrawTexture(Maxwell3D& maxwell3d) {
+     draw_texture_state.src_y1 = (f32(maxwell3d.regs.draw_texture.dy_dv) / 4294967296.f) * dst_height + draw_texture_state.src_y0;
+     draw_texture_state.src_sampler = maxwell3d.regs.draw_texture.src_sampler;
+     draw_texture_state.src_texture = maxwell3d.regs.draw_texture.src_texture;
++    DebugRenderTargetDraw(maxwell3d, "draw_texture", 0);
+     maxwell3d.rasterizer->DrawTexture();
+ }
+ 
+@@ -273,9 +300,12 @@ void Maxwell3D::DrawManager::UpdateTopology(Maxwell3D& maxwell3d) {
+     }
+ }
+ 
++
+ void Maxwell3D::DrawManager::ProcessDraw(Maxwell3D& maxwell3d, bool draw_indexed, u32 instance_count) {
+     LOG_TRACE(HW_GPU, "called, topology={}, count={}", draw_state.topology, draw_indexed ? draw_state.index_buffer.count : draw_state.vertex_buffer.count);
+     UpdateTopology(maxwell3d);
++    DebugRenderTargetDraw(maxwell3d, draw_indexed ? "indexed" : "arrays",
++                          draw_indexed ? draw_state.index_buffer.count : draw_state.vertex_buffer.count);
+     if (maxwell3d.ShouldExecute()) {
+         maxwell3d.rasterizer->Draw(draw_indexed, instance_count);
+     }

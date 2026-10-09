@@ -1,0 +1,2483 @@
+SWITCHPILER lab patch 0011: NVN shadow renderer (stage 2): the title's NVN command lists drawn with Vulkan.
+
+src/nvn_hle/renderer*.{h,cpp}, shaders.cpp, draw.cpp: own Vulkan device (headless), images keyed by texture
+storage, Maxwell shaders translated from guest memory with suyu's shader_recompiler (NVN shader data = 0x30-byte
+header + SPH, program base = data for scheduling alignment; driver texture buffer c2; NVN stage numbering),
+pipelines from the driver's state words (compiled on a worker with a timeout), descriptors, vertex/index/
+uniform/storage data and block-linear textures copied from guest memory, memory pools with both GPU mappings
+and virtual pool mappings. Frames are dumped every SUYU_NVN_HLE_DUMP_EVERY presents. The title's driver still
+renders; this runs beside it.
+
+diff --git a/src/core/arm/recomp/nvn_trace.cpp b/src/core/arm/recomp/nvn_trace.cpp
+index 941df44..d642084 100644
+--- a/src/core/arm/recomp/nvn_trace.cpp
++++ b/src/core/arm/recomp/nvn_trace.cpp
+@@ -175,6 +175,10 @@ u64 BootstrapOffset() {
+     return g_offset;
+ }
+ 
++u64 BootstrapAddress() {
++    return g_bootstrap.load(std::memory_order_relaxed);
++}
++
+ bool Dispatch(u64* x, const u64 (*v)[2], u64& pc, Core::Memory::Memory& memory, u64 bootstrap) {
+     if (bootstrap) {
+         g_bootstrap.store(bootstrap, std::memory_order_relaxed);
+diff --git a/src/core/arm/recomp/nvn_trace.h b/src/core/arm/recomp/nvn_trace.h
+index 7112c44..1c9f4df 100644
+--- a/src/core/arm/recomp/nvn_trace.h
++++ b/src/core/arm/recomp/nvn_trace.h
+@@ -50,6 +50,9 @@ bool Enabled();
+ /// Module and module-relative offset of nvnBootstrapLoader, from SUYU_NVN_BOOTSTRAP.
+ const char* BootstrapModule();
+ u64 BootstrapOffset();
++/// Absolute address of nvnBootstrapLoader once the module is placed (0 before); minus BootstrapOffset()
++/// it is the driver module's base, from which other driver data can be located.
++u64 BootstrapAddress();
+ 
+ /// Called by the dispatcher before looking up a block. `x` is the guest register file (x[31] = SP)
+ /// and `bootstrap` the absolute address of nvnBootstrapLoader (0 while unknown). Returns true when
+diff --git a/src/nvn_hle/CMakeLists.txt b/src/nvn_hle/CMakeLists.txt
+index 070a5f2..359f6a3 100644
+--- a/src/nvn_hle/CMakeLists.txt
++++ b/src/nvn_hle/CMakeLists.txt
+@@ -7,6 +7,11 @@ add_library(nvn_hle STATIC
+     nvn_hle.h
+     recorder.cpp
+     recorder.h
++    draw.cpp
++    renderer.cpp
++    renderer.h
++    renderer_impl.h
++    shaders.cpp
+ )
+-target_link_libraries(nvn_hle PUBLIC common core)
++target_link_libraries(nvn_hle PUBLIC common core video_core shader_recompiler)
+ create_target_directory_groups(nvn_hle)
+diff --git a/src/nvn_hle/draw.cpp b/src/nvn_hle/draw.cpp
+new file mode 100644
+index 0000000..ee04cc4
+--- /dev/null
++++ b/src/nvn_hle/draw.cpp
+@@ -0,0 +1,982 @@
++// SPDX-FileCopyrightText: 2026 SWITCHPILER
++// SPDX-License-Identifier: GPL-3.0-or-later
++
++#include "nvn_hle/renderer_impl.h"
++
++#include <bit>
++#include <chrono>
++#include <future>
++#include <memory>
++#include <thread>
++#include <cstdio>
++#include <cstdlib>
++#include <cstring>
++#include <fmt/format.h>
++
++#include "common/alignment.h"
++#include "common/cityhash.h"
++#include "common/logging/log.h"
++#include "core/memory.h"
++#include "shader_recompiler/backend/bindings.h"
++#include "shader_recompiler/backend/spirv/emit_spirv.h"
++#include "shader_recompiler/frontend/maxwell/translate_program.h"
++#include "shader_recompiler/runtime_info.h"
++#include "video_core/renderer_vulkan/maxwell_to_vk.h"
++#include "video_core/renderer_vulkan/pipeline_helper.h"
++#include "video_core/surface.h"
++#include "video_core/texture_cache/format_lookup_table.h"
++#include "video_core/textures/decoders.h"
++#include "video_core/vulkan_common/vulkan_device.h"
++#include "video_core/vulkan_common/vulkan_memory_allocator.h"
++
++namespace NvnHle {
++
++namespace MaxwellToVK = Vulkan::MaxwellToVK;
++using VideoCore::Surface::PixelFormat;
++
++namespace {
++
++VkShaderStageFlagBits StageBit(Shader::Stage stage) {
++    switch (stage) {
++    case Shader::Stage::VertexB:
++        return VK_SHADER_STAGE_VERTEX_BIT;
++    case Shader::Stage::TessellationControl:
++        return VK_SHADER_STAGE_TESSELLATION_CONTROL_BIT;
++    case Shader::Stage::TessellationEval:
++        return VK_SHADER_STAGE_TESSELLATION_EVALUATION_BIT;
++    case Shader::Stage::Geometry:
++        return VK_SHADER_STAGE_GEOMETRY_BIT;
++    default:
++        return VK_SHADER_STAGE_FRAGMENT_BIT;
++    }
++}
++
++size_t StageIndex(Shader::Stage stage) {
++    switch (stage) {
++    case Shader::Stage::VertexB:
++        return 0;
++    case Shader::Stage::TessellationControl:
++        return 1;
++    case Shader::Stage::TessellationEval:
++        return 2;
++    case Shader::Stage::Geometry:
++        return 3;
++    default:
++        return 4;
++    }
++}
++
++// NVN blend factors carry the Maxwell factor in bits 0-4 and its "GL style" flag in bits 5-6
++// (nvnCommandBufferBindBlendState).
++Maxwell::Blend::Factor Factor(u32 v) {
++    return static_cast<Maxwell::Blend::Factor>((v & 0x1f) | (((v >> 5) & 3) << 14));
++}
++
++Shader::AttributeType AttributeType(Maxwell::VertexAttribute::Type type) {
++    using Type = Maxwell::VertexAttribute::Type;
++    switch (type) {
++    case Type::SInt:
++        return Shader::AttributeType::SignedInt;
++    case Type::UInt:
++        return Shader::AttributeType::UnsignedInt;
++    case Type::UScaled:
++        return Shader::AttributeType::UnsignedScaled;
++    case Type::SScaled:
++        return Shader::AttributeType::SignedScaled;
++    default:
++        return Shader::AttributeType::Float;
++    }
++}
++
++u64 Pack(u32 lo, u32 hi) {
++    return lo | (u64{hi} << 32);
++}
++
++PixelFormat TicFormat(const Tegra::Texture::TICEntry& tic) {
++    return VideoCommon::PixelFormatFromTextureInfo(tic.format, tic.r_type, tic.g_type, tic.b_type, tic.a_type,
++                                                   tic.srgb_conversion);
++}
++
++} // namespace
++
++u64 ShadowRenderer::Impl::Upload(const void* data, size_t size, size_t align, VkBuffer& buffer) {
++    stream_offset = Common::AlignUp(stream_offset, std::max<size_t>(align, 4));
++    if (stream_offset + size > kStreamSize) {
++        return ~u64{0};
++    }
++    std::memcpy(stream_buffer.Mapped().data() + stream_offset, data, size);
++    buffer = *stream_buffer;
++    const u64 offset = stream_offset;
++    stream_offset += size;
++    return offset;
++}
++
++void ShadowRenderer::Impl::EndRenderPass() {
++    if (!in_render_pass) {
++        return;
++    }
++    vk::CommandBuffer{command_buffers[0], device->GetDispatchLoader()}.EndRenderPass();
++    in_render_pass = false;
++    active_targets.clear();
++}
++
++HostImage* ShadowRenderer::Impl::SampledImage(u32 texture_id) {
++    Step("sampled image");
++    // A texture this renderer drew into is used as is (render to texture).
++    if (auto pool = model.texture_pools.find(bound.texture_pool); pool != model.texture_pools.end()) {
++        if (auto e = pool->second.find(texture_id); e != pool->second.end()) {
++            if (auto it = images.find(ImageKey(e->second.first)); it != images.end() && it->second.rendered) {
++                Transition(it->second, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
++                return &it->second;
++            }
++        }
++    }
++    const auto tic = ReadTic(texture_id);
++    if (!tic) {
++        texture_error = "no-pool";
++        return nullptr;
++    }
++    const u64 key = Common::CityHash64(reinterpret_cast<const char*>(&*tic), sizeof(*tic));
++    if (auto it = sampled.find(key); it != sampled.end()) {
++        return &it->second;
++    }
++    if (auto it = failed_textures.find(key); it != failed_textures.end()) {
++        texture_error = it->second;
++        return nullptr;
++    }
++    const auto fail = [&](std::string why) -> HostImage* {
++        texture_error = why;
++        failed_textures.emplace(key, std::move(why));
++        return nullptr;
++    };
++    using Tegra::Texture::TextureType;
++    if (tic->texture_type != TextureType::Texture2D && tic->texture_type != TextureType::Texture2DNoMipmap) {
++        return fail("type" + std::to_string(static_cast<u32>(tic->texture_type.Value())));
++    }
++    const PixelFormat pf = TicFormat(*tic);
++    if (pf == PixelFormat::Invalid) {
++        return fail("format");
++    }
++    const auto vk_format = MaxwellToVK::SurfaceFormat(*device, Vulkan::FormatType::Optimal, false, pf);
++    const u32 width = tic->Width();
++    const u32 height = tic->Height();
++    const u32 bpb = VideoCore::Surface::BytesPerBlock(pf);
++    const u32 bw = VideoCore::Surface::DefaultBlockWidth(pf);
++    const u32 bh = VideoCore::Surface::DefaultBlockHeight(pf);
++    const u32 wb = Common::DivCeil(width, bw);
++    const u32 hb = Common::DivCeil(height, bh);
++    const auto cpu = GpuToCpu(tic->Address());
++    if (!cpu || width == 0 || height == 0) {
++        return fail(!cpu ? "address" : "size");
++    }
++    std::vector<u8> linear(size_t{wb} * hb * bpb);
++    if (tic->IsBlockLinear()) {
++        const size_t guest_size = Tegra::Texture::CalculateSize(true, bpb, wb, hb, 1, tic->block_height,
++                                                                tic->block_depth);
++        std::vector<u8> guest(guest_size);
++        memory.ReadBlock(*cpu, guest.data(), guest.size());
++        Tegra::Texture::UnswizzleTexture(linear, guest, bpb, wb, hb, 1, tic->block_height, tic->block_depth,
++                                         1U << tic->tile_width_spacing);
++    } else {
++        const u32 pitch = tic->Pitch();
++        for (u32 y = 0; y < hb; ++y) {
++            memory.ReadBlock(*cpu + u64{y} * pitch, linear.data() + size_t{y} * wb * bpb, size_t{wb} * bpb);
++        }
++    }
++    HostImage& img = sampled[key];
++    img.format = vk_format.format;
++    img.width = width;
++    img.height = height;
++    img.image = allocator->CreateImage({
++        .sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO,
++        .pNext = nullptr,
++        .flags = 0,
++        .imageType = VK_IMAGE_TYPE_2D,
++        .format = img.format,
++        .extent = {width, height, 1},
++        .mipLevels = 1,
++        .arrayLayers = 1,
++        .samples = VK_SAMPLE_COUNT_1_BIT,
++        .tiling = VK_IMAGE_TILING_OPTIMAL,
++        .usage = VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_SAMPLED_BIT,
++        .sharingMode = VK_SHARING_MODE_EXCLUSIVE,
++        .queueFamilyIndexCount = 0,
++        .pQueueFamilyIndices = nullptr,
++        .initialLayout = VK_IMAGE_LAYOUT_UNDEFINED,
++    });
++    const auto swizzle = [](Tegra::Texture::SwizzleSource s) { return MaxwellToVK::SwizzleSource(s); };
++    img.view = device->GetLogical().CreateImageView({
++        .sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO,
++        .pNext = nullptr,
++        .flags = 0,
++        .image = *img.image,
++        .viewType = VK_IMAGE_VIEW_TYPE_2D,
++        .format = img.format,
++        .components = {swizzle(tic->x_source), swizzle(tic->y_source), swizzle(tic->z_source),
++                       swizzle(tic->w_source)},
++        .subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1},
++    });
++    VkBuffer staging{};
++    const u64 offset = Upload(linear.data(), linear.size(), 16, staging);
++    if (offset == ~u64{0}) {
++        sampled.erase(key);
++        return nullptr;
++    }
++    Transition(img, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
++    const VkBufferImageCopy copy{
++        .bufferOffset = offset,
++        .bufferRowLength = 0,
++        .bufferImageHeight = 0,
++        .imageSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1},
++        .imageOffset = {0, 0, 0},
++        .imageExtent = {width, height, 1},
++    };
++    Cmd().CopyBufferToImage(staging, *img.image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, copy);
++    Transition(img, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
++    img.uploaded = true;
++    return &img;
++}
++
++VkSampler ShadowRenderer::Impl::SamplerFor(u32 sampler_id) {
++    const auto tsc = ReadTsc(sampler_id);
++    if (!tsc) {
++        return VK_NULL_HANDLE;
++    }
++    const u32 key = static_cast<u32>(Common::CityHash64(reinterpret_cast<const char*>(&*tsc), sizeof(*tsc)));
++    if (auto it = samplers.find(key); it != samplers.end()) {
++        return *it->second;
++    }
++    namespace S = MaxwellToVK::Sampler;
++    const VkSamplerCreateInfo ci{
++        .sType = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO,
++        .pNext = nullptr,
++        .flags = 0,
++        .magFilter = S::Filter(tsc->mag_filter),
++        .minFilter = S::Filter(tsc->min_filter),
++        .mipmapMode = S::MipmapMode(tsc->mipmap_filter),
++        .addressModeU = S::WrapMode(*device, tsc->wrap_u, tsc->mag_filter),
++        .addressModeV = S::WrapMode(*device, tsc->wrap_v, tsc->mag_filter),
++        .addressModeW = S::WrapMode(*device, tsc->wrap_p, tsc->mag_filter),
++        .mipLodBias = tsc->LodBias(),
++        .anisotropyEnable = VK_FALSE,
++        .maxAnisotropy = 1.0f,
++        .compareEnable = tsc->depth_compare_enabled != 0,
++        .compareOp = S::DepthCompareFunction(tsc->depth_compare_func),
++        .minLod = tsc->MinLod(),
++        .maxLod = tsc->MaxLod(),
++        .borderColor = VK_BORDER_COLOR_FLOAT_TRANSPARENT_BLACK,
++        .unnormalizedCoordinates = VK_FALSE,
++    };
++    auto [it, _] = samplers.emplace(key, device->GetLogical().CreateSampler(ci));
++    return *it->second;
++}
++
++Pipeline* ShadowRenderer::Impl::GetPipeline(Maxwell::PrimitiveTopology topology) {
++    auto prog = model.programs.find(bound.program);
++    if (prog == model.programs.end() || prog->second.stages.empty()) {
++        static Pipeline none{};
++        none.error = "no-program";
++        return &none;
++    }
++    // Everything the pipeline object depends on.
++    std::vector<u64> key{bound.program_serial, static_cast<u64>(topology), bound.color_word, bound.channel_mask,
++                         bound.depth_stencil[0], bound.depth_stencil[1], bound.polygon};
++    for (u32 w : bound.attribs) {
++        key.push_back(w);
++    }
++    for (size_t i = 0; i < bound.streams.size(); i += 2) {
++        key.push_back(bound.streams[i]);
++    }
++    for (u32 i = 0; i < num_color_targets; ++i) {
++        key.push_back(bound.blend_set[i] ? (u64{bound.blend_words[i][0]} << 32 | bound.blend_words[i][1]) : 0);
++        const HostImage* img = ImageFor(color_targets[i]);
++        key.push_back(img ? img->format : 0);
++    }
++    const HostImage* ds = depth_target ? ImageFor(depth_target) : nullptr;
++    key.push_back(ds ? ds->format : 0);
++    const u64 hash = Common::CityHash64(reinterpret_cast<const char*>(key.data()), key.size() * sizeof(u64));
++    if (auto it = pipelines.find(hash); it != pipelines.end()) {
++        return it->second.get();
++    }
++    auto& p = pipelines[hash];
++    p = std::make_unique<Pipeline>();
++
++    // Translate every stage of the program, in pipeline order.
++    struct Item {
++        Shader::Stage stage;
++        Shader::IR::Program program;
++    };
++    std::vector<Item> items;
++    for (const ShaderStage& s : prog->second.stages) {
++        if (const char* skip = std::getenv("SUYU_NVN_HLE_SKIP_CODE"); skip && *skip &&
++            std::strtoull(skip, nullptr, 0) == s.code) {
++            p->error = "skip-code";
++            return p.get();
++        }
++        Item item{};
++        // The NVN stage index (for bindings) is only known after reading the header; translate first
++        // with a provisional index, then again if it differs.
++        if (!Translate(s.code, 0, item.program, item.stage)) {
++            p->error = GpuToCpu(s.code) ? "translate" : "code-address";
++            return p.get();
++        }
++        const size_t nvn = kNvnStageOfPipelineStage[StageIndex(item.stage)];
++        if (nvn != 0 && !Translate(s.code, nvn, item.program, item.stage)) {
++            p->error = "translate";
++            return p.get();
++        }
++        items.push_back(std::move(item));
++    }
++    std::ranges::sort(items, {}, [](const Item& i) { return StageIndex(i.stage); });
++
++    // Vertex input, decoded from the driver's attribute words with its format table.
++    std::array<Shader::AttributeType, 32> input_types{};
++    input_types.fill(Shader::AttributeType::Disabled);
++    std::vector<VkVertexInputAttributeDescription> attributes;
++    std::vector<VkVertexInputBindingDescription> bindings;
++    std::array<bool, 16> stream_used{};
++    for (u32 i = 0; i < bound.attribs.size() && i < 32; ++i) {
++        const u32 w = bound.attribs[i];
++        if (!((w >> 6) & 1)) {
++            continue;
++        }
++        const FormatInfo fi = Format(w >> 21);
++        Maxwell::VertexAttribute va{};
++        va.hex = fi.vertex_attribute | (w & 0x1fff9f);
++        if (va.constant) {
++            continue;
++        }
++        input_types[i] = AttributeType(va.type);
++        attributes.push_back({
++            .location = i,
++            .binding = va.buffer,
++            .format = MaxwellToVK::VertexFormat(*device, va.type, va.size),
++            .offset = va.offset,
++        });
++        if (va.buffer < stream_used.size()) {
++            stream_used[va.buffer] = true;
++        }
++    }
++    for (u32 s = 0; s < stream_used.size(); ++s) {
++        if (!stream_used[s]) {
++            continue;
++        }
++        const u32 stride = 2 * s < bound.streams.size() ? bound.streams[2 * s] : 0;
++        const u32 divisor = 2 * s + 1 < bound.streams.size() ? bound.streams[2 * s + 1] : 0;
++        bindings.push_back({
++            .binding = s,
++            .stride = stride,
++            .inputRate = divisor ? VK_VERTEX_INPUT_RATE_INSTANCE : VK_VERTEX_INPUT_RATE_VERTEX,
++        });
++    }
++
++    // Emit SPIR-V per stage with the bindings counted across stages, as suyu's pipeline cache does.
++    Vulkan::DescriptorLayoutBuilder builder{*device};
++    Shader::Backend::Bindings binding;
++    const Shader::IR::Program* previous = nullptr;
++    std::vector<VkPipelineShaderStageCreateInfo> stages;
++    p->programs.reserve(items.size());
++    for (Item& item : items) {
++        Shader::RuntimeInfo info{};
++        if (previous) {
++            info.previous_stage_stores = previous->info.stores;
++            info.previous_stage_legacy_stores_mapping = previous->info.legacy_stores_mapping;
++        } else {
++            info.previous_stage_stores.mask.set();
++        }
++        if (item.stage == Shader::Stage::VertexB) {
++            info.generic_input_types = input_types;
++        }
++        if (item.stage == Shader::Stage::Fragment) {
++            for (u32 i = 0; i < num_color_targets; ++i) {
++                const HostImage* img = ImageFor(color_targets[i]);
++                info.color_output_types[i] = Shader::AttributeType::Float;
++                (void)img;
++            }
++        }
++        p->programs.push_back(std::move(item.program));
++        Shader::IR::Program& program = p->programs.back();
++        Shader::Maxwell::ConvertLegacyToGeneric(program, info);
++        std::vector<u32> code;
++        try {
++            code = Shader::Backend::SPIRV::EmitSPIRV(profile, info, program, binding);
++        } catch (const std::exception& e) {
++            LOG_ERROR(Render_Vulkan, "nvn_hle: SPIR-V emission failed: {}", e.what());
++            p->error = "spirv";
++            return p.get();
++        }
++        const size_t index = StageIndex(item.stage);
++        if (const char* dir = std::getenv("SUYU_NVN_HLE_SPIRV_DIR"); dir && *dir) {
++            const std::string path = fmt::format("{}/{:016x}-{}.spv", dir, hash, index);
++            if (std::FILE* f = std::fopen(path.c_str(), "wb")) {
++                std::fwrite(code.data(), sizeof(u32), code.size(), f);
++                std::fclose(f);
++            }
++        }
++        p->modules[index] = device->GetLogical().CreateShaderModule({
++            .sType = VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO,
++            .pNext = nullptr,
++            .flags = 0,
++            .codeSize = code.size() * sizeof(u32),
++            .pCode = code.data(),
++        });
++        p->infos[index] = &program.info;
++        builder.Add(program.info, StageBit(item.stage));
++        stages.push_back({
++            .sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO,
++            .pNext = nullptr,
++            .flags = 0,
++            .stage = StageBit(item.stage),
++            .module = *p->modules[index],
++            .pName = "main",
++            .pSpecializationInfo = nullptr,
++        });
++        previous = &program;
++    }
++    Step("descriptor set layout");
++    p->set_layout = builder.CreateDescriptorSetLayout(false);
++    Step("pipeline layout");
++    p->layout = builder.CreatePipelineLayout(*p->set_layout);
++    Step("fixed state");
++
++    // Fixed function state, from the driver's state words (see docs/mission-5-native.md).
++    const VkPipelineVertexInputStateCreateInfo vertex_input{
++        .sType = VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO,
++        .pNext = nullptr,
++        .flags = 0,
++        .vertexBindingDescriptionCount = static_cast<u32>(bindings.size()),
++        .pVertexBindingDescriptions = bindings.data(),
++        .vertexAttributeDescriptionCount = static_cast<u32>(attributes.size()),
++        .pVertexAttributeDescriptions = attributes.data(),
++    };
++    const VkPipelineInputAssemblyStateCreateInfo input_assembly{
++        .sType = VK_STRUCTURE_TYPE_PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO,
++        .pNext = nullptr,
++        .flags = 0,
++        .topology = MaxwellToVK::PrimitiveTopology(*device, topology),
++        .primitiveRestartEnable = VK_FALSE,
++    };
++    const VkPipelineViewportStateCreateInfo viewport{
++        .sType = VK_STRUCTURE_TYPE_PIPELINE_VIEWPORT_STATE_CREATE_INFO,
++        .pNext = nullptr,
++        .flags = 0,
++        .viewportCount = 1,
++        .pViewports = nullptr,
++        .scissorCount = 1,
++        .pScissors = nullptr,
++    };
++    const u32 poly = bound.polygon;
++    const u32 cull = poly & 3;
++    const VkPipelineRasterizationStateCreateInfo raster{
++        .sType = VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_STATE_CREATE_INFO,
++        .pNext = nullptr,
++        .flags = 0,
++        .depthClampEnable = VK_FALSE,
++        .rasterizerDiscardEnable = VK_FALSE,
++        .polygonMode = ((poly >> 3) & 3) == 0   ? VK_POLYGON_MODE_POINT
++                       : ((poly >> 3) & 3) == 1 ? VK_POLYGON_MODE_LINE
++                                                : VK_POLYGON_MODE_FILL,
++        .cullMode = static_cast<VkCullModeFlags>(cull == 0   ? VK_CULL_MODE_NONE
++                                                 : cull == 1 ? VK_CULL_MODE_FRONT_BIT
++                                                 : cull == 2 ? VK_CULL_MODE_BACK_BIT
++                                                             : VK_CULL_MODE_FRONT_AND_BACK),
++        .frontFace = ((poly >> 2) & 1) ? VK_FRONT_FACE_COUNTER_CLOCKWISE : VK_FRONT_FACE_CLOCKWISE,
++        .depthBiasEnable = VK_FALSE,
++        .depthBiasConstantFactor = 0,
++        .depthBiasClamp = 0,
++        .depthBiasSlopeFactor = 0,
++        .lineWidth = 1.0f,
++    };
++    const VkPipelineMultisampleStateCreateInfo multisample{
++        .sType = VK_STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO,
++        .pNext = nullptr,
++        .flags = 0,
++        .rasterizationSamples = VK_SAMPLE_COUNT_1_BIT,
++        .sampleShadingEnable = VK_FALSE,
++        .minSampleShading = 0,
++        .pSampleMask = nullptr,
++        .alphaToCoverageEnable = VK_FALSE,
++        .alphaToOneEnable = VK_FALSE,
++    };
++    const u32 ds0 = bound.depth_stencil[0];
++    const u32 ds1 = bound.depth_stencil[1];
++    const auto stencil = [&](u32 shift) {
++        const u32 bits = ds1 >> shift;
++        return VkStencilOpState{
++            .failOp = MaxwellToVK::StencilOp(static_cast<Maxwell::StencilOp::Op>((bits >> 4) & 0xf)),
++            .passOp = MaxwellToVK::StencilOp(static_cast<Maxwell::StencilOp::Op>((bits >> 8) & 0xf)),
++            .depthFailOp = MaxwellToVK::StencilOp(static_cast<Maxwell::StencilOp::Op>((bits >> 12) & 0xf)),
++            .compareOp = MaxwellToVK::ComparisonOp(static_cast<Maxwell::ComparisonOp>(bits & 0xf)),
++            .compareMask = 0xff,
++            .writeMask = 0xff,
++            .reference = 0,
++        };
++    };
++    const VkPipelineDepthStencilStateCreateInfo depth_stencil{
++        .sType = VK_STRUCTURE_TYPE_PIPELINE_DEPTH_STENCIL_STATE_CREATE_INFO,
++        .pNext = nullptr,
++        .flags = 0,
++        .depthTestEnable = ds && (ds0 & 1),
++        .depthWriteEnable = ds && ((ds0 >> 1) & 1),
++        .depthCompareOp = MaxwellToVK::ComparisonOp(static_cast<Maxwell::ComparisonOp>((ds0 >> 4) & 0xf)),
++        .depthBoundsTestEnable = VK_FALSE,
++        .stencilTestEnable = ds && ((ds0 >> 2) & 1),
++        .front = stencil(0),
++        .back = stencil(16),
++        .minDepthBounds = 0,
++        .maxDepthBounds = 1,
++    };
++    std::vector<VkPipelineColorBlendAttachmentState> blends;
++    for (u32 i = 0; i < num_color_targets; ++i) {
++        const u32 w0 = bound.blend_set[i] ? bound.blend_words[i][0] : 0x110c0000;
++        const u32 w1 = bound.blend_set[i] ? bound.blend_words[i][1] : 0x01020102;
++        const u32 mask = (bound.channel_mask >> (4 * i)) & 0xf;
++        blends.push_back({
++            .blendEnable = (bound.color_word >> (8 + i)) & 1,
++            .srcColorBlendFactor = MaxwellToVK::BlendFactor(Factor(w1 & 0xff)),
++            .dstColorBlendFactor = MaxwellToVK::BlendFactor(Factor((w1 >> 8) & 0xff)),
++            .colorBlendOp = MaxwellToVK::BlendEquation(static_cast<Maxwell::Blend::Equation>((w0 >> 24) & 7)),
++            .srcAlphaBlendFactor = MaxwellToVK::BlendFactor(Factor((w1 >> 16) & 0xff)),
++            .dstAlphaBlendFactor = MaxwellToVK::BlendFactor(Factor(w1 >> 24)),
++            .alphaBlendOp = MaxwellToVK::BlendEquation(static_cast<Maxwell::Blend::Equation>((w0 >> 28) & 7)),
++            .colorWriteMask = mask,
++        });
++    }
++    const VkPipelineColorBlendStateCreateInfo color_blend{
++        .sType = VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO,
++        .pNext = nullptr,
++        .flags = 0,
++        .logicOpEnable = VK_FALSE,
++        .logicOp = VK_LOGIC_OP_COPY,
++        .attachmentCount = static_cast<u32>(blends.size()),
++        .pAttachments = blends.data(),
++        .blendConstants = {0, 0, 0, 0},
++    };
++    static constexpr std::array dynamic_states{VK_DYNAMIC_STATE_VIEWPORT, VK_DYNAMIC_STATE_SCISSOR,
++                                               VK_DYNAMIC_STATE_BLEND_CONSTANTS};
++    const VkPipelineDynamicStateCreateInfo dynamic{
++        .sType = VK_STRUCTURE_TYPE_PIPELINE_DYNAMIC_STATE_CREATE_INFO,
++        .pNext = nullptr,
++        .flags = 0,
++        .dynamicStateCount = static_cast<u32>(dynamic_states.size()),
++        .pDynamicStates = dynamic_states.data(),
++    };
++    // Render pass compatible with the current targets.
++    std::vector<u32> rp_key{num_color_targets};
++    for (u32 i = 0; i < num_color_targets; ++i) {
++        const HostImage* img = ImageFor(color_targets[i]);
++        rp_key.push_back(img ? img->format : 0);
++    }
++    rp_key.push_back(ds ? ds->format : 0);
++    Step("render pass");
++    auto& render_pass = render_passes[rp_key];
++    if (!render_pass) {
++        std::vector<VkAttachmentDescription> descs;
++        std::vector<VkAttachmentReference> refs;
++        for (u32 i = 0; i < num_color_targets; ++i) {
++            descs.push_back({0, static_cast<VkFormat>(rp_key[1 + i]), VK_SAMPLE_COUNT_1_BIT,
++                             VK_ATTACHMENT_LOAD_OP_LOAD, VK_ATTACHMENT_STORE_OP_STORE,
++                             VK_ATTACHMENT_LOAD_OP_LOAD, VK_ATTACHMENT_STORE_OP_STORE,
++                             VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL});
++            refs.push_back({i, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL});
++        }
++        const VkAttachmentReference depth_ref{num_color_targets, VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL};
++        if (ds) {
++            descs.push_back({0, ds->format, VK_SAMPLE_COUNT_1_BIT, VK_ATTACHMENT_LOAD_OP_LOAD,
++                             VK_ATTACHMENT_STORE_OP_STORE, VK_ATTACHMENT_LOAD_OP_LOAD, VK_ATTACHMENT_STORE_OP_STORE,
++                             VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL,
++                             VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL});
++        }
++        const VkSubpassDescription subpass{
++            .flags = 0,
++            .pipelineBindPoint = VK_PIPELINE_BIND_POINT_GRAPHICS,
++            .inputAttachmentCount = 0,
++            .pInputAttachments = nullptr,
++            .colorAttachmentCount = static_cast<u32>(refs.size()),
++            .pColorAttachments = refs.data(),
++            .pResolveAttachments = nullptr,
++            .pDepthStencilAttachment = ds ? &depth_ref : nullptr,
++            .preserveAttachmentCount = 0,
++            .pPreserveAttachments = nullptr,
++        };
++        render_pass = device->GetLogical().CreateRenderPass({
++            .sType = VK_STRUCTURE_TYPE_RENDER_PASS_CREATE_INFO,
++            .pNext = nullptr,
++            .flags = 0,
++            .attachmentCount = static_cast<u32>(descs.size()),
++            .pAttachments = descs.data(),
++            .subpassCount = 1,
++            .pSubpasses = &subpass,
++            .dependencyCount = 0,
++            .pDependencies = nullptr,
++        });
++    }
++    Step("vkCreateGraphicsPipelines");
++    // Some valid SPIR-V makes the host driver's compiler spin for good. Compile on a worker thread and
++    // give up after a while, so the title never waits on it; a stuck worker keeps its copies alive.
++    struct Build {
++        std::vector<VkPipelineShaderStageCreateInfo> stages;
++        std::vector<VkVertexInputBindingDescription> bindings;
++        std::vector<VkVertexInputAttributeDescription> attributes;
++        std::vector<VkPipelineColorBlendAttachmentState> blends;
++        VkPipelineVertexInputStateCreateInfo vertex_input;
++        VkPipelineInputAssemblyStateCreateInfo input_assembly;
++        VkPipelineViewportStateCreateInfo viewport;
++        VkPipelineRasterizationStateCreateInfo raster;
++        VkPipelineMultisampleStateCreateInfo multisample;
++        VkPipelineDepthStencilStateCreateInfo depth_stencil;
++        VkPipelineColorBlendStateCreateInfo color_blend;
++        VkPipelineDynamicStateCreateInfo dynamic;
++        VkGraphicsPipelineCreateInfo info;
++        VkPipeline result = VK_NULL_HANDLE;
++        VkResult status = VK_NOT_READY;
++    };
++    auto b = std::make_shared<Build>(Build{stages, bindings, attributes, blends, vertex_input, input_assembly,
++                                           viewport, raster, multisample, depth_stencil, color_blend, dynamic, {}});
++    b->vertex_input.pVertexBindingDescriptions = b->bindings.data();
++    b->vertex_input.pVertexAttributeDescriptions = b->attributes.data();
++    b->color_blend.pAttachments = b->blends.data();
++    b->info = VkGraphicsPipelineCreateInfo{
++        .sType = VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO,
++        .pNext = nullptr,
++        .flags = 0,
++        .stageCount = static_cast<u32>(b->stages.size()),
++        .pStages = b->stages.data(),
++        .pVertexInputState = &b->vertex_input,
++        .pInputAssemblyState = &b->input_assembly,
++        .pTessellationState = nullptr,
++        .pViewportState = &b->viewport,
++        .pRasterizationState = &b->raster,
++        .pMultisampleState = &b->multisample,
++        .pDepthStencilState = &b->depth_stencil,
++        .pColorBlendState = &b->color_blend,
++        .pDynamicState = &b->dynamic,
++        .layout = *p->layout,
++        .renderPass = *render_pass,
++        .subpass = 0,
++        .basePipelineHandle = VK_NULL_HANDLE,
++        .basePipelineIndex = 0,
++    };
++    auto promise = std::make_shared<std::promise<void>>();
++    std::future<void> done = promise->get_future();
++    const VkDevice vk_device = *device->GetLogical();
++    const auto create = device->GetDispatchLoader().vkCreateGraphicsPipelines;
++    std::thread([b, promise, vk_device, create] {
++        b->status = create(vk_device, VK_NULL_HANDLE, 1, &b->info, nullptr, &b->result);
++        promise->set_value();
++    }).detach();
++    if (done.wait_for(std::chrono::seconds(5)) != std::future_status::ready) {
++        LOG_ERROR(Render_Vulkan, "nvn_hle: pipeline {:#x} still compiling after 5 s, skipping it", hash);
++        p->error = "compile-timeout";
++    } else if (b->status != VK_SUCCESS) {
++        LOG_ERROR(Render_Vulkan, "nvn_hle: pipeline creation failed: {}", static_cast<int>(b->status));
++        p->error = "vkCreateGraphicsPipelines";
++    } else {
++        p->pipeline = vk::Pipeline(b->result, *device->GetLogical(), device->GetDispatchLoader());
++        p->ok = true;
++        p->trace = true;
++    }
++    return p.get();
++}
++
++void ShadowRenderer::Impl::Draw(const Command& c) {
++    const auto skip = [this](const char* why) {
++        ++skipped_draws;
++        ++skip_reasons[why];
++    };
++    if (num_color_targets == 0 && !depth_target) {
++        return skip("no-targets");
++    }
++    std::vector<HostImage*> colors;
++    for (u32 i = 0; i < num_color_targets; ++i) {
++        HostImage* img = ImageFor(color_targets[i]);
++        if (!img) {
++            return skip("target");
++        }
++        colors.push_back(img);
++    }
++    HostImage* ds = depth_target ? ImageFor(depth_target) : nullptr;
++    const auto topology = static_cast<Maxwell::PrimitiveTopology>(c.a[0]);
++    if (topology == Maxwell::PrimitiveTopology::Quads || topology == Maxwell::PrimitiveTopology::QuadStrip) {
++        return skip("quads");
++    }
++    Pipeline* p = GetPipeline(topology);
++    if (!p || !p->ok) {
++        ++skipped_draws;
++        ++skip_reasons["pipeline:" + (p ? p->error : std::string{"null"})];
++        return;
++    }
++
++    const bool trace = p->trace;
++    p->trace = false;
++    const auto mark = [trace](const char* what) {
++        if (trace) {
++            (void)what;
++        }
++    };
++    mark("descriptors");
++    Step("draw: descriptors");
++    // Descriptors, in the binding order the SPIR-V emitter used. Uploads and transitions happen here,
++    // before the render pass begins.
++    std::vector<VkWriteDescriptorSet> writes;
++    std::vector<VkDescriptorBufferInfo> buffer_infos;
++    std::vector<VkDescriptorImageInfo> image_infos;
++    buffer_infos.reserve(256);
++    image_infos.reserve(256);
++    const size_t ubo_align = device->GetUniformBufferAlignment();
++    u32 binding = 0;
++    std::vector<u8> scratch;
++    for (size_t ps = 0; ps < kStages; ++ps) {
++        const Shader::Info* info = p->infos[ps];
++        if (!info) {
++            continue;
++        }
++        const size_t s = kNvnStageOfPipelineStage[ps];
++        for (const auto& desc : info->constant_buffer_descriptors) {
++            for (u32 k = 0; k < desc.count; ++k) {
++                const u32 slot = desc.index + k;
++                scratch.assign(256, 0);
++                if (slot == kTextureBoundBuffer) {
++                    scratch.assign(0x20 + 8 * 32, 0);
++                    std::memcpy(scratch.data() + 0x20, bound.textures[s].data(), 8 * 32);
++                } else if (slot < 18) {
++                    const auto [va, size] = bound.uniform_buffers[s][slot];
++                    const auto cpu = va ? GpuToCpu(va) : std::nullopt;
++                    if (cpu && size) {
++                        scratch.resize(std::min<u64>(size, 0x10000));
++                        memory.ReadBlock(*cpu, scratch.data(), scratch.size());
++                    }
++                }
++                VkBuffer buffer{};
++                const u64 offset = Upload(scratch.data(), scratch.size(), ubo_align, buffer);
++                if (offset == ~u64{0}) {
++                    return skip("stream-full");
++                }
++                buffer_infos.push_back({buffer, offset, scratch.size()});
++                writes.push_back({VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET, nullptr, VK_NULL_HANDLE, binding, k, 1,
++                                  VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, nullptr, &buffer_infos.back(), nullptr});
++            }
++            ++binding;
++        }
++        const size_t ssbo_align = device->GetStorageBufferAlignment();
++        for (const auto& desc : info->storage_buffers_descriptors) {
++            for (u32 k = 0; k < desc.count; ++k) {
++                const u32 off = desc.cbuf_offset + k * 16;
++                const GpuAddr va = Pack(ReadCbuf(s, desc.cbuf_index, off), ReadCbuf(s, desc.cbuf_index, off + 4));
++                const u32 size = ReadCbuf(s, desc.cbuf_index, off + 8);
++                const auto cpu = va ? GpuToCpu(va) : std::nullopt;
++                scratch.assign(std::max<size_t>(16, std::min<size_t>(size, 8 << 20)), 0);
++                if (cpu) {
++                    memory.ReadBlock(*cpu, scratch.data(), std::min<size_t>(size, scratch.size()));
++                }
++                VkBuffer buffer{};
++                const u64 offset = Upload(scratch.data(), scratch.size(), ssbo_align, buffer);
++                if (offset == ~u64{0}) {
++                    return skip("stream-full");
++                }
++                buffer_infos.push_back({buffer, offset, scratch.size()});
++                writes.push_back({VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET, nullptr, VK_NULL_HANDLE, binding, k, 1,
++                                  VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, nullptr, &buffer_infos.back(), nullptr});
++            }
++            ++binding;
++        }
++        if (!info->texture_buffer_descriptors.empty() || !info->image_buffer_descriptors.empty() ||
++            !info->image_descriptors.empty()) {
++            return skip("buffer-or-image-descriptors");
++        }
++        for (const auto& desc : info->texture_descriptors) {
++            for (u32 k = 0; k < desc.count; ++k) {
++                u32 handle = ReadCbuf(s, desc.cbuf_index, desc.cbuf_offset + (k << desc.size_shift));
++                handle <<= desc.shift_left;
++                if (desc.has_secondary) {
++                    handle |= ReadCbuf(s, desc.secondary_cbuf_index, desc.secondary_cbuf_offset)
++                              << desc.secondary_shift_left;
++                }
++                HostImage* img = SampledImage(handle & 0xFFFFF);
++                const VkSampler sampler = SamplerFor((handle >> 20) & 0xFFF);
++                if (!img || !sampler) {
++                    ++skipped_draws;
++                    ++skip_reasons[!sampler ? std::string{"sampler"} : "texture:" + texture_error];
++                    return;
++                }
++                image_infos.push_back({sampler, *img->view, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL});
++                writes.push_back({VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET, nullptr, VK_NULL_HANDLE, binding, k, 1,
++                                  VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, &image_infos.back(), nullptr,
++                                  nullptr});
++            }
++            ++binding;
++        }
++    }
++
++    mark("vertices");
++    Step("draw: vertices");
++    // Vertex and index data, copied from guest memory.
++    std::array<VkBuffer, 16> vbufs{};
++    std::array<VkDeviceSize, 16> voffs{};
++    u32 max_stream = 0;
++    for (u32 i = 0; i < bound.attribs.size() && i < 32; ++i) {
++        const u32 w = bound.attribs[i];
++        if (!((w >> 6) & 1)) {
++            continue;
++        }
++        const u32 stream = w & 0x1f;
++        if (stream >= 16 || vbufs[stream]) {
++            continue;
++        }
++        const auto [va, size] = bound.vertex_buffers[stream];
++        const auto cpu = va ? GpuToCpu(va) : std::nullopt;
++        if (!cpu || !size) {
++            return skip("vertex-buffer");
++        }
++        scratch.resize(std::min<u64>(size, 16 << 20));
++        memory.ReadBlock(*cpu, scratch.data(), scratch.size());
++        voffs[stream] = Upload(scratch.data(), scratch.size(), 16, vbufs[stream]);
++        if (voffs[stream] == ~u64{0}) {
++            return skip("stream-full");
++        }
++        max_stream = std::max(max_stream, stream + 1);
++    }
++    VkBuffer index_buffer{};
++    u64 index_offset = 0;
++    VkIndexType index_type = VK_INDEX_TYPE_UINT16;
++    const bool indexed = c.op == Op::DrawElements;
++    if (indexed) {
++        const u32 type = static_cast<u32>(c.a[1]);
++        const u32 index_size = type == 0 ? 1 : type == 1 ? 2 : 4;
++        index_type = MaxwellToVK::IndexFormat(static_cast<Maxwell::IndexFormat>(type));
++        const auto cpu = GpuToCpu(c.a[3]);
++        if (!cpu) {
++            return skip("index-buffer");
++        }
++        scratch.resize(size_t{index_size} * c.a[2]);
++        memory.ReadBlock(*cpu, scratch.data(), scratch.size());
++        if (index_size == 1 && index_type == VK_INDEX_TYPE_UINT16) {  // no 8-bit indices on this device
++            std::vector<u8> wide(scratch.size() * 2);
++            for (size_t i = 0; i < scratch.size(); ++i) {
++                wide[2 * i] = scratch[i];
++            }
++            scratch = std::move(wide);
++        }
++        index_offset = Upload(scratch.data(), scratch.size(), 4, index_buffer);
++        if (index_offset == ~u64{0}) {
++            return skip("stream-full");
++        }
++    }
++
++    mark("render pass");
++    Step("draw: render pass");
++    // Attachments and render pass.
++    for (HostImage* img : colors) {
++        Transition(*img, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL);
++    }
++    if (ds) {
++        Transition(*ds, VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL);
++    }
++    std::vector<u64> targets;
++    u32 width = ~0u, height = ~0u;
++    std::vector<VkImageView> views;
++    std::vector<u32> rp_key{num_color_targets};
++    for (HostImage* img : colors) {
++        targets.push_back(reinterpret_cast<u64>(*img->view));
++        views.push_back(*img->view);
++        rp_key.push_back(img->format);
++        width = std::min(width, img->width);
++        height = std::min(height, img->height);
++    }
++    rp_key.push_back(ds ? ds->format : 0);
++    if (ds) {
++        targets.push_back(reinterpret_cast<u64>(*ds->view));
++        views.push_back(*ds->view);
++        width = std::min(width, ds->width);
++        height = std::min(height, ds->height);
++    }
++    const VkRenderPass render_pass = *render_passes[rp_key];
++    vk::CommandBuffer cmd = Cmd();
++    if (!in_render_pass || active_targets != targets) {
++        EndRenderPass();
++        targets.push_back(reinterpret_cast<u64>(render_pass));
++        auto& fb = framebuffers[targets];
++        if (!fb) {
++            fb = device->GetLogical().CreateFramebuffer({
++                .sType = VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO,
++                .pNext = nullptr,
++                .flags = 0,
++                .renderPass = render_pass,
++                .attachmentCount = static_cast<u32>(views.size()),
++                .pAttachments = views.data(),
++                .width = width,
++                .height = height,
++                .layers = 1,
++            });
++        }
++        targets.pop_back();
++        cmd.BeginRenderPass(
++            {
++                .sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO,
++                .pNext = nullptr,
++                .renderPass = render_pass,
++                .framebuffer = *fb,
++                .renderArea = {{0, 0}, {width, height}},
++                .clearValueCount = 0,
++                .pClearValues = nullptr,
++            },
++            VK_SUBPASS_CONTENTS_INLINE);
++        in_render_pass = true;
++        active_targets = targets;
++    }
++    cmd.BindPipeline(VK_PIPELINE_BIND_POINT_GRAPHICS, *p->pipeline);
++    if (*p->set_layout) {
++        const VkDescriptorSetLayout layout = *p->set_layout;
++        auto sets = descriptor_pool.Allocate({
++            .sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO,
++            .pNext = nullptr,
++            .descriptorPool = *descriptor_pool,
++            .descriptorSetCount = 1,
++            .pSetLayouts = &layout,
++        });
++        for (auto& w : writes) {
++            w.dstSet = sets[0];
++        }
++        device->GetLogical().UpdateDescriptorSets(writes, {});
++        cmd.BindDescriptorSets(VK_PIPELINE_BIND_POINT_GRAPHICS, *p->layout, 0, sets[0], {});
++    }
++    std::array<u8, sizeof(Shader::Backend::SPIRV::RescalingLayout) + sizeof(Shader::Backend::SPIRV::RenderAreaLayout)>
++        push{};
++    const float one = 1.0f;
++    std::memcpy(push.data() + Shader::Backend::SPIRV::RESCALING_LAYOUT_DOWN_FACTOR_OFFSET, &one, sizeof(one));
++    cmd.PushConstants(*p->layout, VK_SHADER_STAGE_ALL_GRAPHICS, 0, static_cast<u32>(push.size()), push.data());
++    const VkViewport vp{bound.viewport[0], bound.viewport[1], bound.viewport[2], bound.viewport[3],
++                        bound.depth_range[0], bound.depth_range[1]};
++    cmd.SetViewport(0, vp);
++    const VkRect2D scissor{{static_cast<s32>(bound.scissor[0]), static_cast<s32>(bound.scissor[1])},
++                           {std::min(bound.scissor[2], width), std::min(bound.scissor[3], height)}};
++    cmd.SetScissor(0, scissor);
++    cmd.SetBlendConstants(bound.blend_color.data());
++    for (u32 s = 0; s < max_stream; ++s) {
++        if (vbufs[s]) {
++            cmd.BindVertexBuffers(s, 1, &vbufs[s], &voffs[s]);
++        }
++    }
++    if (indexed) {
++        cmd.BindIndexBuffer(index_buffer, index_offset, index_type);
++        const u32 instances = c.words.empty() ? 1 : std::max<u32>(1, c.words[0]);
++        cmd.DrawIndexed(static_cast<u32>(c.a[2]), instances, 0, static_cast<s32>(c.a[4]),
++                        static_cast<u32>(c.a[5]));
++    } else {
++        // DrawArraysInstanced(mode, first, count, baseInstance, instanceCount)
++        cmd.Draw(static_cast<u32>(c.a[2]), std::max<u32>(1, static_cast<u32>(c.a[4])), static_cast<u32>(c.a[1]),
++                 static_cast<u32>(c.a[3]));
++    }
++    for (HostImage* img : colors) {
++        img->rendered = true;
++        ++img->draws;
++    }
++    if (ds) {
++        ds->rendered = true;
++    }
++    mark("done");
++    Step("draw: recorded");
++    ++draws;
++}
++
++} // namespace NvnHle
+diff --git a/src/nvn_hle/model.h b/src/nvn_hle/model.h
+index 6b7a61f..f0a8302 100644
+--- a/src/nvn_hle/model.h
++++ b/src/nvn_hle/model.h
+@@ -4,6 +4,7 @@
+ #pragma once
+ 
+ #include <array>
++#include <map>
+ #include <memory>
+ #include <mutex>
+ #include <unordered_map>
+@@ -26,7 +27,14 @@ struct MemoryPool {
+     GuestAddr storage = 0;  // CPU address of the memory the title gave the pool
+     u64 size = 0;
+     u32 flags = 0;
+-    GpuAddr gpu = 0;        // 0 until learnt from an address query
++    GpuAddr gpu = 0;        // NVNmemoryPool +0x18: GPU address of the pitch (buffer) mapping
++    GpuAddr gpu2 = 0;       // NVNmemoryPool +0x20: GPU address of the second (texture) mapping
++};
++
++/// A range of a virtual memory pool backed by a physical pool (nvnMemoryPoolMapVirtual).
++struct VirtualMapping {
++    u64 size = 0;
++    GuestAddr cpu = 0;
+ };
+ 
+ struct Buffer {
+@@ -103,6 +111,7 @@ struct FrameStats {
+ struct Model {
+     std::mutex lock;
+     std::unordered_map<GuestAddr, MemoryPool> pool_builders, pools;
++    std::map<GpuAddr, VirtualMapping> virtual_mappings;  // by GPU address
+     std::unordered_map<GuestAddr, Buffer> buffer_builders, buffers;
+     std::unordered_map<GuestAddr, TextureDesc> texture_builders;
+     std::unordered_map<GuestAddr, Texture> textures;
+diff --git a/src/nvn_hle/recorder.cpp b/src/nvn_hle/recorder.cpp
+index 34d889f..f3ea86e 100644
+--- a/src/nvn_hle/recorder.cpp
++++ b/src/nvn_hle/recorder.cpp
+@@ -1,6 +1,7 @@
+ // SPDX-FileCopyrightText: 2026 SWITCHPILER
+ // SPDX-License-Identifier: GPL-3.0-or-later
+ 
++#include <atomic>
+ #include <bit>
+ #include <cstdio>
+ #include <cstdlib>
+@@ -41,6 +42,7 @@ Recorder::~Recorder() {
+ bool Recorder::WantsReturn(const char* name) {
+     static const char* const kWithResult[] = {
+         "nvnCommandBufferEndRecording", "nvnMemoryPoolGetBufferAddress", "nvnBufferGetAddress",
++        "nvnMemoryPoolInitialize",
+         "nvnWindowAcquireTexture",
+     };
+     for (const char* n : kWithResult) {
+@@ -51,7 +53,10 @@ bool Recorder::WantsReturn(const char* name) {
+     return false;
+ }
+ 
++std::atomic<u64> g_nvn_calls{0};
++
+ void Recorder::OnCall(const NvnTrace::CallView& call) {
++    g_nvn_calls.fetch_add(1, std::memory_order_relaxed);
+     const Handler* h = Find(call.id, call.name);
+     if (h && h->on_call) {
+         Args a{call};
+@@ -132,9 +137,43 @@ void Recorder::Register() {
+         std::scoped_lock lk{m.lock};
+         m.pool_builders[a.x(0)].flags = static_cast<u32>(a.x(1));
+     });
+-    On("nvnMemoryPoolInitialize", [&m](Args& a) {
++    On("nvnMemoryPoolInitialize",
++       [&m, this](Args& a) {
++           std::scoped_lock lk{m.lock};
++           m.pools[a.x(0)] = m.pool_builders[a.x(1)];
++           pending_pool_init[a.call.x[31]] = a.x(0);
++       },
++       [&m, this](Args& a) {
++           // NVNmemoryPool keeps its GPU address at +0x18 (nvnMemoryPoolGetBufferAddress)
++           std::scoped_lock lk{m.lock};
++           if (auto it = pending_pool_init.find(a.call.x[31]); it != pending_pool_init.end()) {
++               if (auto p = m.pools.find(it->second); p != m.pools.end()) {
++                   p->second.gpu = a.r64(it->second + 0x18);
++                   p->second.gpu2 = a.r64(it->second + 0x20);
++               }
++               pending_pool_init.erase(it);
++           }
++       });
++    On("nvnMemoryPoolMapVirtual", [&m](Args& a) {
++        // (virtualPool, count, const NVNmappingRequest*): requests are 40 bytes: physical pool (0 = unmap),
++        // physical offset, virtual offset, size, storage class (decoded from the driver's implementation).
+         std::scoped_lock lk{m.lock};
+-        m.pools[a.x(0)] = m.pool_builders[a.x(1)];
++        const GpuAddr base = a.r64(a.x(0) + 0x18);
++        for (u64 i = 0; i < a.x(1); ++i) {
++            const GuestAddr req = a.x(2) + 40 * i;
++            const GuestAddr phys = a.r64(req);
++            const u64 poff = a.r64(req + 8), voff = a.r64(req + 16), size = a.r64(req + 24);
++            const GpuAddr gpu = base + voff;
++            for (auto it = m.virtual_mappings.lower_bound(gpu);
++                 it != m.virtual_mappings.end() && it->first < gpu + size;) {
++                it = m.virtual_mappings.erase(it);
++            }
++            if (phys) {
++                if (auto p = m.pools.find(phys); p != m.pools.end() && p->second.storage) {
++                    m.virtual_mappings[gpu] = VirtualMapping{size, p->second.storage + poff};
++                }
++            }
++        }
+     });
+     On("nvnMemoryPoolFinalize", [&m](Args& a) {
+         std::scoped_lock lk{m.lock};
+@@ -471,6 +510,20 @@ void Recorder::Register() {
+     });
+ }
+ 
++ShadowRenderer* Recorder::Renderer() {
++    if (!renderer_tried) {
++        renderer_tried = true;
++        if (const char* off = std::getenv("SUYU_NVN_HLE_NO_RENDER"); off && *off) {
++            return nullptr;
++        }
++        renderer = std::make_unique<ShadowRenderer>(model, system.ApplicationMemory());
++        if (!renderer->Ok()) {
++            renderer.reset();
++        }
++    }
++    return renderer.get();
++}
++
+ void Recorder::Submit(u64 handle, int depth) {
+     auto it = model.finished.find(handle);
+     if (it == model.finished.end()) {
+@@ -478,6 +531,11 @@ void Recorder::Submit(u64 handle, int depth) {
+         return;
+     }
+     const auto list = it->second;
++    if (depth == 0) {
++        if (ShadowRenderer* r = Renderer()) {
++            r->Execute(*list);
++        }
++    }
+     for (const Command& c : list->commands) {
+         ++model.frame.commands;
+         switch (c.op) {
+@@ -565,8 +623,11 @@ void Recorder::EndFrame(GuestAddr window, u32 index) {
+         sampled_formats.clear();
+     }
+     model.frame = {};
+-    (void)window;
+-    (void)index;
++    if (ShadowRenderer* r = Renderer()) {
++        if (auto w = model.windows.find(window); w != model.windows.end() && index < w->second.textures.size()) {
++            r->Present(w->second.textures[index], model.frames);
++        }
++    }
+ }
+ 
+ void InstallFromEnvironment(Core::System& system) {
+diff --git a/src/nvn_hle/recorder.h b/src/nvn_hle/recorder.h
+index ca2107d..bdf23e9 100644
+--- a/src/nvn_hle/recorder.h
++++ b/src/nvn_hle/recorder.h
+@@ -15,6 +15,7 @@
+ 
+ #include "core/arm/recomp/nvn_trace.h"
+ #include "nvn_hle/model.h"
++#include "nvn_hle/renderer.h"
+ 
+ namespace Core {
+ class System;
+@@ -63,6 +64,9 @@ private:
+ 
+     Core::System& system;
+     Model model;
++    std::unique_ptr<ShadowRenderer> renderer;
++    bool renderer_tried = false;
++    ShadowRenderer* Renderer();
+     std::FILE* log = nullptr;
+ 
+     std::mutex handlers_lock;
+@@ -70,7 +74,7 @@ private:
+     std::vector<Slot> by_id;
+ 
+     // calls waiting for their result, by guest SP (guarded by model.lock)
+-    std::unordered_map<u64, GuestAddr> pending_pool, pending_buffer, pending_cmd;
++    std::unordered_map<u64, GuestAddr> pending_pool, pending_buffer, pending_cmd, pending_pool_init;
+ 
+     FrameStats totals;
+     std::map<std::tuple<u32, u32, u32>, u64> render_targets;
+diff --git a/src/nvn_hle/renderer.cpp b/src/nvn_hle/renderer.cpp
+new file mode 100644
+index 0000000..88d3f82
+--- /dev/null
++++ b/src/nvn_hle/renderer.cpp
+@@ -0,0 +1,744 @@
++// SPDX-FileCopyrightText: 2026 SWITCHPILER
++// SPDX-License-Identifier: GPL-3.0-or-later
++
++#include "nvn_hle/renderer_impl.h"
++
++#include <algorithm>
++#include <bit>
++#include <cmath>
++#include <cstring>
++#include <atomic>
++#include <chrono>
++#include <string_view>
++#include <thread>
++#include <cstdio>
++#include <cstdlib>
++#include <filesystem>
++#include <vector>
++
++#include "common/cityhash.h"
++#include "common/dynamic_library.h"
++#include "common/logging/log.h"
++#include "core/arm/recomp/nvn_trace.h"
++#include "core/frontend/graphics_context.h"
++#include "core/memory.h"
++#include "video_core/renderer_vulkan/maxwell_to_vk.h"
++#include "video_core/surface.h"
++#include "video_core/texture_cache/format_lookup_table.h"
++#include "video_core/vulkan_common/vulkan_device.h"
++#include "video_core/vulkan_common/vulkan_instance.h"
++#include "video_core/vulkan_common/vulkan_library.h"
++#include "video_core/vulkan_common/vulkan_memory_allocator.h"
++
++namespace NvnHle {
++
++namespace {
++
++// Module-relative location of the pointer to the driver's format table (Tomodachi Life v1.0.0 nnSdk;
++// found in nvnTextureInitialize / nvnCommandBufferBindVertexAttribState). Overridable for other titles.
++u64 FormatTablePointerOffset() {
++    const char* e = std::getenv("SUYU_NVN_FORMAT_TABLE");
++    return e && *e ? std::strtoull(e, nullptr, 0) : 0xb69208;
++}
++
++using VideoCore::Surface::PixelFormat;
++
++u64 Pack(u32 lo, u32 hi) {
++    return lo | (u64{hi} << 32);
++}
++
++std::atomic<const char*> g_step{"idle"};
++std::atomic<u64> g_step_count{0};
++
++} // namespace
++
++void Step(const char* what) {
++    g_step.store(what, std::memory_order_relaxed);
++    g_step_count.fetch_add(1, std::memory_order_relaxed);
++}
++
++ShadowRenderer::Impl::Impl(Model& model_, Core::Memory::Memory& memory_) : model{model_}, memory{memory_} {}
++
++void ShadowRenderer::Impl::Init() {
++    std::thread([] {
++        u64 last = 0;
++        int still = 0;
++        while (true) {
++            std::this_thread::sleep_for(std::chrono::seconds(1));
++            const u64 now = g_step_count.load(std::memory_order_relaxed);
++            const char* step = g_step.load(std::memory_order_relaxed);
++            still = (now == last && std::string_view{step} != "idle") ? still + 1 : 0;
++            last = now;
++            static u64 last_calls = 0;
++            static int ticks = 0;
++            if (++ticks % 5 == 0) {
++                extern std::atomic<u64> g_nvn_calls;
++                const u64 calls = g_nvn_calls.load(std::memory_order_relaxed);
++                std::fprintf(stderr, "nvn_hle heartbeat: %llu NVN calls in 5 s, step '%s'\n",
++                             static_cast<unsigned long long>(calls - last_calls), step);
++                std::fflush(stderr);
++                last_calls = calls;
++            }
++            if (still == 5) {
++                // straight to stderr: the logger itself may be what is blocked
++                std::fprintf(stderr, "nvn_hle watchdog: stuck in '%s' for 5 s\n", step);
++                std::fflush(stderr);
++            }
++        }
++    }).detach();
++    if (const char* e = std::getenv("SUYU_NVN_HLE_DUMP_EVERY"); e && *e) {
++        dump_every = std::max<u64>(1, std::strtoull(e, nullptr, 0));
++    }
++    const char* dir = std::getenv("SUYU_NVN_HLE_DUMP_DIR");
++    dump_dir = dir && *dir ? dir : "nvn-hle-frames";
++    std::filesystem::create_directories(dump_dir);
++    try {
++        library = Vulkan::OpenLibrary();
++        instance = Vulkan::CreateInstance(*library, dld, VK_API_VERSION_1_1,
++                                          Core::Frontend::WindowSystemType::Headless, false);
++        const std::vector<VkPhysicalDevice> devices = instance.EnumeratePhysicalDevices();
++        if (devices.empty()) {
++            throw vk::Exception(VK_ERROR_INITIALIZATION_FAILED);
++        }
++        const vk::PhysicalDevice physical(devices[0], dld);
++        device = std::make_unique<Vulkan::Device>(*instance, physical, VkSurfaceKHR{}, dld);
++        allocator = std::make_unique<Vulkan::MemoryAllocator>(*device);
++        command_pool = device->GetLogical().CreateCommandPool({
++            .sType = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO,
++            .pNext = nullptr,
++            .flags = VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT,
++            .queueFamilyIndex = device->GetGraphicsFamily(),
++        });
++        command_buffers = command_pool.Allocate(1);
++        fence = device->GetLogical().CreateFence({
++            .sType = VK_STRUCTURE_TYPE_FENCE_CREATE_INFO,
++            .pNext = nullptr,
++            .flags = 0,
++        });
++        clear_depth_stencil = reinterpret_cast<PFN_vkCmdClearDepthStencilImage>(
++            dld.vkGetDeviceProcAddr(*device->GetLogical(), "vkCmdClearDepthStencilImage"));
++        reset_descriptor_pool = reinterpret_cast<PFN_vkResetDescriptorPool>(
++            dld.vkGetDeviceProcAddr(*device->GetLogical(), "vkResetDescriptorPool"));
++        stream_buffer = allocator->CreateBuffer(
++            {
++                .sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO,
++                .pNext = nullptr,
++                .flags = 0,
++                .size = kStreamSize,
++                .usage = VK_BUFFER_USAGE_VERTEX_BUFFER_BIT | VK_BUFFER_USAGE_INDEX_BUFFER_BIT |
++                         VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT | VK_BUFFER_USAGE_STORAGE_BUFFER_BIT |
++                         VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
++                .sharingMode = VK_SHARING_MODE_EXCLUSIVE,
++                .queueFamilyIndexCount = 0,
++                .pQueueFamilyIndices = nullptr,
++            },
++            Vulkan::MemoryUsage::Upload);
++        const std::array<VkDescriptorPoolSize, 6> sizes{{
++            {VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 8192},
++            {VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 4096},
++            {VK_DESCRIPTOR_TYPE_UNIFORM_TEXEL_BUFFER, 1024},
++            {VK_DESCRIPTOR_TYPE_STORAGE_TEXEL_BUFFER, 1024},
++            {VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 8192},
++            {VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, 1024},
++        }};
++        descriptor_pool = device->GetLogical().CreateDescriptorPool({
++            .sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO,
++            .pNext = nullptr,
++            .flags = 0,
++            .maxSets = 4096,
++            .poolSizeCount = static_cast<u32>(sizes.size()),
++            .pPoolSizes = sizes.data(),
++        });
++        const auto& float_control{device->FloatControlProperties()};
++        profile = Shader::Profile{
++            .supported_spirv = device->SupportedSpirvVersion(),
++            .unified_descriptor_binding = true,
++            .support_descriptor_aliasing = device->IsDescriptorAliasingSupported(),
++            .support_int8 = device->IsInt8Supported(),
++            .support_uniform_and_storage_buffer_8bit = device->IsUniformAndStorageBuffer8BitAccessSupported(),
++            .support_int16 = device->IsShaderInt16Supported(),
++            .support_uniform_and_storage_buffer_16bit = device->IsUniformAndStorageBuffer16BitAccessSupported(),
++            .support_int64 = device->IsShaderInt64Supported(),
++            .support_vertex_instance_id = false,
++            .support_float_controls = device->IsKhrShaderFloatControlsSupported(),
++            .support_separate_denorm_behavior =
++                float_control.denormBehaviorIndependence == VK_SHADER_FLOAT_CONTROLS_INDEPENDENCE_ALL,
++            .support_separate_rounding_mode =
++                float_control.roundingModeIndependence == VK_SHADER_FLOAT_CONTROLS_INDEPENDENCE_ALL,
++            .support_fp16_denorm_preserve = float_control.shaderDenormPreserveFloat16 != VK_FALSE,
++            .support_fp32_denorm_preserve = float_control.shaderDenormPreserveFloat32 != VK_FALSE,
++            .support_fp16_denorm_flush = float_control.shaderDenormFlushToZeroFloat16 != VK_FALSE,
++            .support_fp32_denorm_flush = float_control.shaderDenormFlushToZeroFloat32 != VK_FALSE,
++            .support_fp16_signed_zero_nan_preserve = float_control.shaderSignedZeroInfNanPreserveFloat16 != VK_FALSE,
++            .support_fp32_signed_zero_nan_preserve = float_control.shaderSignedZeroInfNanPreserveFloat32 != VK_FALSE,
++            .support_fp64_signed_zero_nan_preserve = float_control.shaderSignedZeroInfNanPreserveFloat64 != VK_FALSE,
++            .support_explicit_workgroup_layout = device->IsKhrWorkgroupMemoryExplicitLayoutSupported(),
++            .support_vote = device->IsSubgroupFeatureSupported(VK_SUBGROUP_FEATURE_VOTE_BIT),
++            .supported_subgroup_stages = 0,
++            .support_viewport_index_layer_non_geometry = device->IsExtShaderViewportIndexLayerSupported(),
++            .support_viewport_mask = device->IsNvViewportArray2Supported(),
++            .support_typeless_image_loads = device->IsFormatlessImageLoadSupported(),
++            .support_demote_to_helper_invocation = device->IsExtShaderDemoteToHelperInvocationSupported(),
++            .support_int64_atomics = device->IsExtShaderAtomicInt64Supported(),
++            .support_derivative_control = true,
++            .support_geometry_shader_passthrough = device->IsNvGeometryShaderPassthroughSupported(),
++            .support_native_ndc = device->IsExtDepthClipControlSupported(),
++            .support_scaled_attributes = !device->MustEmulateScaledFormats(),
++            .support_multi_viewport = device->SupportsMultiViewport(),
++            .support_geometry_streams = device->AreTransformFeedbackGeometryStreamsSupported(),
++            .support_sampled_image_array_nonuniform_indexing =
++                device->IsSampledImageArrayNonUniformIndexingSupported(),
++            .warp_size_potentially_larger_than_guest = device->IsWarpSizePotentiallyBiggerThanGuest(),
++            .lower_left_origin_mode = false,
++            .need_declared_frag_colors = false,
++            .need_gather_subpixel_offset = false,
++            .has_broken_spirv_clamp = false,
++            .has_broken_spirv_position_input = false,
++            .has_broken_unsigned_image_offsets = false,
++            .has_broken_signed_operations = false,
++            .has_broken_fp16_float_controls = device->GetDriverID() == VK_DRIVER_ID_NVIDIA_PROPRIETARY,
++            .ignore_nan_fp_comparisons = false,
++            .has_broken_spirv_subgroup_mask_vector_extract_dynamic = false,
++            .has_broken_robust = false,
++            .min_ssbo_alignment = device->GetStorageBufferAlignment(),
++            .max_user_clip_distances = device->GetMaxUserClipDistances(),
++        };
++        host_info = Shader::HostTranslateInfo{
++            .min_ssbo_alignment = device->GetStorageBufferAlignment(),
++            .max_per_stage_descriptor_sampled_images = device->GetMaxPerStageDescriptorSampledImages(),
++            .max_per_stage_resources = device->GetMaxPerStageResources(),
++            .max_descriptor_set_samplers = device->GetMaxDescriptorSetSamplers(),
++            .max_descriptor_set_uniform_buffers = device->GetMaxDescriptorSetUniformBuffers(),
++            .max_descriptor_set_uniform_buffers_dynamic = device->GetMaxDescriptorSetUniformBuffersDynamic(),
++            .max_descriptor_set_storage_buffers = device->GetMaxDescriptorSetStorageBuffers(),
++            .max_descriptor_set_storage_buffers_dynamic = device->GetMaxDescriptorSetStorageBuffersDynamic(),
++            .max_descriptor_set_sampled_images = device->GetMaxDescriptorSetSampledImages(),
++            .max_descriptor_set_storage_images = device->GetMaxDescriptorSetStorageImages(),
++            .max_descriptor_set_input_attachements = device->GetMaxDescriptorSetInputAttachments(),
++            .support_float64 = device->IsFloat64Supported(),
++            .support_float16 = device->IsFloat16Supported(),
++            .support_int64 = device->IsShaderInt64Supported(),
++            .needs_demote_reorder = false,
++            .support_snorm_render_buffer = true,
++            .support_viewport_index_layer = device->IsExtShaderViewportIndexLayerSupported(),
++            .support_geometry_shader_passthrough = device->IsNvGeometryShaderPassthroughSupported(),
++            .support_conditional_barrier = device->SupportsConditionalBarriers(),
++        };
++        host_info.ApplyDescriptorLimitPolicy();
++        LOG_INFO(Render_Vulkan, "nvn_hle: shadow renderer on {}", device->GetDriverName());
++    } catch (const vk::Exception& e) {
++        LOG_ERROR(Render_Vulkan, "nvn_hle: no Vulkan device for the shadow renderer: {}", e.what());
++        device.reset();
++    }
++}
++
++ShadowRenderer::Impl::~Impl() {
++    if (device) {
++        device->GetLogical().WaitIdle();
++    }
++}
++
++std::optional<GuestAddr> ShadowRenderer::Impl::GpuToCpu(GpuAddr va) {
++    // Pools are few hundred to a few thousand; a linear scan per lookup is fine for a first version.
++    if (auto it = model.virtual_mappings.upper_bound(va); it != model.virtual_mappings.begin()) {
++        --it;
++        if (va < it->first + it->second.size) {
++            return it->second.cpu + (va - it->first);
++        }
++    }
++    for (const auto& [addr, pool] : model.pools) {
++        if (!pool.storage) {
++            continue;
++        }
++        if (pool.gpu && va >= pool.gpu && va < pool.gpu + pool.size) {
++            return pool.storage + (va - pool.gpu);
++        }
++        if (pool.gpu2 && va >= pool.gpu2 && va < pool.gpu2 + pool.size) {
++            return pool.storage + (va - pool.gpu2);
++        }
++    }
++    return std::nullopt;
++}
++
++FormatInfo ShadowRenderer::Impl::Format(u32 nvn_format) {
++    if (auto it = formats.find(nvn_format); it != formats.end()) {
++        return it->second;
++    }
++    FormatInfo info;
++    const u64 boot = NvnTrace::BootstrapAddress();
++    if (boot) {
++        const u64 base = boot - NvnTrace::BootstrapOffset();
++        const u64 table = memory.Read64(base + FormatTablePointerOffset());
++        if (table) {
++            const u64 entry = table + u64{nvn_format} * 0x30;
++            info.bytes_per_block = memory.Read32(entry + 0x10) & 0xff;
++            info.vertex_attribute = memory.Read32(entry + 0x14);
++            info.render_target = memory.Read32(entry + 0x18);
++            info.tic_word0 = memory.Read32(entry + 0x24);  // +0x20 is a near copy shifted by one bit
++            info.valid = true;
++        }
++    }
++    formats.emplace(nvn_format, info);
++    return info;
++}
++
++u64 ShadowRenderer::Impl::ImageKey(GuestAddr texture) {
++    auto t = model.textures.find(texture);
++    if (t == model.textures.end() || !t->second.desc.pool) {
++        return texture;
++    }
++    const std::array<u64, 2> storage{t->second.desc.pool, t->second.desc.offset};
++    return Common::CityHash64(reinterpret_cast<const char*>(storage.data()), sizeof(storage));
++}
++
++HostImage* ShadowRenderer::Impl::ImageFor(GuestAddr texture) {
++    auto t = model.textures.find(texture);
++    if (t == model.textures.end()) {
++        return nullptr;
++    }
++    const TextureDesc& d = t->second.desc;
++    // NVN texture objects are views of storage: the window's textures and the targets the title draws
++    // into are different objects over the same memory. Key the host image by that memory.
++    auto& img = images[ImageKey(texture)];
++    if (img.image && img.width == std::max(1u, d.width) && img.height == std::max(1u, d.height) &&
++        img.nvn_format == d.format) {
++        return &img;
++    }
++    const FormatInfo fi = Format(d.format);
++    if (!fi.valid) {
++        return nullptr;
++    }
++    const u32 w0 = fi.tic_word0;
++    using Tegra::Texture::ComponentType;
++    const PixelFormat pf = VideoCommon::PixelFormatFromTextureInfo(
++        static_cast<Tegra::Texture::TextureFormat>(w0 & 0x7f), static_cast<ComponentType>((w0 >> 7) & 7),
++        static_cast<ComponentType>((w0 >> 10) & 7), static_cast<ComponentType>((w0 >> 13) & 7),
++        static_cast<ComponentType>((w0 >> 16) & 7), false);
++    const auto vk_format = Vulkan::MaxwellToVK::SurfaceFormat(*device, Vulkan::FormatType::Optimal, false, pf);
++    const auto type = VideoCore::Surface::GetFormatType(pf);
++    const bool depth = type != VideoCore::Surface::SurfaceType::ColorTexture;
++    img = HostImage{};
++    img.format = vk_format.format;
++    img.width = std::max(1u, d.width);
++    img.height = std::max(1u, d.height);
++    img.serial = t->second.serial;
++    img.nvn_format = d.format;
++    img.aspect = !depth ? VkImageAspectFlags{VK_IMAGE_ASPECT_COLOR_BIT}
++                 : type == VideoCore::Surface::SurfaceType::Depth ? VkImageAspectFlags{VK_IMAGE_ASPECT_DEPTH_BIT}
++                 : type == VideoCore::Surface::SurfaceType::Stencil
++                     ? VkImageAspectFlags{VK_IMAGE_ASPECT_STENCIL_BIT}
++                     : VkImageAspectFlags{VK_IMAGE_ASPECT_DEPTH_BIT | VK_IMAGE_ASPECT_STENCIL_BIT};
++    VkImageUsageFlags usage = VK_IMAGE_USAGE_TRANSFER_SRC_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT |
++                              VK_IMAGE_USAGE_SAMPLED_BIT;
++    if (vk_format.attachable) {
++        usage |= depth ? VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT : VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT;
++    }
++    img.image = allocator->CreateImage({
++        .sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO,
++        .pNext = nullptr,
++        .flags = 0,
++        .imageType = VK_IMAGE_TYPE_2D,
++        .format = img.format,
++        .extent = {img.width, img.height, 1},
++        .mipLevels = 1,
++        .arrayLayers = 1,
++        .samples = VK_SAMPLE_COUNT_1_BIT,
++        .tiling = VK_IMAGE_TILING_OPTIMAL,
++        .usage = usage,
++        .sharingMode = VK_SHARING_MODE_EXCLUSIVE,
++        .queueFamilyIndexCount = 0,
++        .pQueueFamilyIndices = nullptr,
++        .initialLayout = VK_IMAGE_LAYOUT_UNDEFINED,
++    });
++    const VkImageAspectFlags view_aspect =
++        (img.aspect & VK_IMAGE_ASPECT_DEPTH_BIT) ? VkImageAspectFlags{VK_IMAGE_ASPECT_DEPTH_BIT} : img.aspect;
++    img.view = device->GetLogical().CreateImageView({
++        .sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO,
++        .pNext = nullptr,
++        .flags = 0,
++        .image = *img.image,
++        .viewType = VK_IMAGE_VIEW_TYPE_2D,
++        .format = img.format,
++        .components = {VK_COMPONENT_SWIZZLE_IDENTITY, VK_COMPONENT_SWIZZLE_IDENTITY,
++                       VK_COMPONENT_SWIZZLE_IDENTITY, VK_COMPONENT_SWIZZLE_IDENTITY},
++        .subresourceRange = {view_aspect, 0, 1, 0, 1},
++    });
++    img.layout = VK_IMAGE_LAYOUT_UNDEFINED;
++    return &img;
++}
++
++vk::CommandBuffer ShadowRenderer::Impl::Cmd() {
++    Begin();
++    return vk::CommandBuffer{command_buffers[0], device->GetDispatchLoader()};
++}
++
++void ShadowRenderer::Impl::Begin() {
++    if (recording) {
++        return;
++    }
++    vk::CommandBuffer{command_buffers[0], device->GetDispatchLoader()}.Begin({
++        .sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO,
++        .pNext = nullptr,
++        .flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT,
++        .pInheritanceInfo = nullptr,
++    });
++    recording = true;
++}
++
++void ShadowRenderer::Impl::Flush() {
++    if (!recording) {
++        return;
++    }
++    EndRenderPass();
++    stream_buffer.Flush();
++    vk::CommandBuffer cmdbuf{command_buffers[0], device->GetDispatchLoader()};
++    cmdbuf.End();
++    const VkCommandBuffer handle = command_buffers[0];
++    const VkSubmitInfo submit{
++        .sType = VK_STRUCTURE_TYPE_SUBMIT_INFO,
++        .pNext = nullptr,
++        .waitSemaphoreCount = 0,
++        .pWaitSemaphores = nullptr,
++        .pWaitDstStageMask = nullptr,
++        .commandBufferCount = 1,
++        .pCommandBuffers = &handle,
++        .signalSemaphoreCount = 0,
++        .pSignalSemaphores = nullptr,
++    };
++    Step("queue submit + fence wait");
++    const auto t0 = std::chrono::steady_clock::now();
++    const VkResult submitted = device->GetGraphicsQueue().Submit(submit, *fence);
++    const VkResult waited = submitted == VK_SUCCESS ? fence.Wait(2'000'000'000ULL) : submitted;
++    const auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - t0).count();
++    if (waited != VK_SUCCESS) {
++        // A hung or lost device must not stall the title: the shadow renderer gives up instead.
++        LOG_ERROR(Render_Vulkan, "nvn_hle: GPU did not finish ({}), shadow renderer disabled after {} draws",
++                  static_cast<int>(waited), draws);
++        broken = true;
++    } else if (ms > 200) {
++        LOG_WARNING(Render_Vulkan, "nvn_hle: slow submission: {} ms", ms);
++    }
++    fence.Reset();
++    Step("idle");
++    recording = false;
++    stream_offset = 0;
++    if (reset_descriptor_pool) {
++        reset_descriptor_pool(*device->GetLogical(), *descriptor_pool, 0);
++    }
++}
++
++void ShadowRenderer::Impl::Transition(HostImage& img, VkImageLayout layout) {
++    if (img.layout == layout) {
++        return;
++    }
++    EndRenderPass();
++    const VkImageMemoryBarrier barrier{
++        .sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER,
++        .pNext = nullptr,
++        .srcAccessMask = VK_ACCESS_MEMORY_WRITE_BIT,
++        .dstAccessMask = VK_ACCESS_MEMORY_READ_BIT | VK_ACCESS_MEMORY_WRITE_BIT,
++        .oldLayout = img.layout,
++        .newLayout = layout,
++        .srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
++        .dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
++        .image = *img.image,
++        .subresourceRange = {img.aspect, 0, VK_REMAINING_MIP_LEVELS, 0, 1},
++    };
++    Cmd().PipelineBarrier(VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, 0, {}, {},
++                          barrier);
++    img.layout = layout;
++}
++
++void ShadowRenderer::Impl::Execute(const CommandList& list, int depth) {
++    if (!device || broken) {
++        return;
++    }
++    for (const Command& c : list.commands) {
++        switch (c.op) {
++        case Op::BindBlendState: {
++            const u32 target = c.words[0] & 7;
++            bound.blend_words[target] = {c.words[0], c.words[1]};
++            bound.blend_set[target] = true;
++            break;
++        }
++        case Op::BindColorState:
++            bound.color_word = c.words[0];
++            break;
++        case Op::BindChannelMaskState:
++            bound.channel_mask = c.words[0];
++            break;
++        case Op::BindDepthStencilState:
++            bound.depth_stencil = {c.words[0], c.words[1]};
++            break;
++        case Op::BindPolygonState:
++            bound.polygon = c.words[0];
++            break;
++        case Op::BindVertexAttribState:
++            bound.attribs = c.words;
++            break;
++        case Op::BindVertexStreamState:
++            bound.streams = c.words;
++            break;
++        case Op::BindProgram:
++            bound.program = c.a[0];
++            if (auto p = model.programs.find(c.a[0]); p != model.programs.end()) {
++                bound.program_serial = p->second.serial;
++            }
++            break;
++        case Op::BindVertexBuffer:
++            if (c.a[0] < bound.vertex_buffers.size()) {
++                bound.vertex_buffers[c.a[0]] = {c.a[1], c.a[2]};
++            }
++            break;
++        case Op::BindUniformBuffer:
++            if (c.a[0] < 6 && c.a[1] + kUniformSlotBase < 18) {
++                bound.uniform_buffers[c.a[0]][c.a[1] + kUniformSlotBase] = {c.a[2], c.a[3]};
++            }
++            break;
++        case Op::BindStorageBuffer:
++            if (c.a[0] < 6 && c.a[1] < 16) {
++                bound.storage_buffers[c.a[0]][c.a[1]] = {c.a[2], c.a[3]};
++            }
++            break;
++        case Op::BindTexture:
++            if (c.a[0] < 6 && c.a[1] < 32) {
++                bound.textures[c.a[0]][c.a[1]] = c.a[2];
++            }
++            break;
++        case Op::SetViewport:
++            bound.viewport = {static_cast<float>(static_cast<s32>(c.a[0])),
++                              static_cast<float>(static_cast<s32>(c.a[1])),
++                              static_cast<float>(static_cast<s32>(c.a[2])),
++                              static_cast<float>(static_cast<s32>(c.a[3]))};
++            break;
++        case Op::SetScissor:
++            bound.scissor = {static_cast<u32>(c.a[0]), static_cast<u32>(c.a[1]), static_cast<u32>(c.a[2]),
++                             static_cast<u32>(c.a[3])};
++            break;
++        case Op::SetDepthRange:
++            bound.depth_range = {c.f[0], c.f[1]};
++            break;
++        case Op::SetBlendColor:
++            bound.blend_color = c.f;
++            break;
++        case Op::SetTexturePool:
++            bound.texture_pool = c.a[0];
++            break;
++        case Op::SetSamplerPool:
++            bound.sampler_pool = c.a[0];
++            break;
++        case Op::SetRenderTargets: {
++            EndRenderPass();
++            num_color_targets = static_cast<u32>(std::min<u64>(c.a[0], color_targets.size()));
++            for (u32 i = 0; i < num_color_targets; ++i) {
++                color_targets[i] = Pack(c.words[4 * i], c.words[4 * i + 1]);
++            }
++            depth_target = c.a[1];
++            static int dbg = 0;
++            for (u32 i = 0; i < num_color_targets && dbg < 6; ++i) {
++                if (auto t = model.textures.find(color_targets[i]); t != model.textures.end() &&
++                                                                    t->second.desc.width == 1920) {
++                    ++dbg;
++                    std::fprintf(stderr, "nvn_hle rt: obj %#llx fmt %u pool %#llx off %#llx key %#llx\n",
++                                 (unsigned long long)color_targets[i], t->second.desc.format,
++                                 (unsigned long long)t->second.desc.pool, (unsigned long long)t->second.desc.offset,
++                                 (unsigned long long)ImageKey(color_targets[i]));
++                }
++            }
++            break;
++        }
++        case Op::ClearColor: {
++            const u32 index = static_cast<u32>(c.a[0]);
++            if (index >= num_color_targets) {
++                break;
++            }
++            HostImage* img = ImageFor(color_targets[index]);
++            if (!img || img->aspect != VK_IMAGE_ASPECT_COLOR_BIT) {
++                ++unsupported;
++                break;
++            }
++            Transition(*img, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
++            VkClearColorValue color{};
++            for (size_t i = 0; i < 4; ++i) {
++                color.float32[i] = c.f[i];
++            }
++            const VkImageSubresourceRange range{VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
++            Cmd().ClearColorImage(*img->image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, color, range);
++            img->rendered = true;
++            ++clears;
++            break;
++        }
++        case Op::ClearDepthStencil: {
++            HostImage* img = depth_target ? ImageFor(depth_target) : nullptr;
++            if (!img || img->aspect == VK_IMAGE_ASPECT_COLOR_BIT) {
++                break;
++            }
++            Transition(*img, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
++            const VkClearDepthStencilValue value{c.f[0], static_cast<u32>(c.a[1])};
++            const VkImageSubresourceRange range{img->aspect, 0, 1, 0, 1};
++            if (clear_depth_stencil) {
++                Begin();
++                clear_depth_stencil(command_buffers[0], *img->image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
++                                    &value, 1, &range);
++            }
++            img->rendered = true;
++            ++clears;
++            break;
++        }
++        case Op::DrawArrays:
++        case Op::DrawElements:
++            Draw(c);
++            break;
++        case Op::CallCommands:
++            if (depth < 4) {
++                for (size_t i = 0; i + 1 < c.words.size(); i += 2) {
++                    const u64 h = Pack(c.words[i], c.words[i + 1]);
++                    if (auto it = model.finished.find(h); it != model.finished.end()) {
++                        Execute(*it->second, depth + 1);
++                    }
++                }
++            }
++            break;
++        default:
++            break;
++        }
++    }
++    if (depth == 0) {
++        Flush();
++    }
++}
++
++void ShadowRenderer::Impl::Present(GuestAddr texture, u64 frame) {
++    if (!device || broken || frame % dump_every != 0) {
++        return;
++    }
++    if (HostImage* img = ImageFor(texture)) {
++        if (auto t = model.textures.find(texture); t != model.textures.end()) {
++            std::fprintf(stderr, "nvn_hle window tex: obj %#llx fmt %u pool %#llx off %#llx key %#llx\n",
++                         (unsigned long long)texture, t->second.desc.format, (unsigned long long)t->second.desc.pool,
++                         (unsigned long long)t->second.desc.offset, (unsigned long long)ImageKey(texture));
++        }
++        std::fprintf(stderr, "nvn_hle present %llu: texture %#llx %ux%u vkfmt %d rendered=%d draws=%llu targets-known=%zu\n",
++                     static_cast<unsigned long long>(frame), static_cast<unsigned long long>(texture), img->width,
++                     img->height, static_cast<int>(img->format), img->rendered ? 1 : 0,
++                     static_cast<unsigned long long>(img->draws), images.size());
++        Dump(*img, frame);
++        // and the busiest render target of the session, raw 4-byte texels
++        HostImage* busiest = nullptr;
++        for (auto& [key, other] : images) {
++            if (&other != img && other.aspect == VK_IMAGE_ASPECT_COLOR_BIT &&
++                (!busiest || other.draws > busiest->draws)) {
++                busiest = &other;
++            }
++        }
++        if (busiest) {
++            std::fprintf(stderr, "nvn_hle busiest: %ux%u vkfmt %d draws=%llu\n", busiest->width, busiest->height,
++                         static_cast<int>(busiest->format), static_cast<unsigned long long>(busiest->draws));
++            Dump(*busiest, frame + 1);
++        }
++    }
++}
++
++void ShadowRenderer::Impl::Dump(HostImage& img, u64 frame) {
++    const FormatInfo fi = Format(img.nvn_format);
++    if (img.aspect != VK_IMAGE_ASPECT_COLOR_BIT || (fi.bytes_per_block != 4 && img.format != VK_FORMAT_R8G8B8A8_UNORM)) {
++        return;
++    }
++    const VkDeviceSize size = VkDeviceSize{img.width} * img.height * 4;
++    vk::Buffer buffer = allocator->CreateBuffer(
++        {
++            .sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO,
++            .pNext = nullptr,
++            .flags = 0,
++            .size = size,
++            .usage = VK_BUFFER_USAGE_TRANSFER_DST_BIT,
++            .sharingMode = VK_SHARING_MODE_EXCLUSIVE,
++            .queueFamilyIndexCount = 0,
++            .pQueueFamilyIndices = nullptr,
++        },
++        Vulkan::MemoryUsage::Download);
++    Transition(img, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL);
++    const VkBufferImageCopy copy{
++        .bufferOffset = 0,
++        .bufferRowLength = 0,
++        .bufferImageHeight = 0,
++        .imageSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1},
++        .imageOffset = {0, 0, 0},
++        .imageExtent = {img.width, img.height, 1},
++    };
++    Cmd().CopyImageToBuffer(*img.image, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, *buffer, copy);
++    Flush();
++    buffer.Invalidate();
++    const auto data = buffer.Mapped();
++    const std::string path = dump_dir + "/frame-" + std::to_string(frame) + ".ppm";
++    if (std::FILE* f = std::fopen(path.c_str(), "wb")) {
++        std::fprintf(f, "P6\n%u %u\n255\n", img.width, img.height);
++        const bool bgr = img.format == VK_FORMAT_B8G8R8A8_UNORM || img.format == VK_FORMAT_B8G8R8A8_SRGB;
++        std::vector<u8> row(size_t{img.width} * 3);
++        for (u32 y = 0; y < img.height; ++y) {
++            const u8* src = data.data() + size_t{y} * img.width * 4;
++            for (u32 x = 0; x < img.width; ++x) {
++                if (img.format == VK_FORMAT_B10G11R11_UFLOAT_PACK32) {
++                    u32 v;
++                    std::memcpy(&v, src + x * 4, 4);
++                    const auto small_float = [](u32 bits, u32 mantissa_bits) {
++                        const u32 e = bits >> mantissa_bits, m = bits & ((1u << mantissa_bits) - 1);
++                        const float f = e == 0 ? std::ldexp(static_cast<float>(m), -14 - static_cast<int>(mantissa_bits))
++                                               : std::ldexp(1.0f + static_cast<float>(m) / (1u << mantissa_bits),
++                                                            static_cast<int>(e) - 15);
++                        return static_cast<u8>(std::clamp(f, 0.0f, 1.0f) * 255.0f + 0.5f);
++                    };
++                    row[x * 3 + 0] = small_float(v & 0x7ff, 6);
++                    row[x * 3 + 1] = small_float((v >> 11) & 0x7ff, 6);
++                    row[x * 3 + 2] = small_float(v >> 22, 5);
++                    continue;
++                }
++                row[x * 3 + 0] = src[x * 4 + (bgr ? 2 : 0)];
++                row[x * 3 + 1] = src[x * 4 + 1];
++                row[x * 3 + 2] = src[x * 4 + (bgr ? 0 : 2)];
++            }
++            std::fwrite(row.data(), 1, row.size(), f);
++        }
++        std::fclose(f);
++    }
++    std::string reasons;
++    for (const auto& [why, n] : skip_reasons) {
++        reasons += " " + why + "=" + std::to_string(n);
++    }
++    LOG_INFO(Render_Vulkan, "nvn_hle: frame {} -> {} ({} clears, {} draws, {} skipped:{})", frame, path, clears,
++             draws, skipped_draws, reasons);
++}
++
++ShadowRenderer::ShadowRenderer(Model& model, Core::Memory::Memory& memory)
++    : impl{std::make_unique<Impl>(model, memory)} {
++    impl->Init();
++}
++
++ShadowRenderer::~ShadowRenderer() = default;
++
++bool ShadowRenderer::Ok() const {
++    return impl->device != nullptr;
++}
++
++void ShadowRenderer::Execute(const CommandList& list, int depth) {
++    // Nothing may escape into the guest CPU thread that made the NVN call.
++    try {
++        impl->Execute(list, depth);
++    } catch (const std::exception& e) {
++        std::fprintf(stderr, "nvn_hle: shadow renderer disabled by an exception: %s\n", e.what());
++        std::fflush(stderr);
++        impl->broken = true;
++    }
++}
++
++void ShadowRenderer::Present(GuestAddr texture, u64 frame) {
++    try {
++        impl->Present(texture, frame);
++    } catch (const std::exception& e) {
++        std::fprintf(stderr, "nvn_hle: shadow renderer disabled by an exception: %s\n", e.what());
++        std::fflush(stderr);
++        impl->broken = true;
++    }
++}
++
++} // namespace NvnHle
+diff --git a/src/nvn_hle/renderer.h b/src/nvn_hle/renderer.h
+new file mode 100644
+index 0000000..de9a540
+--- /dev/null
++++ b/src/nvn_hle/renderer.h
+@@ -0,0 +1,48 @@
++// SPDX-FileCopyrightText: 2026 SWITCHPILER
++// SPDX-License-Identifier: GPL-3.0-or-later
++
++#pragma once
++
++#include <memory>
++#include <string>
++#include <unordered_map>
++
++#include "common/common_types.h"
++#include "nvn_hle/model.h"
++
++namespace Core::Memory {
++class Memory;
++}
++
++namespace NvnHle {
++
++/// The driver's per-format table (sdk data): what this title's NVN formats are in GPU terms.
++struct FormatInfo {
++    u32 render_target = 0;  // Maxwell render target format (0 if not renderable)
++    u32 tic_word0 = 0;      // Maxwell texture descriptor word 0: format, component types, swizzle
++    u32 bytes_per_block = 0;
++    u32 vertex_attribute = 0;  // Maxwell vertex attribute size/type bits
++    bool valid = false;
++};
++
++/// Renders the recorded NVN command lists with Vulkan, off screen, next to the title's own driver
++/// (stage 2 of docs/mission-5-native.md). Runs on the guest thread that submits, so guest memory is
++/// read while the title still guarantees it.
++class ShadowRenderer {
++public:
++    ShadowRenderer(Model& model, Core::Memory::Memory& memory);
++    ~ShadowRenderer();
++
++    bool Ok() const;
++    /// Run one submitted list (and the lists it calls). model.lock is held by the caller.
++    void Execute(const CommandList& list, int depth = 0);
++    /// The title presented `texture`; every SUYU_NVN_HLE_DUMP_EVERY frames it is written as a PPM image.
++    void Present(GuestAddr texture, u64 frame);
++
++    struct Impl;  // renderer_impl.h
++
++private:
++    std::unique_ptr<Impl> impl;
++};
++
++} // namespace NvnHle
+diff --git a/src/nvn_hle/renderer_impl.h b/src/nvn_hle/renderer_impl.h
+new file mode 100644
+index 0000000..b47eb40
+--- /dev/null
++++ b/src/nvn_hle/renderer_impl.h
+@@ -0,0 +1,193 @@
++// SPDX-FileCopyrightText: 2026 SWITCHPILER
++// SPDX-License-Identifier: GPL-3.0-or-later
++
++// Private to nvn_hle: the shadow renderer's state. Include order matters: the Maxwell headers pull
++// in service headers whose names collide with X11 macros, so they come before any Vulkan header.
++#pragma once
++
++#include <array>
++#include <map>
++#include <memory>
++#include <optional>
++#include <string>
++#include <unordered_map>
++#include <vector>
++
++#include "video_core/engines/maxwell_3d.h"
++#include "video_core/textures/texture.h"
++#include "shader_recompiler/environment.h"
++#include "shader_recompiler/frontend/maxwell/control_flow.h"
++#include "shader_recompiler/object_pool.h"
++#include "shader_recompiler/frontend/ir/program.h"
++#include "shader_recompiler/host_translate_info.h"
++#include "shader_recompiler/profile.h"
++#include "nvn_hle/model.h"
++#include "nvn_hle/renderer.h"
++#include "video_core/vulkan_common/vulkan_wrapper.h"
++
++namespace Common {
++class DynamicLibrary;
++}
++namespace Vulkan {
++class Device;
++class MemoryAllocator;
++}
++
++namespace NvnHle {
++
++namespace vk = Vulkan::vk;
++
++/// Where the shadow renderer is right now (a watchdog thread reports it when it stops moving).
++void Step(const char* what);
++using Maxwell = Tegra::Engines::Maxwell3D::Regs;
++
++constexpr size_t kStages = 5;  // pipeline order: vertex, tess control, tess eval, geometry, fragment
++
++/// NVN numbers shader stages differently from the pipeline order: vertex 0, fragment 1, geometry 2,
++/// tessellation control 3, tessellation evaluation 4, compute 5 (bindings use these numbers).
++constexpr std::array<size_t, kStages> kNvnStageOfPipelineStage{0, 3, 4, 2, 1};
++constexpr u32 kTextureBoundBuffer = 2;  // the NVN driver's per-stage texture handle buffer (c2)
++constexpr u32 kUniformSlotBase = 3;     // NVN uniform buffer i lives in Maxwell const buffer slot i + 3
++
++/// Everything a draw reads from the title's bound state, captured as commands are executed.
++struct BoundState {
++    std::array<u32, 2> blend_words[8]{};
++    bool blend_set[8]{};
++    u32 color_word = 0x08030000;
++    u32 channel_mask = 0xffffffff;
++    std::array<u32, 2> depth_stencil{0x22, 0x11181118};
++    u32 polygon = 0x14;
++    std::vector<u32> attribs;          // one word per attribute (driver layout)
++    std::vector<u32> streams;          // stride, divisor per stream
++    GuestAddr program = 0;
++    u64 program_serial = 0;
++    std::array<std::pair<GpuAddr, u64>, 16> vertex_buffers{};
++    std::array<std::array<std::pair<GpuAddr, u64>, 18>, 6> uniform_buffers{};
++    std::array<std::array<std::pair<GpuAddr, u64>, 16>, 6> storage_buffers{};
++    std::array<std::array<u64, 32>, 6> textures{};  // NVN texture handles by stage, index
++    std::array<float, 4> viewport{0, 0, 1, 1};
++    std::array<u32, 4> scissor{0, 0, 0x7fffffff, 0x7fffffff};
++    std::array<float, 2> depth_range{0, 1};
++    std::array<float, 4> blend_color{};
++    GuestAddr texture_pool = 0, sampler_pool = 0;
++};
++
++struct HostImage {
++    vk::Image image;
++    vk::ImageView view;
++    VkFormat format = VK_FORMAT_UNDEFINED;
++    u32 width = 0, height = 0, levels = 1;
++    VkImageAspectFlags aspect = VK_IMAGE_ASPECT_COLOR_BIT;
++    VkImageLayout layout = VK_IMAGE_LAYOUT_UNDEFINED;
++    u64 serial = 0;
++    u32 nvn_format = 0;
++    bool rendered = false;  // written by the GPU (ours): never re-uploaded from guest memory
++    bool uploaded = false;
++    u64 draws = 0;  // draws that wrote it
++};
++
++struct ShaderPools {
++    Shader::ObjectPool<Shader::IR::Inst> inst{8192};
++    Shader::ObjectPool<Shader::IR::Block> block{32};
++    Shader::ObjectPool<Shader::Maxwell::Flow::Block> flow_block{32};
++};
++
++struct Pipeline {
++    std::vector<Shader::IR::Program> programs;  // kept: the infos below point into them
++    std::array<vk::ShaderModule, kStages> modules;
++    vk::DescriptorSetLayout set_layout;
++    vk::PipelineLayout layout;
++    vk::Pipeline pipeline;
++    std::array<const Shader::Info*, kStages> infos{};
++    bool ok = false;
++    std::string error;  // why it could not be built
++    bool trace = false;
++};
++
++struct ShadowRenderer::Impl {
++    Impl(Model& model_, Core::Memory::Memory& memory_);
++    ~Impl();
++    void Init();
++    void Execute(const CommandList& list, int depth);
++    void Present(GuestAddr texture, u64 frame);
++
++    // renderer.cpp
++    FormatInfo Format(u32 nvn_format);
++    HostImage* ImageFor(GuestAddr texture);
++    u64 ImageKey(GuestAddr texture);
++    void Transition(HostImage& img, VkImageLayout layout);
++    vk::CommandBuffer Cmd();
++    void Begin();
++    void Flush();
++    void Dump(HostImage& img, u64 frame);
++    std::optional<GuestAddr> GpuToCpu(GpuAddr va);
++
++    // shaders.cpp
++    /// Translate one stage of the bound program (Maxwell code at `code`) to IR. `stage` gets the stage
++    /// the program header declares.
++    bool Translate(GpuAddr code, size_t nvn_stage, Shader::IR::Program& out, Shader::Stage& stage);
++    /// What the GPU would read from const buffer `cbuf` of an NVN stage at `offset` for the current draw.
++    u32 ReadCbuf(size_t nvn_stage, u32 cbuf, u32 offset);
++    /// First 16-byte slot of the storage buffer bindings in the driver's c2, per NVN stage.
++    u32 StorageBase(size_t nvn_stage);
++    std::array<std::optional<u32>, 6> storage_base{};
++    std::optional<Tegra::Texture::TICEntry> ReadTic(u32 texture_id);
++    std::optional<Tegra::Texture::TSCEntry> ReadTsc(u32 sampler_id);
++
++    // draw.cpp
++    void Draw(const Command& c);
++    void EndRenderPass();
++    Pipeline* GetPipeline(Maxwell::PrimitiveTopology topology);
++    HostImage* SampledImage(u32 texture_id);
++    VkSampler SamplerFor(u32 sampler_id);
++    u64 Upload(const void* data, size_t size, size_t align, VkBuffer& buffer);
++
++    Model& model;
++    Core::Memory::Memory& memory;
++    std::shared_ptr<Common::DynamicLibrary> library;
++    vk::InstanceDispatch dld;
++    vk::Instance instance;
++    std::unique_ptr<Vulkan::Device> device;
++    std::unique_ptr<Vulkan::MemoryAllocator> allocator;
++    vk::CommandPool command_pool;
++    vk::CommandBuffers command_buffers;
++    vk::Fence fence;
++    bool recording = false;
++    bool broken = false;
++    PFN_vkCmdClearDepthStencilImage clear_depth_stencil = nullptr;  // not in suyu's dispatch table
++    PFN_vkResetDescriptorPool reset_descriptor_pool = nullptr;
++
++    Shader::Profile profile{};
++    Shader::HostTranslateInfo host_info{};
++
++    std::unordered_map<u32, FormatInfo> formats;
++    std::unordered_map<GuestAddr, HostImage> images;
++    std::array<GuestAddr, 8> color_targets{};
++    u32 num_color_targets = 0;
++    GuestAddr depth_target = 0;
++    BoundState bound;
++
++    std::unique_ptr<ShaderPools> shader_pools;
++    std::unordered_map<u64, std::unique_ptr<Pipeline>> pipelines;
++    std::map<std::vector<u32>, vk::RenderPass> render_passes;
++    std::map<std::vector<u64>, vk::Framebuffer> framebuffers;
++    std::unordered_map<u32, vk::Sampler> samplers;
++    std::unordered_map<u64, HostImage> sampled;  // uploaded textures by (texture id, serial)
++
++    // per-flush resources
++    vk::Buffer stream_buffer;
++    size_t stream_offset = 0;
++    static constexpr size_t kStreamSize = 64 << 20;
++    vk::DescriptorPool descriptor_pool;
++    bool in_render_pass = false;
++    std::vector<u64> active_targets;
++
++    u64 dump_every = 120;
++    std::string dump_dir;
++    u64 clears = 0, unsupported = 0, draws = 0, skipped_draws = 0;
++    std::map<std::string, u64> skip_reasons;
++    std::string texture_error;
++    std::unordered_map<u64, std::string> failed_textures;  // TIC hash -> why it could not be used
++};
++
++} // namespace NvnHle
+diff --git a/src/nvn_hle/shaders.cpp b/src/nvn_hle/shaders.cpp
+new file mode 100644
+index 0000000..e1aac1b
+--- /dev/null
++++ b/src/nvn_hle/shaders.cpp
+@@ -0,0 +1,239 @@
++// SPDX-FileCopyrightText: 2026 SWITCHPILER
++// SPDX-License-Identifier: GPL-3.0-or-later
++
++#include "nvn_hle/renderer_impl.h"
++
++#include <algorithm>
++
++#include "common/logging/log.h"
++#include "core/arm/recomp/nvn_trace.h"
++#include "core/memory.h"
++#include "shader_recompiler/frontend/maxwell/control_flow.h"
++#include "shader_recompiler/frontend/maxwell/translate_program.h"
++#include "shader_recompiler/object_pool.h"
++#include "shader_recompiler/program_header.h"
++#include "video_core/surface.h"
++#include "video_core/texture_cache/format_lookup_table.h"
++
++namespace NvnHle {
++
++namespace {
++
++Shader::TextureType ConvertTextureType(const Tegra::Texture::TICEntry& entry) {
++    using Tegra::Texture::TextureType;
++    switch (entry.texture_type) {
++    case TextureType::Texture1D:
++        return Shader::TextureType::Color1D;
++    case TextureType::Texture2D:
++    case TextureType::Texture2DNoMipmap:
++        return entry.normalized_coords ? Shader::TextureType::Color2D : Shader::TextureType::Color2DRect;
++    case TextureType::Texture3D:
++        return Shader::TextureType::Color3D;
++    case TextureType::TextureCubemap:
++        return Shader::TextureType::ColorCube;
++    case TextureType::Texture1DArray:
++        return Shader::TextureType::ColorArray1D;
++    case TextureType::Texture2DArray:
++        return Shader::TextureType::ColorArray2D;
++    case TextureType::Texture1DBuffer:
++        return Shader::TextureType::Buffer;
++    case TextureType::TextureCubeArray:
++        return Shader::TextureType::ColorArrayCube;
++    default:
++        return Shader::TextureType::Color2D;
++    }
++}
++
++VideoCore::Surface::PixelFormat TicPixelFormat(const Tegra::Texture::TICEntry& entry) {
++    return VideoCommon::PixelFormatFromTextureInfo(entry.format, entry.r_type, entry.g_type, entry.b_type,
++                                                   entry.a_type, entry.srgb_conversion);
++}
++
++/// The title's shader as the Maxwell translator sees it: code and constants come straight from guest
++/// memory, texture handles from the NVN texture bindings of the draw being translated.
++class NvnEnvironment final : public Shader::Environment {
++public:
++    NvnEnvironment(ShadowRenderer::Impl& r_, GuestAddr code_, u32 start, size_t nvn_stage_)
++        : r{r_}, code{code_}, nvn_stage{nvn_stage_} {
++        // Instruction addresses are relative to `code`: Maxwell scheduling words sit at offsets that are
++        // multiples of 32 from the program base, so the base must be where NVN placed the program.
++        r.memory.ReadBlock(code + start, &sph, sizeof(sph));
++        start_address = start;
++        is_proprietary_driver = true;
++        switch (sph.common0.shader_type) {
++        case 1:
++            stage = Shader::Stage::VertexB;
++            break;
++        case 2:
++            stage = Shader::Stage::TessellationControl;
++            break;
++        case 3:
++            stage = Shader::Stage::TessellationEval;
++            break;
++        case 4:
++            stage = Shader::Stage::Geometry;
++            break;
++        default:
++            stage = Shader::Stage::Fragment;
++            break;
++        }
++    }
++
++    u64 ReadInstruction(u32 address) override {
++        return r.memory.Read64(code + address);
++    }
++    u32 ReadCbufValue(u32 cbuf_index, u32 cbuf_offset) override {
++        return r.ReadCbuf(nvn_stage, cbuf_index, cbuf_offset);
++    }
++    Shader::TextureType ReadTextureType(u32 raw_handle) override {
++        const auto tic = r.ReadTic(raw_handle & 0xFFFFF);
++        return tic ? ConvertTextureType(*tic) : Shader::TextureType::Color2D;
++    }
++    Shader::TexturePixelFormat ReadTexturePixelFormat(u32 raw_handle) override {
++        const auto tic = r.ReadTic(raw_handle & 0xFFFFF);
++        return static_cast<Shader::TexturePixelFormat>(
++            tic ? TicPixelFormat(*tic) : VideoCore::Surface::PixelFormat::A8B8G8R8_UNORM);
++    }
++    bool IsTexturePixelFormatInteger(u32 raw_handle) override {
++        const auto tic = r.ReadTic(raw_handle & 0xFFFFF);
++        return tic && VideoCore::Surface::IsPixelFormatInteger(TicPixelFormat(*tic));
++    }
++    u32 ReadViewportTransformState() override {
++        return 1;
++    }
++    u32 TextureBoundBuffer() const override {
++        return kTextureBoundBuffer;
++    }
++    u32 LocalMemorySize() const override {
++        return static_cast<u32>(sph.LocalMemorySize()) + sph.common3.shader_local_memory_crs_size;
++    }
++    u32 SharedMemorySize() const override {
++        return 0;
++    }
++    std::array<u32, 3> WorkgroupSize() const override {
++        return {1, 1, 1};
++    }
++    bool HasHLEMacroState() const override {
++        return false;
++    }
++    std::optional<Shader::ReplaceConstant> GetReplaceConstBuffer(u32, u32) override {
++        return std::nullopt;
++    }
++    void Dump(u64, u64) override {}
++
++private:
++    ShadowRenderer::Impl& r;
++    GuestAddr code;
++    size_t nvn_stage;
++};
++
++} // namespace
++
++std::optional<Tegra::Texture::TICEntry> ShadowRenderer::Impl::ReadTic(u32 texture_id) {
++    // NVNtexturePool: [0] the memory pool object (its CPU mapping at +0x30), [1] the offset in it;
++    // descriptors are 32 bytes (nvnTexturePoolRegisterTexture).
++    if (!bound.texture_pool) {
++        return std::nullopt;
++    }
++    const GuestAddr pool = memory.Read64(bound.texture_pool);
++    if (!pool) {
++        return std::nullopt;
++    }
++    const GuestAddr base = memory.Read64(pool + 0x30) + memory.Read64(bound.texture_pool + 8);
++    Tegra::Texture::TICEntry tic{};
++    memory.ReadBlock(base + u64{texture_id} * 32, &tic, sizeof(tic));
++    return tic;
++}
++
++std::optional<Tegra::Texture::TSCEntry> ShadowRenderer::Impl::ReadTsc(u32 sampler_id) {
++    if (!bound.sampler_pool) {
++        return std::nullopt;
++    }
++    const GuestAddr pool = memory.Read64(bound.sampler_pool);
++    if (!pool) {
++        return std::nullopt;
++    }
++    const GuestAddr base = memory.Read64(pool + 0x30) + memory.Read64(bound.sampler_pool + 8);
++    Tegra::Texture::TSCEntry tsc{};
++    memory.ReadBlock(base + u64{sampler_id} * 32, &tsc, sizeof(tsc));
++    return tsc;
++}
++
++u32 ShadowRenderer::Impl::ReadCbuf(size_t nvn_stage, u32 cbuf, u32 offset) {
++    if (nvn_stage >= 6) {
++        return 0;
++    }
++    if (cbuf == kTextureBoundBuffer) {
++        // The driver's per-stage buffer: texture handles at 0x20 + 8 * index (nvnCommandBufferBindTexture),
++        // storage buffers as {address, size} in 16-byte slots from StorageBase (...BindStorageBuffer).
++        if (offset >= 0x20 && offset < 0x20 + 8 * 32) {
++            const u64 handle = bound.textures[nvn_stage][(offset - 0x20) / 8];
++            return (offset & 4) ? static_cast<u32>(handle >> 32) : static_cast<u32>(handle);
++        }
++        const u32 base = StorageBase(nvn_stage);
++        const u32 slot = offset / 16;
++        if (slot >= base && slot - base < 16) {
++            const auto [va, size] = bound.storage_buffers[nvn_stage][slot - base];
++            switch (offset % 16) {
++            case 0:
++                return static_cast<u32>(va);
++            case 4:
++                return static_cast<u32>(va >> 32);
++            case 8:
++                return static_cast<u32>(size);
++            default:
++                return 0;
++            }
++        }
++        return 0;
++    }
++    if (cbuf >= 18) {
++        return 0;
++    }
++    const auto [va, size] = bound.uniform_buffers[nvn_stage][cbuf];
++    if (!va || offset + 4 > size) {
++        return 0;
++    }
++    const auto cpu = GpuToCpu(va + offset);
++    return cpu ? memory.Read32(*cpu) : 0;
++}
++
++u32 ShadowRenderer::Impl::StorageBase(size_t nvn_stage) {
++    if (!storage_base[nvn_stage]) {
++        // nvnCommandBufferBindStorageBuffer: slot = table[stage] + index; table in the driver's data.
++        const char* e = std::getenv("SUYU_NVN_SSBO_TABLE");
++        const u64 table = e && *e ? std::strtoull(e, nullptr, 0) : 0x915550;
++        const u64 boot = NvnTrace::BootstrapAddress();
++        storage_base[nvn_stage] =
++            boot ? memory.Read32(boot - NvnTrace::BootstrapOffset() + table + 4 * nvn_stage) : 0;
++    }
++    return *storage_base[nvn_stage];
++}
++
++bool ShadowRenderer::Impl::Translate(GpuAddr code, size_t nvn_stage, Shader::IR::Program& out,
++                                     Shader::Stage& stage) {
++    const auto cpu = GpuToCpu(code);
++    if (!cpu) {
++        return false;
++    }
++    // NVN shader data starts with a 0x30-byte header of its own (magic 0x12345678, code size, control
++    // pointer); the Maxwell program header follows it and the code starts at +0x80, 32-byte aligned.
++    const u32 start = memory.Read32(*cpu) == 0x12345678 ? 0x30 : 0;
++    if (!shader_pools) {
++        shader_pools = std::make_unique<ShaderPools>();
++    }
++    try {
++        Step("shader translation");
++        NvnEnvironment env{*this, *cpu, start, nvn_stage};
++        stage = env.ShaderStage();
++        const u32 cfg_offset = start + static_cast<u32>(sizeof(Shader::ProgramHeader));
++        Shader::Maxwell::Flow::CFG cfg(env, shader_pools->flow_block, cfg_offset);
++        out = Shader::Maxwell::TranslateProgram(shader_pools->inst, shader_pools->block, env, cfg, host_info);
++        return true;
++    } catch (const std::exception& e) {
++        LOG_ERROR(Render_Vulkan, "nvn_hle: shader at {:#x} did not translate: {}", code, e.what());
++        return false;
++    }
++}
++
++} // namespace NvnHle

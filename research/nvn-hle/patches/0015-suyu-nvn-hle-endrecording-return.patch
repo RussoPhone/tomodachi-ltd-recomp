@@ -1,0 +1,57 @@
+SWITCHPILER lab patch 0015 (work in progress): map lists by EndRecording's return value when the title calls it.
+
+diff --git a/src/nvn_hle/recorder.cpp b/src/nvn_hle/recorder.cpp
+index e47aa17..1472798 100644
+--- a/src/nvn_hle/recorder.cpp
++++ b/src/nvn_hle/recorder.cpp
+@@ -42,7 +42,7 @@ Recorder::~Recorder() {
+ 
+ bool Recorder::WantsReturn(const char* name) {
+     static const char* const kWithResult[] = {
+-        "nvnMemoryPoolGetBufferAddress", "nvnBufferGetAddress",
++        "nvnMemoryPoolGetBufferAddress", "nvnBufferGetAddress", "nvnCommandBufferEndRecording",
+         "nvnMemoryPoolInitialize",
+         "nvnWindowAcquireTexture",
+     };
+@@ -429,7 +429,8 @@ void Recorder::Register() {
+         std::scoped_lock lk{m.lock};
+         m.recording[a.x(0)] = std::make_shared<CommandList>();
+     });
+-    On("nvnCommandBufferEndRecording", [&m, this](Args& a) {
++    On("nvnCommandBufferEndRecording",
++       [&m, this](Args& a) {
+         // The handle EndRecording will return is known on entry: the list's control chunk (+0x48) + 0x10.
+         std::scoped_lock lk{m.lock};
+         ++end_calls;
+@@ -452,7 +453,18 @@ void Recorder::Register() {
+         if (rec != m.recording.end()) {
+             m.recording.erase(rec);
+         }
+-    });
++        pending_lists[a.call.x[31]] = list;
++       },
++       [&m, this](Args& a) {
++           // When the title itself called, the exact handle is the return value: it wins over the guess.
++           std::scoped_lock lk{m.lock};
++           if (auto it = pending_lists.find(a.call.x[31]); it != pending_lists.end()) {
++               if (a.x(0)) {
++                   m.finished[NormalizeHandle(a.x(0))] = it->second;
++               }
++               pending_lists.erase(it);
++           }
++       });
+     auto state = [this](const char* name, Op op, u32 words) {
+         On(name, [this, op, words](Args& a) {
+             Command c{op};
+diff --git a/src/nvn_hle/recorder.h b/src/nvn_hle/recorder.h
+index 9470451..d056f99 100644
+--- a/src/nvn_hle/recorder.h
++++ b/src/nvn_hle/recorder.h
+@@ -78,6 +78,7 @@ private:
+     std::unordered_map<u64, GuestAddr> pending_pool, pending_buffer, pending_cmd, pending_pool_init;
+ 
+     std::unordered_set<GuestAddr> orphan_cmds;
++    std::unordered_map<u64, std::shared_ptr<CommandList>> pending_lists;  // EndRecording in flight, by SP
+     u64 empty_kept = 0;
+     u64 end_calls = 0, end_returns = 0, end_unmatched = 0, end_no_list = 0;
+     FrameStats totals;

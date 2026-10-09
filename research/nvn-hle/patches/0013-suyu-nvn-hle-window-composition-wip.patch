@@ -1,0 +1,169 @@
+SWITCHPILER lab patch 0013 (work in progress): keep recorded lists over empty re-records with the same handle,
+record DrawArrays/DrawElements, log other draw kinds, SUYU_NVN_PROBE (unknown driver-region targets) and window
+composition diagnostics on stderr.
+
+diff --git a/src/core/arm/recomp/nvn_trace.cpp b/src/core/arm/recomp/nvn_trace.cpp
+index cd301c6..b6c746d 100644
+--- a/src/core/arm/recomp/nvn_trace.cpp
++++ b/src/core/arm/recomp/nvn_trace.cpp
+@@ -3,6 +3,7 @@
+ 
+ #include "core/arm/recomp/nvn_trace.h"
+ 
++#include <algorithm>
+ #include <array>
+ #include <atomic>
+ #include <chrono>
+@@ -228,6 +229,32 @@ bool Dispatch(u64* x, const u64 (*v)[2], u64& pc, Core::Memory::Memory& memory,
+         MaybeDump();
+         return true;
+     }
++    static const bool probe = std::getenv("SUYU_NVN_PROBE") != nullptr;
++    if (probe && bootstrap && pc + 0x80000 >= g_real_lo.load() && pc <= g_real_hi.load() + 0x80000) {
++        static std::mutex probe_lock;
++        static std::unordered_map<u64, u64> unknown;
++        static u64 seen = 0;
++        bool known;
++        {
++            std::scoped_lock lk{g_lock};
++            known = g_by_real.count(pc) != 0;
++        }
++        if (!known) {
++            std::scoped_lock lk{probe_lock};
++            ++unknown[pc];
++            if (++seen % 20000 == 0) {
++                std::vector<std::pair<u64, u64>> top(unknown.begin(), unknown.end());
++                std::sort(top.begin(), top.end(), [](auto& a, auto& b) { return a.second > b.second; });
++                const u64 base = bootstrap - g_offset;
++                std::fprintf(stderr, "nvn probe: unknown driver-region targets (module offset x count):");
++                for (size_t i = 0; i < std::min<size_t>(top.size(), 25); ++i) {
++                    std::fprintf(stderr, " %#llx x%llu", (unsigned long long)(top[i].first - base),
++                                 (unsigned long long)top[i].second);
++                }
++                std::fprintf(stderr, "\n");
++            }
++        }
++    }
+     if (pc >= g_real_lo.load(std::memory_order_relaxed) && pc <= g_real_hi.load(std::memory_order_relaxed)) {
+         if (t_forwarded == pc) {
+             t_forwarded = 0;
+diff --git a/src/nvn_hle/recorder.cpp b/src/nvn_hle/recorder.cpp
+index 74cb401..5bc0975 100644
+--- a/src/nvn_hle/recorder.cpp
++++ b/src/nvn_hle/recorder.cpp
+@@ -408,7 +408,15 @@ void Recorder::Register() {
+         const GuestAddr cmd = a.x(0);
+         const u64 handle = a.r64(cmd + 0x48) + 0x10;
+         auto rec = m.recording.find(cmd);
+-        m.finished[handle] = rec != m.recording.end() ? rec->second : std::make_shared<CommandList>();
++        const bool empty = rec == m.recording.end() || rec->second->commands.empty();
++        auto& slot = m.finished[handle];
++        // An empty recording ends on the chunk the previous list started at, so it yields that list's handle:
++        // keep the list with commands (a list recorded once and called every frame).
++        if (!empty || !slot) {
++            slot = rec != m.recording.end() ? rec->second : std::make_shared<CommandList>();
++        } else {
++            ++empty_kept;
++        }
+         if (rec != m.recording.end()) {
+             m.recording.erase(rec);
+         }
+@@ -462,6 +470,28 @@ void Recorder::Register() {
+     ints("nvnCommandBufferDrawElementsBaseVertex", Op::DrawElements, 5);
+     ints("nvnCommandBufferBarrier", Op::Barrier, 1);
+     ints("nvnCommandBufferSetRenderEnable", Op::SetRenderEnable, 1);
++    On("nvnCommandBufferDrawArrays", [this](Args& a) {
++        // (cmd, mode, first, count): as DrawArraysInstanced with one instance
++        Command c{Op::DrawArrays};
++        c.a = {a.x(1), a.x(2), a.x(3), 0, 1, 0};
++        Record(a.x(0), std::move(c));
++    });
++    On("nvnCommandBufferDrawElements", [this](Args& a) {
++        // (cmd, mode, type, count, indexAddress): as DrawElementsBaseVertex with base vertex 0
++        Command c{Op::DrawElements};
++        c.a = {a.x(1), a.x(2), a.x(3), a.x(4), 0, 0};
++        Record(a.x(0), std::move(c));
++    });
++    for (const char* name : {"nvnCommandBufferDrawTexture", "nvnCommandBufferDrawArraysIndirect",
++                             "nvnCommandBufferDrawElementsIndirect", "nvnCommandBufferDrawTransformFeedback",
++                             "nvnCommandBufferDispatchCompute", "nvnCommandBufferDispatchComputeIndirect"}) {
++        On(name, [name](Args&) {
++            static std::atomic<u64> seen{0};
++            if (seen.fetch_add(1) < 3) {
++                std::fprintf(stderr, "nvn_hle not yet rendered: %s\n", name);
++            }
++        });
++    }
+     On("nvnCommandBufferDrawElementsInstanced", [this](Args& a) {
+         // (cmd, mode, type, count, indexAddress, baseVertex, baseInstance, instanceCount)
+         Command c{Op::DrawElements};
+diff --git a/src/nvn_hle/recorder.h b/src/nvn_hle/recorder.h
+index d0de685..9470451 100644
+--- a/src/nvn_hle/recorder.h
++++ b/src/nvn_hle/recorder.h
+@@ -78,6 +78,7 @@ private:
+     std::unordered_map<u64, GuestAddr> pending_pool, pending_buffer, pending_cmd, pending_pool_init;
+ 
+     std::unordered_set<GuestAddr> orphan_cmds;
++    u64 empty_kept = 0;
+     u64 end_calls = 0, end_returns = 0, end_unmatched = 0, end_no_list = 0;
+     FrameStats totals;
+     std::map<std::tuple<u32, u32, u32>, u64> render_targets;
+diff --git a/src/nvn_hle/renderer.cpp b/src/nvn_hle/renderer.cpp
+index edd429a..c616713 100644
+--- a/src/nvn_hle/renderer.cpp
++++ b/src/nvn_hle/renderer.cpp
+@@ -462,7 +462,7 @@ void ShadowRenderer::Impl::Execute(const CommandList& list, int depth) {
+     for (const Command& c : list.commands) {
+         if (c.op == Op::SetRenderTargets) {
+             tracing = false;
+-            if (window_trace < 3 && c.a[0] >= 1) {
++            if (window_trace < 6 && c.a[0] >= 1) {
+                 const u64 tex = c.words[0] | (u64{c.words[1]} << 32);
+                 for (const auto& [waddr, w] : model.windows) {
+                     for (GuestAddr wt : w.textures) {
+@@ -476,7 +476,7 @@ void ShadowRenderer::Impl::Execute(const CommandList& list, int depth) {
+                 }
+             }
+         } else if (tracing) {
+-            std::fprintf(stderr, " op%d", static_cast<int>(c.op));
++            std::fprintf(stderr, " %sop%d", depth ? "^" : "", static_cast<int>(c.op));
+             if (c.op == Op::DrawArrays || c.op == Op::DrawElements) {
+                 std::fprintf(stderr, "[a=%llu,%llu,%llu,%llu]", (unsigned long long)c.a[0], (unsigned long long)c.a[1],
+                              (unsigned long long)c.a[2], (unsigned long long)c.a[3]);
+@@ -626,6 +626,35 @@ void ShadowRenderer::Impl::Execute(const CommandList& list, int depth) {
+                     } else if (tracing) {
+                         std::fprintf(stderr, " [unknown called handle %#llx]", (unsigned long long)h);
+                     }
++                    static int dumped = 0;
++                    if (tracing && dumped < 2) {
++                        auto it3 = model.finished.find(NormalizeHandle(h));
++                        if (it3 != model.finished.end() && it3->second->commands.empty()) {
++                            ++dumped;
++                            const GuestAddr chunk = NormalizeHandle(h) - 0x10;
++                            std::fprintf(stderr, "\nnvn_hle empty list %#llx control:", (unsigned long long)h);
++                            for (int q = 0; q < 12; ++q) {
++                                std::fprintf(stderr, " %016llx", (unsigned long long)memory.Read64(chunk + 8 * q));
++                            }
++                            // control entries look like {gpu address, size}: follow the first plausible one
++                            for (int q = 0; q < 12; ++q) {
++                                const u64 va = memory.Read64(chunk + 8 * q);
++                                if (const auto cpu = GpuToCpu(va)) {
++                                    std::fprintf(stderr, "\nnvn_hle   commands at gpu %#llx:", (unsigned long long)va);
++                                    for (int k = 0; k < 24; ++k) {
++                                        std::fprintf(stderr, " %08x", memory.Read32(*cpu + 4 * k));
++                                    }
++                                    break;
++                                }
++                            }
++                            std::fprintf(stderr, "\n");
++                        }
++                    }
++                    if (tracing) {
++                        auto it2 = model.finished.find(NormalizeHandle(h));
++                        std::fprintf(stderr, " [call %zu cmds]",
++                                     it2 == model.finished.end() ? size_t{0} : it2->second->commands.size());
++                    }
+                 }
+             }
+             break;
