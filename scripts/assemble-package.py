@@ -162,7 +162,7 @@ def main():
         write_windows_launcher(pkg, name)
     run = pkg / 'run.sh'
     scale_cases = '\n'.join(f'      {k}) set_res {v} ;;' for k, v in SCALES.items())
-    run.write_text(f'''#!/bin/sh
+    run.write_text(f'''#!/bin/bash
 # Start the native build from this folder; the folder can be moved as a whole.
 #   ./run.sh [--scale 0.5|1|1.5|2|3|4] [--fullscreen]
 cd "$(dirname "$(readlink -f "$0")")" || exit 1
@@ -172,7 +172,7 @@ set_res() {{
   sed -i -e 's/^resolution_setup\\\\default=.*/resolution_setup\\\\default=false/' \\
          -e "s/^resolution_setup=.*/resolution_setup=$1/" "$INI"
 }}
-EXTRA=""
+EXTRA=()
 while [ $# -gt 0 ]; do
   case "$1" in
     --scale)
@@ -181,11 +181,11 @@ while [ $# -gt 0 ]; do
         *) echo "unknown scale $2 (use 0.5 1 1.5 2 3 4)"; exit 2 ;;
       esac
       shift 2 ;;
-    --fullscreen) EXTRA="$EXTRA -f"; shift ;;
-    *) EXTRA="$EXTRA $1"; shift ;;
+    --fullscreen) EXTRA+=(-f); shift ;;
+    *) EXTRA+=("$1"); shift ;;
   esac
 done
-exec ./{name} $EXTRA -g game/main
+exec ./{name} "${{EXTRA[@]}}" -g game/main
 ''')
     run.chmod(0o755)
     title = lab.adapter(target).get('name', target)

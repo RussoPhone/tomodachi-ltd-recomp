@@ -89,6 +89,15 @@ def pick(kind, title):
         res = subprocess.run(args, capture_output=True, text=True)
         if res.returncode == 0 and res.stdout.strip():
             return res.stdout.strip()
+    if shutil.which('kdialog') and (os.environ.get('DISPLAY') or os.environ.get('WAYLAND_DISPLAY')):
+        args = ['kdialog', '--title', title]
+        if kind == 'dir':
+            args += ['--getexistingdirectory', str(Path.home())]
+        else:
+            args += ['--getopenfilename', str(Path.home()), '*.nsp|Switch game (*.nsp)']
+        res = subprocess.run(args, capture_output=True, text=True)
+        if res.returncode == 0 and res.stdout.strip():
+            return res.stdout.strip()
     return input(f'   {title}\n   Paste the path here and press Enter: ').strip().strip('"\'')
 
 
