@@ -122,7 +122,7 @@ Once installed, the game **no longer needs the `.nsp` or the keys**. Everything 
 ## Windows (experimental)
 
 > [!NOTE]
-> The Windows installer is **new and not yet tested with the game on a real Windows PC**. An automatic check on GitHub builds the tools on Windows (steps 1–5 pass, about 45 minutes), but the full install still needs a first tester. If you try it, please open an [issue](https://github.com/RussoPhone/tomodachi-ltd-recomp/issues) with the result and the log from `local\logs\`. **Never attach your keys or game files.**
+> The Windows installer is **new and not yet tested with the game on a real Windows PC**. An automatic check on GitHub builds the tools on Windows (steps 1, 3, 4 and 5 pass, about 45 minutes; step 2 and steps 6–10 need a game and are skipped), but the full install still needs a first tester. If you try it, please open an [issue](https://github.com/RussoPhone/tomodachi-ltd-recomp/issues) with the result and the log from `local\logs\`. **Never attach your keys or game files.**
 
 1. Click the green **Code → Download ZIP** button here on GitHub.
 2. Extract it to a **short folder**, for example `C:\tomodachi`. Long paths can break the Windows build tools.

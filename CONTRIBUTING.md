@@ -27,7 +27,7 @@ Forks are welcome too.
 Per-game values live in `adapters/tomodachi/target.json` (expected build IDs, file hashes, export settings).
 Windows uses the same Python steps, started by `scripts/windows/install.ps1` (winget tools, MSVC for suyu,
 clang-cl for the game's C in upstream's `recomp_modules` project). CI (`.github/workflows/windows.yml`) checks
-steps 1-5 on Windows without any game.
+steps 1, 3, 4 and 5 on Windows without any game; step 2 and steps 6-10 are skipped.
 
 ## Open work (good first steps)
 
