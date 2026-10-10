@@ -88,9 +88,11 @@ def seed_shader_cache(pkg, title):
 
 def write_windows_launcher(pkg, name):
     scales = '; '.join(f"'{k}' = {v}" for k, v in SCALES.items())
+    exe_name = f'{name}.exe'.replace("'", "''")
     (pkg / 'run.ps1').write_text(f'''# Start the native build from this folder; the folder can be moved as a whole.
 #   run.bat [--scale 0.5|1|1.5|2|3|4] [--fullscreen]
 Set-Location -LiteralPath $PSScriptRoot
+$exe = Join-Path $PSScriptRoot '{exe_name}'
 $ini = 'user\\config\\sdl2-config.ini'
 $scales = @{{ {scales} }}
 $argv = $args  # switch blocks have their own $args
@@ -112,7 +114,7 @@ for ($i = 0; $i -lt $argv.Count; $i++) {{
     default {{ $extra += $argv[$i] }}
   }}
 }}
-& ".\\{name}.exe" @extra -g 'game\\main'
+& $exe @extra -g 'game\\main'
 exit $LASTEXITCODE
 ''')
     (pkg / 'run.bat').write_text(
