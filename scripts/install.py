@@ -17,6 +17,7 @@ from pathlib import Path
 import shutil
 import subprocess
 import sys
+import tempfile
 import time
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
@@ -66,6 +67,23 @@ def ram_gb():
 
 def swap_gb():
     return plat.swap_mb() / 1024
+
+
+def atomic_write_text(path, text):
+    """Replace a state file only after its complete new contents have been written."""
+    path = Path(path)
+    temporary = None
+    try:
+        with tempfile.NamedTemporaryFile(mode='w', encoding='utf-8', dir=path.parent,
+                                         prefix=f'.{path.name}.', suffix='.tmp', delete=False) as out:
+            temporary = Path(out.name)
+            out.write(text)
+            out.flush()
+            os.fsync(out.fileno())
+        os.replace(temporary, path)
+    finally:
+        if temporary is not None:
+            temporary.unlink(missing_ok=True)
 
 
 def pick(kind, title):
@@ -355,9 +373,9 @@ def main():
         say(f'{YELLOW}▶{RESET} {BOLD}{i}/{len(STEPS)} {title}{RESET}')
         t0 = time.time()
         fn()
-        marker.write_text(time.strftime('%Y-%m-%d %H:%M:%S'))
+        atomic_write_text(marker, time.strftime('%Y-%m-%d %H:%M:%S'))
         if key == 'patches':
-            stamp.write_text(fingerprint)
+            atomic_write_text(stamp, fingerprint)
         say(f'{GREEN}✓{RESET} done ({(time.time() - t0) / 60:.0f} min)\n')
     say(f'{GREEN}{BOLD}All done!{RESET} ({(time.time() - started) / 60:.0f} min this run)')
     if not CI:
