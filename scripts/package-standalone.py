@@ -196,6 +196,12 @@ def main():
     parser.add_argument('--mem-budget-mb', type=int, default=0,
                         help='memory-aware scheduling of generated-C compiles (use with a wide --recomp-jobs)')
     args = parser.parse_args()
+    if args.jobs < 1:
+        parser.error('--jobs must be at least 1')
+    if args.recomp_jobs < 1:
+        parser.error('--recomp-jobs must be at least 1')
+    if args.mem_budget_mb < 0:
+        parser.error('--mem-budget-mb cannot be negative')
 
     exefs = None
     if not args.backend_only:
@@ -267,6 +273,9 @@ def main():
         return rc
     exe = build / f'bin/suyu-cmd-static{plat.EXE}'
     print(f'build rc={rc}; executable: {exe if exe.exists() else "missing"}')
+    if not rc and not exe.is_file():
+        print(f'build reported success but did not produce the executable: {exe}', file=sys.stderr)
+        return 1
     return rc
 
 
