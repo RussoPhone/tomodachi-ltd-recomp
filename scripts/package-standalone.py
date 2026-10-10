@@ -189,6 +189,8 @@ def main():
     parser.add_argument('--jobs', type=int, default=4)
     parser.add_argument('--recomp-jobs', type=int, default=2, help='concurrent generated-C compiles (RAM-bound)')
     parser.add_argument('--configure-only', action='store_true')
+    parser.add_argument('--patch-exe', default=os.environ.get('SUYU_PATCH_EXE', ''),
+                        help='path to a patch executable for the suyu configure (also SUYU_PATCH_EXE)')
     parser.add_argument('--backend-only', action='store_true',
                         help='build suyu + suyu-cmd in the same no-JIT tree (no game modules yet): the tools for dump/export')
     parser.add_argument('--mem-budget-mb', type=int, default=0,
@@ -241,6 +243,11 @@ def main():
                  # Added later in the same tree: adding the game's modules only adds targets, the C++ is reused.
                  *([f'-DSUYU_CMD_RECOMP_DIR={exefs.as_posix()}', f'-DSUYU_CMD_RECOMP_PREBUILT_DIR={prebuilt}'] if exefs else []),
                  f'-DRECOMP_JOBS={args.recomp_jobs}']
+    if args.patch_exe:
+        patch_exe = Path(args.patch_exe)
+        if not patch_exe.is_file():
+            sys.exit(f'--patch-exe / SUYU_PATCH_EXE points to a file that does not exist: {patch_exe}')
+        configure.append(f'-DPATCH_EXE={patch_exe.resolve().as_posix()}')
     stage = 'backend' if args.backend_only else 'game'
     log = ROOT / f'artifacts/{name}-{stage}-configure.log'
     with log.open('w') as out:

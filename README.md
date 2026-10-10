@@ -130,6 +130,8 @@ Once installed, the game **no longer needs the `.nsp` or the keys**. Everything 
    - The first time, it installs the build tools with **winget**: Git, CMake, Ninja, Python, LLVM and the **Visual Studio 2022 Build Tools** (several GB). Windows asks for permission once.
    - Then it does the same 10 steps as on Linux. A window asks for your **`.nsp`**, another for the **folder with your `prod.keys`**.
    - It takes **2 to 4 hours**. If it stops, double-click `install.bat` again: it picks up where it left off.
+   - If it stops with **`Could not find patch executable`**, point it to a `patch.exe` by hand. Git for Windows has one. Open PowerShell in the folder and run:
+     `powershell -ExecutionPolicy Bypass -File scripts\windows\install.ps1 -PatchExe "C:\Program Files\Git\usr\bin\patch.exe"`
 4. To play, open **Tomodachi Life (native)** from the Start menu, or double-click **`play.bat`**. The same options work: `play.bat --fullscreen`, `play.bat --scale 2`.
 
 You need the same as on Linux: 16 GB of RAM, about 35 GB of free space (plus ~10 GB for Visual Studio) and a Vulkan graphics card.

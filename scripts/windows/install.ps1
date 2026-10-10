@@ -9,9 +9,10 @@
 #
 #   install.bat            normal install
 #   install.ps1 -CI        build check without a game (GitHub Actions; the tools are preinstalled there)
+#   install.ps1 -PatchExe "C:\Program Files\Git\usr\bin\patch.exe"   use this patch.exe (fixes "Could not find patch executable")
 
 [CmdletBinding()]
-param([switch]$CI)
+param([switch]$CI, [string]$PatchExe)
 
 $ErrorActionPreference = 'Stop'
 $Root = Split-Path -Parent (Split-Path -Parent $PSScriptRoot)
@@ -147,6 +148,11 @@ if (-not $vcvars) { Fail 'Visual Studio 2022 with "Desktop development with C++"
 if ($LASTEXITCODE -ne 0) { Fail 'Could not install the Python package "cryptography".' }
 
 $env:PYTHONUTF8 = '1'
+if ($PatchExe) {
+    if (-not (Test-Path -LiteralPath $PatchExe -PathType Leaf)) { Fail "PatchExe points to a file that does not exist: $PatchExe" }
+    $env:SUYU_PATCH_EXE = (Resolve-Path -LiteralPath $PatchExe).Path
+    Say "Using patch.exe: $env:SUYU_PATCH_EXE"
+}
 $extra = if ($CI) { ' --ci' } else { '' }
 & cmd.exe /c "call `"$vcvars`" >nul && python scripts\install.py$extra"
 exit $LASTEXITCODE
