@@ -61,6 +61,7 @@ def main():
     gui_log = ROOT / 'artifacts/aot-export-gui.log'
     if port_open():
         sys.exit(f'MCP port {PORT} already in use; refusing to interfere with another suyu')
+    status_path.parent.mkdir(parents=True, exist_ok=True)
     out_dir.mkdir(parents=True, exist_ok=True)
 
     env = os.environ.copy()
@@ -99,10 +100,13 @@ def main():
         record['trigger'] = reply
         deadline = time.time() + args.timeout_min * 60
         last = None
-        while time.time() < deadline:
+        while True:
+            remaining = deadline - time.time()
+            if remaining <= 0:
+                raise RuntimeError('export timed out')
             if gui.poll() is not None:
                 raise RuntimeError(f'suyu exited during export (code {gui.returncode})')
-            state = call('get_aot_export_status', timeout=60)
+            state = call('get_aot_export_status', timeout=min(60, remaining))
             line = (state.get('progress'), state.get('status'))
             if line != last:
                 print(time.strftime('%H:%M:%S'), *line, flush=True)
@@ -111,22 +115,27 @@ def main():
             status_path.write_text(json.dumps(record, indent=2) + '\n')
             if state.get('done'):
                 break
-            time.sleep(15)
-        else:
-            raise RuntimeError('export timed out')
+            time.sleep(min(15, remaining))
         record['result'] = 'succeeded' if record['last_status'].get('success') else 'failed'
     except Exception as error:  # record every terminal state, not only success
         record['result'] = 'error'
         record['error'] = str(error)
     finally:
         record['finished'] = time.strftime('%Y-%m-%dT%H:%M:%S%z')
-        status_path.write_text(json.dumps(record, indent=2) + '\n')
         if gui.poll() is None:
             gui.terminate()
             try:
                 gui.wait(30)
             except subprocess.TimeoutExpired:
                 gui.kill()
+                gui.wait()
+        try:
+            status_path.write_text(json.dumps(record, indent=2) + '\n')
+        except OSError as error:
+            record['result'] = 'error'
+            message = f'could not write export status {status_path}: {error}'
+            record['error'] = f"{record['error']}; {message}" if record.get('error') else message
+            print(message, file=sys.stderr)
     print(record['result'], record.get('error', ''))
     return 0 if record['result'] == 'succeeded' else 1
 
