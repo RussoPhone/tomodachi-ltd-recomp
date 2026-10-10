@@ -51,8 +51,10 @@ sudo pacman -S --needed base-devel git cmake ninja clang python python-cryptogra
 **Fedora** (reported working by a user; the `ffmpeg` package comes from RPM Fusion):
 
 ```bash
-sudo dnf install git cmake ninja clang python3 python-cryptography qt6-qtbase qt6-qtsvg qt6-qt5compat qt6-qtcharts quazip-qt6 quazip-qt6-devel SDL3 ffmpeg opus zstd lz4 libusb openssl glslang nasm vulkan-loader zenity @development-tools qt6-qtsvg-devel qt6-qtcharts-devel SDL3-devel
+sudo dnf install git cmake ninja clang python3 python-cryptography qt6-qtbase qt6-qtsvg qt6-qt5compat qt6-qtcharts quazip-qt6 quazip-qt6-devel SDL3 ffmpeg opus zstd lz4 libusb openssl glslang nasm vulkan-loader zenity @development-tools qt6-qtsvg-devel qt6-qtcharts-devel SDL3-devel ffmpeg-free-devel qt6-qtbase-private-devel
 ```
+
+If the build stops with `Could NOT find FFmpeg` or `Could NOT find Qt6GuiPrivate`, install `ffmpeg-free-devel` and `qt6-qtbase-private-devel` (reported in issue #7). `autoconf`, `libtoolize`, `libudev` and `systemd-devel` were also used by that reporter, but only install them if an error asks for them.
 
 **Ubuntu 25.04+, Debian 13+** (not tested yet: if something is missing, the installer says what; please tell us in an issue so we can fix this list):
 
