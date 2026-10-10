@@ -25,7 +25,7 @@ O projeto **não contém o jogo**. Você usa a **sua própria cópia**, e o inst
 
 | | |
 |---|---|
-| 🖥️ **Sistema** | **Linux**, testado no Arch Linux / EndeavourOS. **Windows 10/11**: experimental, veja [Windows](#windows-experimental). |
+| 🖥️ **Sistema** | **Linux**, testado no Arch Linux / EndeavourOS; funcionou no Fedora. **Windows 10/11**: experimental, veja [Windows](#windows-experimental). |
 | 🧠 **Memória** | **16 GB de RAM** e pelo menos **8 GB de swap** (memória virtual) |
 | 💾 **Espaço livre** | **35 GB** |
 | 🎮 **Placa de vídeo** | Qualquer uma com **Vulkan** (NVIDIA, AMD ou Intel recentes) |
@@ -40,11 +40,27 @@ O projeto **não contém o jogo**. Você usa a **sua própria cópia**, e o inst
 
 ## Passo 1 — Preparar o computador
 
-Abra o **Terminal**, cole o comando abaixo e aperte **Enter**. Ele vai pedir a sua senha:
+Abra o **Terminal**, cole o comando da sua distribuição Linux e aperte **Enter**. Ele vai pedir a sua senha.
+
+**Arch Linux, EndeavourOS, Manjaro, CachyOS** (testado):
 
 ```bash
 sudo pacman -S --needed base-devel git cmake ninja clang python python-cryptography qt6-base qt6-svg qt6-5compat qt6-charts quazip-qt6 sdl3 ffmpeg opus zstd lz4 libusb openssl glslang nasm vulkan-icd-loader zenity
 ```
+
+**Fedora** (funcionou para um usuário; o pacote `ffmpeg` vem do RPM Fusion):
+
+```bash
+sudo dnf install git cmake ninja clang python3 python-cryptography qt6-qtbase qt6-qtsvg qt6-qt5compat qt6-qtcharts quazip-qt6 quazip-qt6-devel SDL3 ffmpeg opus zstd lz4 libusb openssl glslang nasm vulkan-loader zenity @development-tools qt6-qtsvg-devel qt6-qtcharts-devel SDL3-devel
+```
+
+**Ubuntu 25.04+, Debian 13+** (ainda não testado: se faltar algo, o instalador avisa o quê; conte numa issue para corrigirmos esta lista):
+
+```bash
+sudo apt install build-essential git cmake ninja-build clang python3 python3-cryptography qt6-base-dev qt6-base-private-dev qt6-svg-dev libqt6core5compat6-dev qt6-charts-dev libquazip1-qt6-dev libsdl3-dev libavcodec-dev libavfilter-dev libavutil-dev libswscale-dev libopus-dev libzstd-dev liblz4-dev libusb-1.0-0-dev libssl-dev glslang-tools nasm libvulkan-dev zenity
+```
+
+**Outras distribuições:** instale os equivalentes dos pacotes acima (as versões de desenvolvimento, "-devel"/"-dev", do Qt 6 com SVG, Charts e Qt5Compat, QuaZip para Qt 6, SDL3, FFmpeg, Opus, zstd, LZ4, libusb, OpenSSL e Vulkan, mais git, cmake, ninja, clang, Python 3 com `cryptography`, glslang, nasm e zenity). O instalador confere as ferramentas e diz quais estão faltando.
 
 Isso instala os programas usados para montar o jogo. Só precisa ser feito uma vez.
 
@@ -152,7 +168,7 @@ Em `local/package/tomodachi/user/nand/user/save/`. Faça cópias dessa pasta de 
 <details>
 <summary><b>Posso usar o computador durante a instalação?</b></summary>
 
-Pode, mas ele vai estar lento, porque a compilação usa quase toda a memória e o processador. Evite atualizar o sistema (`pacman -Syu`) enquanto instala: trocar o compilador no meio obriga a compilar tudo de novo.
+Pode, mas ele vai estar lento, porque a compilação usa quase toda a memória e o processador. Evite atualizar o sistema (`pacman -Syu`, `dnf upgrade`, `apt upgrade`) enquanto instala: trocar o compilador no meio obriga a compilar tudo de novo.
 </details>
 
 <details>

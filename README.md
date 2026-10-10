@@ -25,7 +25,7 @@ This project **does not contain the game**. You bring **your own copy**, and the
 
 | | |
 |---|---|
-| 🖥️ **System** | **Linux**, tested on Arch Linux / EndeavourOS. **Windows 10/11**: experimental, see [Windows](#windows-experimental). |
+| 🖥️ **System** | **Linux**, tested on Arch Linux / EndeavourOS; Fedora reported working. **Windows 10/11**: experimental, see [Windows](#windows-experimental). |
 | 🧠 **Memory** | **16 GB of RAM** and at least **8 GB of swap** (virtual memory) |
 | 💾 **Free space** | **35 GB** |
 | 🎮 **Graphics card** | Any with **Vulkan** (recent NVIDIA, AMD or Intel) |
@@ -40,11 +40,27 @@ This project **does not contain the game**. You bring **your own copy**, and the
 
 ## Step 1 — Prepare your computer
 
-Open the **Terminal**, paste the command below and press **Enter**. It will ask for your password:
+Open the **Terminal**, paste the command for your Linux and press **Enter**. It will ask for your password.
+
+**Arch Linux, EndeavourOS, Manjaro, CachyOS** (tested):
 
 ```bash
 sudo pacman -S --needed base-devel git cmake ninja clang python python-cryptography qt6-base qt6-svg qt6-5compat qt6-charts quazip-qt6 sdl3 ffmpeg opus zstd lz4 libusb openssl glslang nasm vulkan-icd-loader zenity
 ```
+
+**Fedora** (reported working by a user; the `ffmpeg` package comes from RPM Fusion):
+
+```bash
+sudo dnf install git cmake ninja clang python3 python-cryptography qt6-qtbase qt6-qtsvg qt6-qt5compat qt6-qtcharts quazip-qt6 quazip-qt6-devel SDL3 ffmpeg opus zstd lz4 libusb openssl glslang nasm vulkan-loader zenity @development-tools qt6-qtsvg-devel qt6-qtcharts-devel SDL3-devel
+```
+
+**Ubuntu 25.04+, Debian 13+** (not tested yet: if something is missing, the installer says what; please tell us in an issue so we can fix this list):
+
+```bash
+sudo apt install build-essential git cmake ninja-build clang python3 python3-cryptography qt6-base-dev qt6-base-private-dev qt6-svg-dev libqt6core5compat6-dev qt6-charts-dev libquazip1-qt6-dev libsdl3-dev libavcodec-dev libavfilter-dev libavutil-dev libswscale-dev libopus-dev libzstd-dev liblz4-dev libusb-1.0-0-dev libssl-dev glslang-tools nasm libvulkan-dev zenity
+```
+
+**Other distributions:** install the equivalents of the packages above (the development/"-devel"/"-dev" versions of Qt 6 with SVG, Charts and Qt5Compat, QuaZip for Qt 6, SDL3, FFmpeg, Opus, zstd, LZ4, libusb, OpenSSL and Vulkan, plus git, cmake, ninja, clang, Python 3 with `cryptography`, glslang, nasm and zenity). The installer checks for the tools and names any that are missing.
 
 This installs the programs used to build the game. You only need to do it once.
 
@@ -152,7 +168,7 @@ In `local/package/tomodachi/user/nand/user/save/`. Back that folder up now and t
 <details>
 <summary><b>Can I use my computer while it installs?</b></summary>
 
-Yes, but it will be slow, because compiling uses almost all the memory and CPU. Avoid system updates (`pacman -Syu`) while installing: if the compiler changes in the middle, everything has to be compiled again.
+Yes, but it will be slow, because compiling uses almost all the memory and CPU. Avoid system updates (`pacman -Syu`, `dnf upgrade`, `apt upgrade`) while installing: if the compiler changes in the middle, everything has to be compiled again.
 </details>
 
 <details>
