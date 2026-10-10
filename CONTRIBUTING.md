@@ -1,7 +1,7 @@
 # Contributing
 
-The original author has stepped back and is **looking for people to continue this project**. Forks are welcome;
-if you want to maintain this repository, open an issue and ask to be added.
+Contributions are welcome: open an issue to report a problem or discuss a change, or send a pull request.
+Forks are welcome too.
 
 ## Ground rules (legal)
 
