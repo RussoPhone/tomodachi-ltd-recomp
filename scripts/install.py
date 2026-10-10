@@ -135,6 +135,8 @@ def check_linux():
     if sys.platform != 'linux':
         fail('This installer works on Linux and Windows.')
     missing = [t for t in ('git', 'cmake', 'ninja', 'clang', 'g++', 'glslangValidator') if not shutil.which(t)]
+    if not (shutil.which('zenity') or shutil.which('kdialog')):
+        say(f'{YELLOW}   Note: install zenity (or kdialog) to type text in the game (names, messages).{RESET}')
     try:
         import cryptography  # noqa: F401
     except ImportError:
@@ -304,8 +306,32 @@ CI = '--ci' in sys.argv  # build check without a game: steps 1, 3, 4 and 5 only
 CI_STEPS = ('check', 'fetch', 'patches', 'backend')
 
 
+def patches_fingerprint():
+    import hashlib
+    h = hashlib.sha256()
+    for p in sorted((ROOT / 'patches').glob('*.patch')):
+        h.update(p.name.encode() + b'\0' + p.read_bytes())
+    return h.hexdigest()
+
+
+def refresh_after_update():
+    """After an update brings new fixes, redo only what depends on them: applying the fixes, the tools
+    build, and the final link and folder. The game's compiled code is kept (the object cache makes the
+    "compile" step a quick relink)."""
+    stamp = STATE / 'patches.sha256'
+    current = patches_fingerprint()
+    keys = [key for key, _, _ in STEPS]
+    applied = STATE / f'{keys.index("patches") + 1:02d}-patches.ok'
+    if applied.exists() and (not stamp.exists() or stamp.read_text().strip() != current):
+        say(f'{YELLOW}New fixes in this version: re-applying them and rebuilding the parts that use them.{RESET}')
+        for key in ('patches', 'backend', 'package', 'bundle'):
+            (STATE / f'{keys.index(key) + 1:02d}-{key}.ok').unlink(missing_ok=True)
+    return stamp, current
+
+
 def main():
     STATE.mkdir(parents=True, exist_ok=True)
+    stamp, fingerprint = refresh_after_update()
     say(f'{BOLD}Tomodachi Life: Living the Dream — native build installer{RESET}')
     say('Educational, experimental project. Use only with your own copy of the game.\n')
     started = time.time()
@@ -321,6 +347,8 @@ def main():
         t0 = time.time()
         fn()
         marker.write_text(time.strftime('%Y-%m-%d %H:%M:%S'))
+        if key == 'patches':
+            stamp.write_text(fingerprint)
         say(f'{GREEN}✓{RESET} done ({(time.time() - t0) / 60:.0f} min)\n')
     say(f'{GREEN}{BOLD}All done!{RESET} ({(time.time() - started) / 60:.0f} min this run)')
     if not CI:

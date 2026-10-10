@@ -126,6 +126,18 @@ Você precisa do mesmo que no Linux: 16 GB de RAM, cerca de 35 GB livres (mais ~
 ## Perguntas frequentes
 
 <details>
+<summary><b>Como digitar texto no jogo (nomes, mensagens)?</b></summary>
+
+Quando o jogo pede texto, abre uma caixinha: digite e clique em OK. No Linux ela precisa do `zenity` (o Passo 1 instala) ou do `kdialog`; no Windows já vem pronta. Se a caixa abrir atrás da janela do jogo, troque para ela com Alt+Tab.
+</details>
+
+<details>
+<summary><b>Como atualizar para uma versão nova?</b></summary>
+
+Baixe o projeto de novo (ou `git pull`) na mesma pasta e rode o instalador outra vez. Ele só refaz o que mudou: aplica as correções novas e religa o jogo em poucos minutos, mantendo o jogo já compilado e os seus saves.
+</details>
+
+<details>
 <summary><b>Deu erro durante a instalação. E agora?</b></summary>
 
 O instalador mostra qual passo falhou e onde está o registro completo (pasta `local/logs/`). Os erros mais comuns:

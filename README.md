@@ -126,6 +126,18 @@ You need the same as on Linux: 16 GB of RAM, about 35 GB of free space (plus ~10
 ## FAQ
 
 <details>
+<summary><b>How do I type text in the game (names, messages)?</b></summary>
+
+When the game asks for text, a small text box opens: type and press OK. On Linux it needs `zenity` (Step 1 installs it) or `kdialog`; on Windows it is built in. If the box opens behind the game window, switch to it with Alt+Tab.
+</details>
+
+<details>
+<summary><b>How do I update to a new version?</b></summary>
+
+Download the project again (or `git pull`) into the same folder and run the installer again. It only redoes what changed: new fixes are applied and the game is relinked in a few minutes, keeping your compiled game and your saves.
+</details>
+
+<details>
 <summary><b>The installation failed. What now?</b></summary>
 
 The installer tells you which step failed and where the full log is (the `local/logs/` folder). The most common causes:

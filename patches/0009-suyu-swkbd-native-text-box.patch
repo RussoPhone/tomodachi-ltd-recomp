@@ -1,0 +1,173 @@
+SWITCHPILER patch 0009: the in-game keyboard (software keyboard applet) opens a native text box.
+
+suyu-cmd has no keyboard UI and its stub answered every keyboard request with the word "suyu"
+(issue #6). Now the player types the text in a dialog: zenity or kdialog on Linux, a PowerShell
+InputBox on Windows. Initial text, length limit and cancel are respected.
+
+--- a/src/core/frontend/applets/software_keyboard.cpp
++++ b/src/core/frontend/applets/software_keyboard.cpp
+@@ -4,6 +4,10 @@
+ // SPDX-FileCopyrightText: Copyright 2021 yuzu Emulator Project
+ // SPDX-License-Identifier: GPL-2.0-or-later
+ 
++#include <cstdio>
++#include <cstdlib>
++#include <optional>
++#include <string>
+ #include <thread>
+ 
+ #include "common/logging.h"
+@@ -12,6 +16,94 @@
+ 
+ namespace Core::Frontend {
+ 
++namespace {
++
++// SWITCHPILER patch 0009: suyu-cmd has no keyboard UI, and the stub answered every
++// keyboard request with the word "suyu". Ask the player in a native text box instead:
++// zenity or kdialog on Linux, a PowerShell InputBox on Windows. The texts travel in
++// environment variables, so nothing the game shows is ever parsed by a shell.
++void SetEnv(const char* name, const std::string& value) {
++#ifdef _WIN32
++    _putenv_s(name, value.c_str());
++#else
++    setenv(name, value.c_str(), 1);
++#endif
++}
++
++std::optional<std::string> RunPrompt(const char* command) {
++#ifdef _WIN32
++    std::FILE* p = _popen(command, "rb");
++#else
++    std::FILE* p = popen(command, "r");
++#endif
++    if (!p) {
++        return std::nullopt;
++    }
++    std::string out;
++    char buf[512];
++    size_t n;
++    while ((n = std::fread(buf, 1, sizeof(buf), p)) > 0) {
++        out.append(buf, n);
++    }
++#ifdef _WIN32
++    const int status = _pclose(p);
++#else
++    const int status = pclose(p);
++#endif
++    if (status != 0) {
++        return std::nullopt; // cancelled, or no dialog program
++    }
++    while (!out.empty() && (out.back() == '\n' || out.back() == '\r')) {
++        out.pop_back();
++    }
++    return out;
++}
++
++// Returns the text the player typed, or nullopt if they cancelled.
++std::optional<std::u16string> AskText(const std::u16string& header, const std::u16string& sub,
++                                      const std::u16string& guide, const std::u16string& initial,
++                                      u32 max_length) {
++    std::string prompt = Common::UTF16ToUTF8(header);
++    for (const auto& extra : {sub, guide}) {
++        if (!extra.empty()) {
++            prompt += (prompt.empty() ? "" : "\n") + Common::UTF16ToUTF8(extra);
++        }
++    }
++    if (prompt.empty()) {
++        prompt = "Type the text";
++    }
++    if (max_length) {
++        prompt += "\n(max. " + std::to_string(max_length) + " characters)";
++    }
++    SetEnv("SWKBD_TITLE", "Tomodachi Life - keyboard");
++    SetEnv("SWKBD_TEXT", prompt);
++    SetEnv("SWKBD_INITIAL", Common::UTF16ToUTF8(initial));
++#ifdef _WIN32
++    const auto text = RunPrompt(
++        "powershell -NoProfile -NonInteractive -Command \"[Console]::OutputEncoding=[Text.Encoding]::UTF8; "
++        "Add-Type -AssemblyName Microsoft.VisualBasic; "
++        "$t=[Microsoft.VisualBasic.Interaction]::InputBox($env:SWKBD_TEXT,$env:SWKBD_TITLE,$env:SWKBD_INITIAL); "
++        "if ($t -eq '') { exit 1 }; [Console]::Write($t)\"");
++#else
++    std::optional<std::string> text = RunPrompt(
++        "zenity --entry --title=\"$SWKBD_TITLE\" --text=\"$SWKBD_TEXT\" --entry-text=\"$SWKBD_INITIAL\" 2>/dev/null");
++    if (!text) {
++        text = RunPrompt("command -v zenity >/dev/null 2>&1 && exit 1; "
++                         "kdialog --title \"$SWKBD_TITLE\" --inputbox \"$SWKBD_TEXT\" \"$SWKBD_INITIAL\" 2>/dev/null");
++    }
++#endif
++    if (!text) {
++        return std::nullopt;
++    }
++    std::u16string result = Common::UTF8ToUTF16(*text);
++    if (max_length && result.size() > max_length) {
++        result.resize(max_length);
++    }
++    return result;
++}
++
++} // namespace
++
+ SoftwareKeyboardApplet::~SoftwareKeyboardApplet() = default;
+ 
+ DefaultSoftwareKeyboardApplet::~DefaultSoftwareKeyboardApplet() = default;
+@@ -65,10 +157,17 @@
+ }
+ 
+ void DefaultSoftwareKeyboardApplet::ShowNormalKeyboard() const {
+-    LOG_WARNING(Service_AM,
+-                "(STUBBED) called, backend requested to show the normal software keyboard.");
++    LOG_INFO(Service_AM, "showing the normal software keyboard as a text box");
+ 
+-    SubmitNormalText(u"suyu");
++    std::thread([this] {
++        const auto text = AskText(parameters.header_text, parameters.sub_text, parameters.guide_text,
++                                  parameters.initial_text, parameters.max_text_length);
++        if (!text && !parameters.disable_cancel_button) {
++            submit_normal_callback(Service::AM::Frontend::SwkbdResult::Cancel, {}, true);
++            return;
++        }
++        SubmitNormalText(text.value_or(parameters.initial_text));
++    }).detach();
+ }
+ 
+ void DefaultSoftwareKeyboardApplet::ShowTextCheckDialog(
+@@ -103,7 +202,17 @@
+              appear_parameters.key_top_as_floating, appear_parameters.enable_backspace_button,
+              appear_parameters.enable_return_button, appear_parameters.disable_cancel_button);
+ 
+-    std::thread([this] { SubmitInlineText(u"suyu"); }).detach();
++    const u32 max_length = appear_parameters.max_text_length;
++    const bool can_cancel = !appear_parameters.disable_cancel_button;
++    std::thread([this, max_length, can_cancel] {
++        const auto text = AskText(parameters.header_text, parameters.sub_text, parameters.guide_text,
++                                  parameters.initial_text, max_length);
++        if (!text && can_cancel) {
++            submit_inline_callback(Service::AM::Frontend::SwkbdReplyType::DecidedCancel, {}, 0);
++            return;
++        }
++        SubmitInlineText(text.value_or(parameters.initial_text));
++    }).detach();
+ }
+ 
+ void DefaultSoftwareKeyboardApplet::HideInlineKeyboard() const {
+@@ -134,15 +243,9 @@
+ }
+ 
+ void DefaultSoftwareKeyboardApplet::SubmitInlineText(std::u16string_view text) const {
+-    std::this_thread::sleep_for(std::chrono::milliseconds(500));
+-
+-    for (std::size_t index = 0; index < text.size(); ++index) {
+-        submit_inline_callback(Service::AM::Frontend::SwkbdReplyType::ChangedString,
+-                               std::u16string(text.data(), text.data() + index + 1),
+-                               static_cast<s32>(index) + 1);
+-
+-        std::this_thread::sleep_for(std::chrono::milliseconds(250));
+-    }
++    submit_inline_callback(Service::AM::Frontend::SwkbdReplyType::ChangedString, std::u16string(text),
++                           static_cast<s32>(text.size()));
++    std::this_thread::sleep_for(std::chrono::milliseconds(50));
+ 
+     submit_inline_callback(Service::AM::Frontend::SwkbdReplyType::DecidedEnter,
+                            std::u16string(text), static_cast<s32>(text.size()));
