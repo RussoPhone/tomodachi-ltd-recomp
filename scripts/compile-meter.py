@@ -42,7 +42,7 @@ def cache_key(args):
     stat = compiler.stat()
     digest.update(f'{compiler}:{stat.st_size}:{stat.st_mtime_ns}\0'.encode())
     skip_next, sources, include_dirs = False, [], []
-    for arg in args[1:]:
+    for index, arg in enumerate(args[1:], start=1):
         if skip_next:
             skip_next = False
             continue
@@ -50,6 +50,10 @@ def cache_key(args):
             skip_next = True
             continue
         if arg.startswith(('/Fo', '-Fo', '/Fd', '-Fd')):  # clang-cl output paths
+            continue
+        if arg in ('-I', '/I'):
+            include_dirs.append(args[index + 1].strip('"'))
+            digest.update(b'-I\0')
             continue
         if arg.startswith(('-I', '/I')):
             include_dirs.append(arg[2:].strip('"'))
@@ -62,10 +66,19 @@ def cache_key(args):
         digest.update(arg.encode() + b'\0')
     for source in sources:
         digest.update(Path(source).read_bytes())
-    for directory in include_dirs:
-        for header in sorted(Path(directory).glob('*.h')):
-            digest.update(header.name.encode() + b'\0' + header.read_bytes())
+    for index, directory, header in header_files(sources, include_dirs):
+        digest.update(f'{index}:{header.relative_to(directory)}'.encode() + b'\0' + header.read_bytes())
     return digest.hexdigest(), sources, include_dirs
+
+
+def header_files(sources, include_dirs):
+    directories = list(dict.fromkeys([*(Path(d).resolve() for d in include_dirs),
+                                     *(Path(source).resolve().parent for source in sources)]))
+    return [(index, directory, header)
+            for index, directory in enumerate(directories) if directory.is_dir()
+            for header in sorted(directory.rglob('*'))
+            if header.is_file() and header.suffix.lower() in
+            ('.h', '.hh', '.hpp', '.hxx', '.inc', '.inl')]
 
 
 def option(args, name):
@@ -156,7 +169,7 @@ if cache_dir and is_compile:
         shutil.copyfile(cached, output)
         depfile = option(argv, '-MF')
         if depfile:
-            headers = [str(h) for d in include_dirs for h in sorted(Path(d).glob('*.h'))]
+            headers = list(dict.fromkeys(str(h) for _, _, h in header_files(sources, include_dirs)))
             Path(depfile).write_text(f'{output}: ' + ' '.join(s.replace(' ', '\\ ') for s in sources + headers) + '\n')
         rc, status = 0, '\thit'
     else:
