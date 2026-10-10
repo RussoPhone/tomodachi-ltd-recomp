@@ -20,6 +20,7 @@ import hashlib
 import importlib.util
 import json
 from pathlib import Path
+from pathlib import PureWindowsPath
 import shutil
 import struct
 import sys
@@ -44,8 +45,42 @@ def extract_file(reader, offset, size, dest):
         done = 0
         while done < size:
             n = min(CHUNK, size - done)
-            out.write(reader.read(offset + done, n))
+            block = reader.read(offset + done, n)
+            if len(block) != n:
+                raise EOFError(f'short read at {offset + done:#x}: expected {n} bytes, got {len(block)}')
+            written = out.write(block)
+            if written != n:
+                raise OSError(f'short write to {dest}: expected {n} bytes, wrote {written}')
             done += n
+
+
+def romfs_destination(root, path, seen):
+    """Resolve a RomFS path below root and reject names that alias on supported hosts."""
+    if not isinstance(path, str) or '\0' in path or '\\' in path:
+        raise ValueError(f'invalid RomFS path: {path!r}')
+    if PureWindowsPath(path).drive:
+        raise ValueError(f'absolute or drive-qualified RomFS path: {path!r}')
+    parts = path.split('/')
+    if parts and parts[0] == '':  # walk_romfs represents files as /name or /dir/name
+        parts = parts[1:]
+    if not parts or any(part in ('', '.', '..') for part in parts):
+        raise ValueError(f'unsafe RomFS path: {path!r}')
+    key = tuple(part.casefold() for part in parts)
+    if key in seen:
+        raise ValueError(f'colliding RomFS path: {path!r}')
+    seen.add(key)
+    root = root.resolve()
+    dest = root.joinpath(*parts)
+    if not dest.resolve().is_relative_to(root):
+        raise ValueError(f'RomFS path escapes extraction root: {path!r}')
+    return dest
+
+
+def extract_romfs_file(reader, offset, size, root, path, seen):
+    dest = romfs_destination(root, path, seen)
+    if dest.exists():
+        raise ValueError(f'RomFS file collides with an existing destination: {path!r}')
+    extract_file(reader, offset, size, dest)
 
 
 def main():
@@ -99,11 +134,12 @@ def main():
                 files = romfs.walk_romfs(reader, start * 0x200 + level_offset)
                 root = dest / ('romfs' if content == 'program' else 'control')
                 total = 0
+                seen_paths = set()
                 for i, (path, offset, size) in enumerate(files):
                     if content == 'program' and not args.with_files:
                         total += size
                         continue
-                    extract_file(reader, offset, size, root / path.lstrip('/'))
+                    extract_romfs_file(reader, offset, size, root, path, seen_paths)
                     total += size
                     if content == 'program' and i % 5000 == 0:
                         print(f'  {content}: {i}/{len(files)} files, {total / 2**30:.2f} GiB', flush=True)

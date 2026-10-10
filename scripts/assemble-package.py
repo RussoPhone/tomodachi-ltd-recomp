@@ -32,7 +32,7 @@ def link_or_copy(src, dst):
     try:
         os.link(src, dst)
     except OSError:  # another drive, or a file system without hard links
-        shutil.copyfile(src, dst)
+        shutil.copy2(src, dst)
 
 
 def hardlink_tree(src, dst):
