@@ -50,6 +50,15 @@ def hardlink_tree(src, dst):
 SCALES = {'0.5': 1, '1': 3, '1.5': 5, '2': 6, '3': 7, '4': 8}  # Settings::ResolutionSetup values
 
 
+def desktop_exec(path):
+    """Quote an executable path for both desktop-entry string and Exec parsing."""
+    argument = ''.join('\\' + char if char in '\\"`$' else '%%' if char == '%' else char
+                       for char in str(path))
+    # Desktop-entry string escapes are decoded before the Exec quoting escapes.
+    argument = argument.replace('\\', '\\\\').replace('\n', '\\n').replace('\r', '\\r').replace('\t', '\\t')
+    return f'"{argument}"'
+
+
 def set_ini(path, section, values):
     """Set keys (and their \\default=false twins) inside one [section] of a suyu ini, adding what is missing."""
     lines = path.read_text().splitlines() if path.exists() else []
@@ -201,7 +210,7 @@ exec ./{name} "${{EXTRA[@]}}" -g game/main
     (pkg / f'{name}.desktop').write_text(
         '[Desktop Entry]\nType=Application\n'
         f'Name={title} (native)\nComment=Native build made locally by SWITCHPILER from your own copy\n'
-        f'Exec={pkg / "run.sh"}\nIcon={pkg / "icon.jpg"}\nTerminal=false\nCategories=Game;\n')
+        f'Exec={desktop_exec(pkg / "run.sh")}\nIcon={pkg / "icon.jpg"}\nTerminal=false\nCategories=Game;\n')
     (pkg / 'README.txt').write_text(
         f'{title} - native build (made by SWITCHPILER on this machine)\n\n'
         'Start: ./run.sh   (or copy the .desktop file into ~/.local/share/applications)\n\n'
