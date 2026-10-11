@@ -65,6 +65,9 @@ def cache_key(args):
             continue
         digest.update(arg.encode() + b'\0')
     for source in sources:
+        # Source paths affect __FILE__, __BASE_FILE__, and debug information.
+        # Do not reuse an object compiled from an identical file at another path.
+        digest.update(os.getcwd().encode() + b'\0' + source.encode() + b'\0')
         digest.update(Path(source).read_bytes())
     for index, directory, header in header_files(sources, include_dirs):
         digest.update(f'{index}:{header.relative_to(directory)}'.encode() + b'\0' + header.read_bytes())

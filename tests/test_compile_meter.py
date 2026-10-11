@@ -18,6 +18,31 @@ def object_hash(path):
 
 class CompileMeterCacheTests(unittest.TestCase):
     @unittest.skipUnless(shutil.which('cc'), 'a C compiler is required')
+    def test_source_path_change_invalidates_path_sensitive_object(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            first_dir, second_dir = root / 'first', root / 'second'
+            first_dir.mkdir()
+            second_dir.mkdir()
+            source_text = 'const char *source_name(void) { return __FILE__; }\n'
+            first_source, second_source = first_dir / 'main.c', second_dir / 'main.c'
+            first_source.write_text(source_text)
+            second_source.write_text(source_text)
+
+            env = dict(os.environ)
+            env['COMPILE_OBJ_CACHE'] = str(root / 'cache')
+            env['COMPILE_METER_LOG'] = str(root / 'meter.tsv')
+            outputs = [root / 'first.o', root / 'second.o']
+            for source, output in zip((first_source, second_source), outputs):
+                subprocess.run([sys.executable, str(METER), shutil.which('cc'), '-c', str(source),
+                                '-o', str(output)], check=True, env=env)
+
+            self.assertNotEqual(outputs[0].read_bytes(), outputs[1].read_bytes(),
+                                'cache reused an object with the wrong __FILE__ expansion')
+            self.assertEqual([line.rsplit('\t', 1)[-1] for line in
+                              (root / 'meter.tsv').read_text().splitlines()], ['miss', 'miss'])
+
+    @unittest.skipUnless(shutil.which('cc'), 'a C compiler is required')
     def test_nested_header_change_invalidates_cached_object(self):
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)

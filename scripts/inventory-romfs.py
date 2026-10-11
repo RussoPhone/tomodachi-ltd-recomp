@@ -6,7 +6,7 @@ Reads the PFS0 file table, decrypts each NCA header (XTS, header_key) and the Ro
 directory/file tables and samples the first bytes of each file to classify its format.
 
 Outputs:
-  local/analysis/<target>/romfs/<nca-content-type>.tsv   path, size, magic (private: names are content)
+  local/analysis/<target>/romfs/<nca-content-type>[-<number>].tsv   path, size, magic (private: names are content)
   adapters/<target>/modules/analysis-romfs.json           counts and bytes per format (public)
 
 Keys are read from the portable profile and never printed. The dump is opened read-only.
@@ -237,6 +237,7 @@ def main():
     private.mkdir(parents=True, exist_ok=True)
     dump = lab.runtime()['dump_path']
     summary, outputs = {}, []
+    content_occurrences = collections.Counter()
     with open(dump, 'rb') as f:
         for name, nca_offset, nca_size in pfs0(f):
             if not name.endswith('.nca'):
@@ -267,13 +268,15 @@ def main():
                 reader = CtrReader(f, nca_offset, ctr_key, fs[0x140:0x148], nca_size,
                                    start * 0x200, (end - start) * 0x200)
                 files = walk_romfs(reader, start * 0x200 + level_offset)
+                content_occurrences[content] += 1
+                label = content if content_occurrences[content] == 1 else f'{content}-{content_occurrences[content]}'
                 rows, by_format = [], collections.defaultdict(lambda: [0, 0])
                 for path, offset, size in files:
                     fmt = classify(reader.read(offset, min(size, 16))) if size else 'empty'
                     by_format[fmt][0] += 1
                     by_format[fmt][1] += size
                     rows.append(f'{tsv_escape(path)}\t{size}\t{fmt}\n')
-                out = safe_output_path(private / f'{content}.tsv')
+                out = safe_output_path(private / f'{label}.tsv')
                 out.write_text('path\tsize\tformat\n' + ''.join(rows))
                 outputs.append({'path': str(out.relative_to(ROOT)), 'sha256': hashlib.sha256(out.read_bytes()).hexdigest(),
                                 'private': True})
@@ -284,13 +287,13 @@ def main():
                         stem = Path(path[:-3])
                         inner[stem.suffix.lower() or '(none)'][0] += 1
                         inner[stem.suffix.lower() or '(none)'][1] += size
-                summary[content] = {'files': len(files), 'bytes': sum(s for _, _, s in files),
+                summary[label] = {'files': len(files), 'bytes': sum(s for _, _, s in files),
                                     'formats': {k: {'files': v[0], 'bytes': v[1]}
                                                 for k, v in sorted(by_format.items(), key=lambda kv: -kv[1][1])},
                                     'top_extensions': dict(extensions.most_common(15)),
                                     'zstd_inner_extensions': {k: {'files': v[0], 'compressed_bytes': v[1]}
                                                               for k, v in sorted(inner.items(), key=lambda kv: -kv[1][1])[:25]}}
-                print(f'{content}: {len(files)} files, {summary[content]["bytes"] / 2**30:.2f} GiB')
+                print(f'{label}: {len(files)} files, {summary[label]["bytes"] / 2**30:.2f} GiB')
     identity = json.loads((ROOT / 'artifacts/input-identity.json').read_text())
     artifact = {'schema_version': 1, 'kind': 'AnalysisArtifact', 'analysis': 'romfs-inventory',
                 'subject': {'title_id': lab.title_id(target)},

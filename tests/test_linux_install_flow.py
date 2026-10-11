@@ -70,7 +70,8 @@ class LinuxLauncherTests(unittest.TestCase):
             capture.write_text(
                 '#!/usr/bin/env python3\n'
                 'import json, pathlib, sys\n'
-                'pathlib.Path("argv.json").write_text(json.dumps(sys.argv[1:]))\n'
+                'ini = pathlib.Path("user/config/sdl2-config.ini")\n'
+                'pathlib.Path("argv.json").write_text(json.dumps({"args": sys.argv[1:], "ini": ini.read_text()}))\n'
             )
             capture.chmod(0o755)
 
@@ -82,12 +83,57 @@ class LinuxLauncherTests(unittest.TestCase):
                 self.assertEqual(assemble.main(), 0)
 
             subprocess.run(
-                [str(root / 'local/package/tomodachi/run.sh'), '--message', 'two words'],
+                [str(root / 'local/package/tomodachi/run.sh'), '--scale', '2', '--message', 'two words'],
                 cwd=root / 'local/package/tomodachi', check=True,
             )
             actual = json.loads((root / 'local/package/tomodachi/argv.json').read_text())
 
-        self.assertEqual(actual, ['--message', 'two words', '-g', 'game/main'])
+        self.assertEqual(actual['args'], ['--message', 'two words', '-g', 'game/main'])
+        self.assertIn('resolution_setup\\default=false', actual['ini'])
+        self.assertIn('resolution_setup=6', actual['ini'])
+
+    def test_run_script_updates_scale_when_the_setting_already_exists(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            build = root / 'upstream/mk8-recomp/build/suyu-static/bin'
+            installed = root / 'local/install/tomodachi/exefs'
+            build.mkdir(parents=True)
+            installed.mkdir(parents=True)
+            (installed / 'romfs.bin').touch()
+            (build / 'suyu-cmd-static').write_text(
+                '#!/usr/bin/env python3\n'
+                'import pathlib, sys\n'
+                'pathlib.Path("ini.txt").write_text(pathlib.Path("user/config/sdl2-config.ini").read_text())\n'
+            )
+            (build / 'suyu-cmd-static').chmod(0o755)
+            pkg = root / 'local/package/tomodachi'
+            pkg.mkdir(parents=True)
+            (pkg / 'user/config').mkdir(parents=True)
+            (pkg / 'user/config/sdl2-config.ini').write_text(
+                '[Renderer]\nresolution_setup\\default=true\nresolution_setup=3\n'
+            )
+            # The assembler replaces an existing package, so let it create the launcher and config.
+            with mock.patch.object(assemble, 'ROOT', root), \
+                    mock.patch.object(assemble.lab, 'target_name', return_value='tomodachi'), \
+                    mock.patch.object(assemble.lab, 'title_id', return_value='0100000000000000'), \
+                    mock.patch.object(assemble.lab, 'adapter', return_value={'name': 'Tomodachi'}), \
+                    mock.patch.object(sys, 'argv', ['assemble-package.py']):
+                self.assertEqual(assemble.main(), 0)
+
+            subprocess.run([str(pkg / 'run.sh'), '--scale', '2'], cwd=pkg, check=True)
+            actual = (pkg / 'ini.txt').read_text()
+
+        self.assertIn('resolution_setup\\default=false', actual)
+        self.assertIn('resolution_setup=6', actual)
+
+    def test_windows_launcher_adds_missing_resolution_settings(self):
+        with tempfile.TemporaryDirectory() as temp:
+            pkg = Path(temp)
+            assemble.write_windows_launcher(pkg, 'tomodachi-native')
+            launcher = (pkg / 'run.ps1').read_text()
+
+        self.assertIn("if ($text -notmatch '(?m)^resolution_setup=')", launcher)
+        self.assertIn("if ($text -notmatch '(?m)^resolution_setup\\\\default=')", launcher)
 
 
 if __name__ == '__main__':

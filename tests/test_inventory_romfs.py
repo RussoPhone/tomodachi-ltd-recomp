@@ -1,4 +1,5 @@
 import importlib.util
+import json
 from io import BytesIO
 from pathlib import Path
 import struct
@@ -159,6 +160,55 @@ class SafeOutputTests(unittest.TestCase):
 
     def test_tsv_escaping_keeps_untrusted_names_on_one_row(self):
         self.assertEqual(inventory.tsv_escape('one\trow\nnext'), r'one\trow\nnext')
+
+    def test_main_keeps_each_romfs_when_multiple_ncas_share_a_content_type(self):
+        class SampleReader:
+            def read(self, offset, size):
+                return b'DATA'[:size]
+
+        def nca_header():
+            header = bytearray(0xC00)
+            header[0x200:0x204] = b'NCA3'
+            header[0x205] = 4  # data content type
+            struct.pack_into('<II', header, 0x240, 1, 2)
+            header[0x408:0x40C] = b'IVFC'
+            header[0x403] = 3  # hash type
+            header[0x404] = 3  # AES-CTR encryption
+            return bytes(header)
+
+        class AreaCipher:
+            def decryptor(self):
+                return self
+
+            def update(self, data):
+                return bytes(0x40)
+
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            dump = root / 'game.nsp'
+            dump.write_bytes(bytes(0x2000))
+            (root / 'artifacts').mkdir()
+            (root / 'artifacts/input-identity.json').write_text('{"sha256":"fixture"}')
+            with mock.patch.object(inventory, 'ROOT', root), \
+                    mock.patch.object(inventory.lab, 'target_name', return_value='fixture'), \
+                    mock.patch.object(inventory.lab, 'runtime', return_value={'dump_path': dump}), \
+                    mock.patch.object(inventory.lab, 'title_id', return_value='title'), \
+                    mock.patch.object(inventory, 'keys', return_value={
+                        'header_key': bytes(32), 'key_area_key_application_00': bytes(16)}), \
+                    mock.patch.object(inventory, 'pfs0', return_value=[
+                        ('first.nca', 0, 0x1000), ('second.nca', 0x1000, 0x1000)]), \
+                    mock.patch.object(inventory, 'read_nca_header', side_effect=[nca_header(), nca_header()]), \
+                    mock.patch.object(inventory, 'Cipher', return_value=AreaCipher()), \
+                    mock.patch.object(inventory, 'CtrReader', side_effect=[SampleReader(), SampleReader()]), \
+                    mock.patch.object(inventory, 'walk_romfs', side_effect=[
+                        [('/first', 0, 4)], [('/second', 0, 4)]]):
+                inventory.main()
+
+            output = root / 'local/analysis/fixture/romfs'
+            self.assertEqual((output / 'data.tsv').read_text().splitlines()[-1], '/first\t4\tmagic:DATA')
+            self.assertEqual((output / 'data-2.tsv').read_text().splitlines()[-1], '/second\t4\tmagic:DATA')
+            artifact = json.loads((root / 'adapters/fixture/modules/analysis-romfs.json').read_text())
+            self.assertEqual(set(artifact['results']), {'data', 'data-2'})
 
 
 if __name__ == '__main__':

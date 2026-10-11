@@ -106,6 +106,11 @@ for ($i = 0; $i -lt $argv.Count; $i++) {{
         $text = [IO.File]::ReadAllText($ini)
         $text = $text -replace '(?m)^resolution_setup\\\\default=[^\\r\\n]*', 'resolution_setup\\default=false'
         $text = $text -replace '(?m)^resolution_setup=[^\\r\\n]*', "resolution_setup=$value"
+        if ($text -notmatch '(?m)^resolution_setup=') {{
+          $text += [Environment]::NewLine + 'resolution_setup\\default=false' + [Environment]::NewLine + "resolution_setup=$value" + [Environment]::NewLine
+        }} elseif ($text -notmatch '(?m)^resolution_setup\\\\default=') {{
+          $text += [Environment]::NewLine + 'resolution_setup\\default=false' + [Environment]::NewLine
+        }}
         [IO.File]::WriteAllText($ini, $text)
       }}
       $i++
@@ -173,6 +178,8 @@ set_res() {{
   [ -f "$INI" ] || return
   sed -i -e 's/^resolution_setup\\\\default=.*/resolution_setup\\\\default=false/' \\
          -e "s/^resolution_setup=.*/resolution_setup=$1/" "$INI"
+  grep -q '^resolution_setup\\\\default=' "$INI" || sed -i '/^resolution_setup=/i resolution_setup\\\\default=false' "$INI"
+  grep -q '^resolution_setup=' "$INI" || printf 'resolution_setup\\\\default=false\\nresolution_setup=%s\\n' "$1" >> "$INI"
 }}
 EXTRA=()
 while [ $# -gt 0 ]; do
