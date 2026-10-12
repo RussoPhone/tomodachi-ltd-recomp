@@ -212,8 +212,24 @@ def main():
         if export is None:
             sys.exit(f'no AOT export found under {export_root.relative_to(ROOT)}: '
                      'run the game export step first')
-        manifest = json.loads((export / 'aot_manifest.json').read_text())
+        manifest_path = export / 'aot_manifest.json'
+        try:
+            manifest = json.loads(manifest_path.read_text())
+        except (OSError, json.JSONDecodeError) as exc:
+            sys.exit(f'cannot read AOT manifest {manifest_path.relative_to(ROOT)}: {exc}')
+        if (not isinstance(manifest, dict)
+                or not isinstance(manifest.get('modules'), list)
+                or not manifest['modules']
+                or any(not isinstance(module, dict)
+                       or not isinstance(module.get('name'), str)
+                       or not module['name'] for module in manifest['modules'])
+                or type(manifest.get('image_features')) is not int
+                or type(manifest.get('image_abi')) is not int):
+            sys.exit(f'invalid AOT manifest {manifest_path.relative_to(ROOT)}: '
+                     'expected non-empty modules with names, image_features, and image_abi')
         exefs = export / 'exefs'
+        if not exefs.is_dir():
+            sys.exit(f'incomplete AOT export at {export.relative_to(ROOT)}: missing exefs directory')
         mods = ordered([m['name'] for m in manifest['modules']])
         features = manifest['image_features']
         (exefs / 'recomp_registration.c').write_text(registration(mods, features))
