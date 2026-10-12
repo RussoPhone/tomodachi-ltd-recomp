@@ -149,7 +149,7 @@ class MemorySlot:
         def take(state):
             fits = (sum(state.values()) + self.want <= self.budget
                     and plat.available_ram_mb() - self.want >= RESERVE_MB)
-            if not state or fits:
+            if fits:
                 state[me] = self.want
                 return True
             return False
