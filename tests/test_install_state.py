@@ -73,7 +73,7 @@ class InstallStateTests(unittest.TestCase):
 
                 install.refresh_after_update()
 
-            removed = {'patches', 'backend', 'package', 'bundle'}
+            removed = {'patches', 'backend', 'dump', 'export', 'package', 'install', 'bundle'}
             for index, key in enumerate(keys, 1):
                 self.assertEqual((state / f'{index:02d}-{key}.ok').exists(), key not in removed, key)
 

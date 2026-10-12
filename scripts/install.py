@@ -295,7 +295,7 @@ def package():
 
 @step('Extract the game data (textures, sounds, text) — about 5 minutes')
 def install():
-    run([sys.executable, 'scripts/install-native.py'], 'install-native.log')
+    run([sys.executable, 'scripts/install-native.py', '--force'], 'install-native.log')
 
 
 @step('Assemble the folder you play from')
@@ -342,16 +342,15 @@ def patches_fingerprint():
 
 
 def refresh_after_update():
-    """After an update brings new fixes, redo only what depends on them: applying the fixes, the tools
-    build, and the final link and folder. The game's compiled code is kept (the object cache makes the
-    "compile" step a quick relink)."""
+    """After an update brings new fixes, redo the patched tools, game dump/export, and final package.
+    The object's cache keeps unchanged generated C compilation work reusable."""
     stamp = STATE / 'patches.sha256'
     current = patches_fingerprint()
     keys = [key for key, _, _ in STEPS]
     applied = STATE / f'{keys.index("patches") + 1:02d}-patches.ok'
     if applied.exists() and (not stamp.exists() or stamp.read_text().strip() != current):
         say(f'{YELLOW}New fixes in this version: re-applying them and rebuilding the parts that use them.{RESET}')
-        for key in ('patches', 'backend', 'package', 'bundle'):
+        for key in ('patches', 'backend', 'dump', 'export', 'package', 'install', 'bundle'):
             (STATE / f'{keys.index(key) + 1:02d}-{key}.ok').unlink(missing_ok=True)
     return stamp, current
 
