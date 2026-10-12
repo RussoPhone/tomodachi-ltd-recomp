@@ -145,6 +145,10 @@ class MemorySlot:
                 release(lock)
 
     def __enter__(self):
+        total_ram = plat.total_ram_mb()
+        if self.want + RESERVE_MB > total_ram:
+            raise RuntimeError(f'cannot schedule compile: estimated {self.want} MiB plus '
+                               f'{RESERVE_MB} MiB reserve exceeds {total_ram} MiB physical RAM')
         me = str(os.getpid())
         def take(state):
             fits = (sum(state.values()) + self.want <= self.budget
