@@ -125,7 +125,7 @@ class MemorySlot:
     """Cross-process admission control: {pid: mb} in a JSON file guarded by a file lock."""
 
     def __init__(self, budget_mb, want_mb, state_dir):
-        self.budget, self.want = budget_mb, min(want_mb, budget_mb)
+        self.budget, self.want = budget_mb, want_mb
         state_dir.mkdir(parents=True, exist_ok=True)
         self.lock_path, self.state_path = state_dir / 'mem.lock', state_dir / 'mem.json'
 
@@ -145,6 +145,11 @@ class MemorySlot:
                 release(lock)
 
     def __enter__(self):
+        if self.budget <= 0:
+            raise RuntimeError(f'cannot schedule compile: memory budget must be positive, got {self.budget} MiB')
+        if self.want > self.budget:
+            raise RuntimeError(f'cannot schedule compile: estimated {self.want} MiB exceeds '
+                               f'{self.budget} MiB memory budget')
         total_ram = plat.total_ram_mb()
         if self.want + RESERVE_MB > total_ram:
             raise RuntimeError(f'cannot schedule compile: estimated {self.want} MiB plus '
