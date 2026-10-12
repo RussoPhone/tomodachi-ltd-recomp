@@ -206,8 +206,12 @@ def main():
     exefs = None
     if not args.backend_only:
         # <name>.AppDir/usr/bin/aot_cache on Linux; the Windows export uses another folder layout
-        export = next(p for p in (ROOT / 'local/aot' / lab.export_name()).rglob('aot_cache')
-                      if (p / 'aot_manifest.json').exists())
+        export_root = ROOT / 'local/aot' / lab.export_name()
+        export = next((p for p in export_root.rglob('aot_cache')
+                       if (p / 'aot_manifest.json').exists()), None)
+        if export is None:
+            sys.exit(f'no AOT export found under {export_root.relative_to(ROOT)}: '
+                     'run the game export step first')
         manifest = json.loads((export / 'aot_manifest.json').read_text())
         exefs = export / 'exefs'
         mods = ordered([m['name'] for m in manifest['modules']])
