@@ -93,14 +93,18 @@ def replace_install(staged, dest):
             backup = dest.with_name(f'.{dest.name}.previous-{uuid.uuid4().hex}')
             dest.rename(backup)
         staged.rename(dest)
-    except BaseException:
+    except BaseException as install_error:
         if backup is not None and (backup.exists() or backup.is_symlink()):
-            if dest.exists() and not staged.exists():
-                dest.rename(staged)
-            if not dest.exists():
-                backup.rename(dest)
-            else:
-                print(f'previous install remains at {backup}', file=sys.stderr)
+            try:
+                if dest.exists() and not staged.exists():
+                    dest.rename(staged)
+                if not dest.exists():
+                    backup.rename(dest)
+                else:
+                    print(f'previous install remains at {backup}', file=sys.stderr)
+            except BaseException as rollback_error:
+                print(f'install replacement failed: {install_error}', file=sys.stderr)
+                print(f'rollback failed; previous install remains at {backup}: {rollback_error}', file=sys.stderr)
         raise
     if backup is not None:
         try:
