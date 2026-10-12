@@ -24,7 +24,9 @@ from pathlib import PureWindowsPath
 import shutil
 import struct
 import sys
+import tempfile
 import time
+import uuid
 
 from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
 
@@ -83,6 +85,33 @@ def extract_romfs_file(reader, offset, size, root, path, seen):
     extract_file(reader, offset, size, dest)
 
 
+def replace_install(staged, dest):
+    """Replace dest only after staging is complete, restoring it if the new directory cannot be moved in."""
+    backup = None
+    try:
+        if dest.exists() or dest.is_symlink():
+            backup = dest.with_name(f'.{dest.name}.previous-{uuid.uuid4().hex}')
+            dest.rename(backup)
+        staged.rename(dest)
+    except BaseException:
+        if backup is not None and (backup.exists() or backup.is_symlink()):
+            if dest.exists() and not staged.exists():
+                dest.rename(staged)
+            if not dest.exists():
+                backup.rename(dest)
+            else:
+                print(f'previous install remains at {backup}', file=sys.stderr)
+        raise
+    if backup is not None:
+        try:
+            if backup.is_symlink() or not backup.is_dir():
+                backup.unlink()
+            else:
+                shutil.rmtree(backup)
+        except OSError as exc:
+            print(f'new install is ready; previous install remains at {backup}: {exc}', file=sys.stderr)
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('--force', action='store_true')
@@ -95,70 +124,79 @@ def main():
     if marker.exists() and not args.force:
         print(f'already installed at {dest.relative_to(ROOT)} (use --force to redo)')
         return 0
-    if dest.exists():
-        shutil.rmtree(dest)
 
     exefs_src = ROOT / f'local/runtime/user/dump/{title_id}/exefs'
-    if not (exefs_src / 'main.npdm').exists():
+    if not (exefs_src / 'main.npdm').is_file():
         sys.exit('no ExeFS dump yet: run `switchpiler.py dump` first')
-    shutil.copytree(exefs_src, dest / 'exefs')
-
     key_table = romfs.keys()
-    dump = lab.runtime()['dump_path']
+    dump = Path(lab.runtime()['dump_path'])
+    if not dump.is_file():
+        sys.exit(f'no input NSP at {dump}')
+    identity = json.loads((ROOT / 'artifacts/input-identity.json').read_text())
+    source_sha256 = identity['sha256']
+
+    # Keep the old install intact while all extraction and metadata writes happen beside it.
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    staged = Path(tempfile.mkdtemp(prefix=f'.{dest.name}.staging-', dir=dest.parent))
     summary = {}
     started = time.time()
-    with open(dump, 'rb') as f:
-        for name, nca_offset, _ in romfs.pfs0(f):
-            if not name.endswith('.nca'):
-                continue
-            f.seek(nca_offset)
-            header = romfs.xts_decrypt(key_table['header_key'], f.read(0xC00))
-            content = romfs.CONTENT_TYPES.get(header[0x205], str(header[0x205]))
-            if content not in ('program', 'control') or any(header[0x230:0x240]):
-                continue
-            generation = max(header[0x206], header[0x220])
-            generation = generation - 1 if generation else 0
-            kak = key_table[f'key_area_key_application_{generation:02x}']
-            area = Cipher(algorithms.AES(kak), modes.ECB()).decryptor().update(header[0x300:0x340])
-            for section in range(4):
-                start, end = struct.unpack_from('<II', header, 0x240 + section * 0x10)
-                fs = header[0x400 + section * 0x200:0x600 + section * 0x200]
-                if end <= start or fs[3] != 3 or fs[4] != 3 or fs[0x8:0xC] != b'IVFC':
+    try:
+        shutil.copytree(exefs_src, staged / 'exefs')
+        with open(dump, 'rb') as f:
+            for name, nca_offset, _ in romfs.pfs0(f):
+                if not name.endswith('.nca'):
                     continue
-                level_offset = struct.unpack_from('<Q', fs, 0x8 + 0x10 + 5 * 0x18)[0]
-                reader = romfs.CtrReader(f, nca_offset, area[0x20:0x30], fs[0x140:0x148])
-                level_size = struct.unpack_from('<Q', fs, 0x8 + 0x10 + 5 * 0x18 + 8)[0]
-                image = dest / 'exefs' / 'romfs.bin' if content == 'program' else None
-                if image is not None:  # the whole data level, decrypted in order = a RomFS image
-                    extract_file(reader, start * 0x200 + level_offset, level_size, image)
-                files = romfs.walk_romfs(reader, start * 0x200 + level_offset)
-                root = dest / ('romfs' if content == 'program' else 'control')
-                total = 0
-                seen_paths = set()
-                for i, (path, offset, size) in enumerate(files):
-                    if content == 'program' and not args.with_files:
-                        total += size
+                f.seek(nca_offset)
+                header = romfs.xts_decrypt(key_table['header_key'], f.read(0xC00))
+                content = romfs.CONTENT_TYPES.get(header[0x205], str(header[0x205]))
+                if content not in ('program', 'control') or any(header[0x230:0x240]):
+                    continue
+                generation = max(header[0x206], header[0x220])
+                generation = generation - 1 if generation else 0
+                kak = key_table[f'key_area_key_application_{generation:02x}']
+                area = Cipher(algorithms.AES(kak), modes.ECB()).decryptor().update(header[0x300:0x340])
+                for section in range(4):
+                    start, end = struct.unpack_from('<II', header, 0x240 + section * 0x10)
+                    fs = header[0x400 + section * 0x200:0x600 + section * 0x200]
+                    if end <= start or fs[3] != 3 or fs[4] != 3 or fs[0x8:0xC] != b'IVFC':
                         continue
-                    extract_romfs_file(reader, offset, size, root, path, seen_paths)
-                    total += size
-                    if content == 'program' and i % 5000 == 0:
-                        print(f'  {content}: {i}/{len(files)} files, {total / 2**30:.2f} GiB', flush=True)
-                summary[content] = {'files': len(files), 'bytes': total}
-                if content == 'program':
-                    summary[content]['romfs_bin_bytes'] = level_size
-                else:
-                    for meta in root.iterdir():
-                        if meta.name == 'control.nacp' or meta.name.startswith('icon_'):
-                            shutil.copyfile(meta, dest / 'exefs' / meta.name)
-    identity = json.loads((ROOT / 'artifacts/input-identity.json').read_text())
-    record = {'schema_version': 1, 'title_id': title_id, 'source_nsp_sha256': identity['sha256'],
-              'installed_utc': time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime()),
-              'seconds': round(time.time() - started), 'contents': summary,
-              'exefs': sorted(p.name for p in (dest / 'exefs').iterdir()),
-              'note': 'local copy of the user\'s own game; never distribute'}
-    marker.write_text(json.dumps(record, indent=2) + '\n')
-    print(json.dumps(record['contents']))
-    return 0
+                    level_offset = struct.unpack_from('<Q', fs, 0x8 + 0x10 + 5 * 0x18)[0]
+                    reader = romfs.CtrReader(f, nca_offset, area[0x20:0x30], fs[0x140:0x148])
+                    level_size = struct.unpack_from('<Q', fs, 0x8 + 0x10 + 5 * 0x18 + 8)[0]
+                    image = staged / 'exefs' / 'romfs.bin' if content == 'program' else None
+                    if image is not None:  # the whole data level, decrypted in order = a RomFS image
+                        extract_file(reader, start * 0x200 + level_offset, level_size, image)
+                    files = romfs.walk_romfs(reader, start * 0x200 + level_offset)
+                    root = staged / ('romfs' if content == 'program' else 'control')
+                    total = 0
+                    seen_paths = set()
+                    for i, (path, offset, size) in enumerate(files):
+                        if content == 'program' and not args.with_files:
+                            total += size
+                            continue
+                        extract_romfs_file(reader, offset, size, root, path, seen_paths)
+                        total += size
+                        if content == 'program' and i % 5000 == 0:
+                            print(f'  {content}: {i}/{len(files)} files, {total / 2**30:.2f} GiB', flush=True)
+                    summary[content] = {'files': len(files), 'bytes': total}
+                    if content == 'program':
+                        summary[content]['romfs_bin_bytes'] = level_size
+                    else:
+                        for meta in root.iterdir():
+                            if meta.name == 'control.nacp' or meta.name.startswith('icon_'):
+                                shutil.copyfile(meta, staged / 'exefs' / meta.name)
+        record = {'schema_version': 1, 'title_id': title_id, 'source_nsp_sha256': source_sha256,
+                  'installed_utc': time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime()),
+                  'seconds': round(time.time() - started), 'contents': summary,
+                  'exefs': sorted(p.name for p in (staged / 'exefs').iterdir()),
+                  'note': 'local copy of the user\'s own game; never distribute'}
+        (staged / 'install.json').write_text(json.dumps(record, indent=2) + '\n')
+        replace_install(staged, dest)
+        print(json.dumps(record['contents']))
+        return 0
+    finally:
+        if staged.exists():
+            shutil.rmtree(staged)
 
 
 if __name__ == '__main__':
