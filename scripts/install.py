@@ -239,8 +239,18 @@ def patches():
             (Path(tmp) / f).parent.mkdir(parents=True, exist_ok=True)
             (Path(tmp) / f).write_bytes(content)
         for p in plist:
-            if subprocess.run(['git', 'apply', p], cwd=tmp, capture_output=True, env=plat.git_env()).returncode:
-                fail(f'{p.name} does not apply to the pinned suyu version.')
+            res = subprocess.run(['git', 'apply', p], cwd=tmp, capture_output=True, env=plat.git_env())
+            if res.returncode:
+                # Say which suyu commit this checkout is on, so a mismatch can be told apart from a patch problem.
+                head = subprocess.run(['git', '-C', SUYU, 'rev-parse', 'HEAD'], capture_output=True, text=True,
+                                      env=plat.git_env()).stdout.strip()
+                expected = next(m['commit'] for m in json.loads((ROOT / 'upstream.lock.json').read_text())['submodules']
+                                 if m['path'] == 'third_party/suyu')
+                log = ROOT / 'local/logs' / f'patch-check-{p.stem}.log'
+                log.parent.mkdir(parents=True, exist_ok=True)
+                log.write_bytes(res.stderr)
+                fail(f'{p.name} does not apply to the pinned suyu version '
+                     f'(suyu HEAD {head[:12] or "unknown"}, lock expects {expected[:12]}; git output in {log}).')
         if all((Path(tmp) / f).read_bytes() == (SUYU / f).read_bytes() for f in files):
             say(f'   all {len(plist)} fixes already applied')
             return
