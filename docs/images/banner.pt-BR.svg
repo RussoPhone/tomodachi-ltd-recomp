@@ -47,12 +47,12 @@
   <g font-family="'Nunito','Trebuchet MS','Segoe UI',sans-serif" fill="#173a5e">
     <text x="600" y="190" font-size="68" font-weight="800">Tomodachi LTD</text>
     <text x="600" y="258" font-size="68" font-weight="800" fill="#ef6f5e">Recomp</text>
-    <text x="602" y="306" font-size="26" font-weight="600" fill="#1f4f7a">Versão nativa para PC · feita a partir da sua cópia</text>
+    <text x="602" y="306" font-size="26" font-weight="600" fill="#1f4f7a">Recompilação estática + runtime suyu</text>
   </g>
   <g font-family="'Nunito','Trebuchet MS','Segoe UI',sans-serif" font-size="18" font-weight="700">
     <rect x="602" y="330" width="270" height="36" rx="18" fill="#ffffff" opacity="0.92"/>
     <text x="737" y="354" text-anchor="middle" fill="#2f86c4">educacional · experimental</text>
     <rect x="886" y="330" width="160" height="36" rx="18" fill="#ffffff" opacity="0.92"/>
-    <text x="966" y="354" text-anchor="middle" fill="#4fae5d">sem emulador</text>
+    <text x="966" y="354" text-anchor="middle" fill="#4fae5d">runtime suyu</text>
   </g>
 </svg>

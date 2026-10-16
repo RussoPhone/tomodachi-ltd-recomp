@@ -109,7 +109,7 @@ function Find-VcVars {
     return $null
 }
 
-Write-Host 'Tomodachi Life: Living the Dream - native build installer (Windows)' -ForegroundColor White
+Write-Host 'Tomodachi Life: Living the Dream - experimental PC recompilation installer (Windows)' -ForegroundColor White
 Write-Host 'Educational, experimental project. Use only with your own copy of the game.'
 Write-Host ''
 

@@ -3,7 +3,7 @@
 
 With COMPILE_OBJ_CACHE=<dir> it is also a content-addressed object cache (ccache is not available
 here): the key covers the compiler binary, every flag except output/depfile paths, the source text
-and the text of every header in its -I directories, so paths of different exports do not matter.
+and the content of headers in its -I directories and next to its sources, including subdirectories.
 A hit copies the object and writes a depfile; the log line then ends with '\thit' (or '\tmiss').
 
 With COMPILE_MEM_BUDGET_MB=<n> it is also a memory-aware scheduler: a compile starts only when its
@@ -42,7 +42,8 @@ def cache_key(args):
     stat = compiler.stat()
     digest.update(f'{compiler}:{stat.st_size}:{stat.st_mtime_ns}\0'.encode())
     skip_next, sources, include_dirs = False, [], []
-    for index, arg in enumerate(args[1:], start=1):
+    arguments = iter(args[1:])
+    for arg in arguments:
         if skip_next:
             skip_next = False
             continue
@@ -52,7 +53,7 @@ def cache_key(args):
         if arg.startswith(('/Fo', '-Fo', '/Fd', '-Fd')):  # clang-cl output paths
             continue
         if arg in ('-I', '/I'):
-            include_dirs.append(args[index + 1].strip('"'))
+            include_dirs.append(next(arguments).strip('"'))
             digest.update(b'-I\0')
             continue
         if arg.startswith(('-I', '/I')):
@@ -69,19 +70,25 @@ def cache_key(args):
         # Do not reuse an object compiled from an identical file at another path.
         digest.update(os.getcwd().encode() + b'\0' + source.encode() + b'\0')
         digest.update(Path(source).read_bytes())
-    for index, directory, header in header_files(sources, include_dirs):
-        digest.update(f'{index}:{header.relative_to(directory)}'.encode() + b'\0' + header.read_bytes())
+    # Account for both source-local #include "..." and nested include directories.
+    for base, header in headers_for_cache(sources, include_dirs):
+        digest.update(header.relative_to(base).as_posix().encode() + b'\0' + header.read_bytes())
     return digest.hexdigest(), sources, include_dirs
 
 
-def header_files(sources, include_dirs):
-    directories = list(dict.fromkeys([*(Path(d).resolve() for d in include_dirs),
-                                     *(Path(source).resolve().parent for source in sources)]))
-    return [(index, directory, header)
-            for index, directory in enumerate(directories) if directory.is_dir()
-            for header in sorted(directory.rglob('*'))
-            if header.is_file() and header.suffix.lower() in
-            ('.h', '.hh', '.hpp', '.hxx', '.inc', '.inl')]
+def headers_for_cache(sources, include_dirs):
+    roots = [Path(source).parent for source in sources] + [Path(directory) for directory in include_dirs]
+    seen = set()
+    for root in roots:
+        if not root.is_dir():
+            continue
+        for header in sorted(root.rglob('*')):
+            if header.suffix.lower() not in ('.h', '.hpp', '.hxx', '.inc') or not header.is_file():
+                continue
+            resolved = header.resolve()
+            if resolved not in seen:
+                seen.add(resolved)
+                yield root, header
 
 
 def option(args, name):
@@ -125,7 +132,7 @@ class MemorySlot:
     """Cross-process admission control: {pid: mb} in a JSON file guarded by a file lock."""
 
     def __init__(self, budget_mb, want_mb, state_dir):
-        self.budget, self.want = budget_mb, want_mb
+        self.budget, self.want = budget_mb, min(want_mb, budget_mb)
         state_dir.mkdir(parents=True, exist_ok=True)
         self.lock_path, self.state_path = state_dir / 'mem.lock', state_dir / 'mem.json'
 
@@ -145,20 +152,11 @@ class MemorySlot:
                 release(lock)
 
     def __enter__(self):
-        if self.budget <= 0:
-            raise RuntimeError(f'cannot schedule compile: memory budget must be positive, got {self.budget} MiB')
-        if self.want > self.budget:
-            raise RuntimeError(f'cannot schedule compile: estimated {self.want} MiB exceeds '
-                               f'{self.budget} MiB memory budget')
-        total_ram = plat.total_ram_mb()
-        if self.want + RESERVE_MB > total_ram:
-            raise RuntimeError(f'cannot schedule compile: estimated {self.want} MiB plus '
-                               f'{RESERVE_MB} MiB reserve exceeds {total_ram} MiB physical RAM')
         me = str(os.getpid())
         def take(state):
             fits = (sum(state.values()) + self.want <= self.budget
                     and plat.available_ram_mb() - self.want >= RESERVE_MB)
-            if fits:
+            if not state or fits:
                 state[me] = self.want
                 return True
             return False
@@ -181,7 +179,7 @@ if cache_dir and is_compile:
         shutil.copyfile(cached, output)
         depfile = option(argv, '-MF')
         if depfile:
-            headers = list(dict.fromkeys(str(h) for _, _, h in header_files(sources, include_dirs)))
+            headers = [str(h) for _, h in headers_for_cache(sources, include_dirs)]
             Path(depfile).write_text(f'{output}: ' + ' '.join(s.replace(' ', '\\ ') for s in sources + headers) + '\n')
         rc, status = 0, '\thit'
     else:

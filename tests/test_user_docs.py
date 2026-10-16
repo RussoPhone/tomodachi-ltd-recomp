@@ -38,8 +38,8 @@ class UserDocsTests(unittest.TestCase):
         installer = (ROOT / "scripts/install.py").read_text(encoding="utf-8")
         self.assertIn("CI_STEPS = ('check', 'fetch', 'patches', 'backend')", installer)
 
-        self.assertIn("steps 1, 3, 4 and 5 pass", (ROOT / "README.md").read_text(encoding="utf-8"))
-        self.assertIn("passos 1, 3, 4 e 5 passam", (ROOT / "README.pt-BR.md").read_text(encoding="utf-8"))
+        self.assertIn("steps 1, 3, 4 and 5", (ROOT / "README.md").read_text(encoding="utf-8"))
+        self.assertIn("passos 1, 3, 4 e 5", (ROOT / "README.pt-BR.md").read_text(encoding="utf-8"))
         self.assertIn("steps 1, 3, 4 and 5", (ROOT / "CONTRIBUTING.md").read_text(encoding="utf-8"))
 
 

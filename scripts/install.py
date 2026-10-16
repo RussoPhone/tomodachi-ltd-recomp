@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
-"""Installer for Tomodachi Life: Living the Dream (native PC build).
+"""Installer for Tomodachi Life: Living the Dream (experimental PC recompilation).
 
 Runs every step in order, shows progress, and resumes where it stopped if interrupted:
   1. check this computer          6. extract your game's code
   2. take your game and keys      7. translate the code to C
-  3. download suyu/mk8-recomp     8. compile the native build
+  3. download suyu/mk8-recomp     8. compile the recompiled executable
   4. apply this project's fixes    9. extract the game data
   5. build the tools             10. assemble the folder you play from
 
@@ -295,7 +295,7 @@ def export():
     run([sys.executable, 'scripts/export-aot.py', '--backend', 'hybrid', '--unit-insns', str(unit)], 'export-aot.log')
 
 
-@step('Compile the native game — the long part (about 1 to 2 hours)')
+@step('Compile the recompiled game — the long part (about 1 to 2 hours)')
 def package():
     budget = int((ram_gb() - 3) * 1024)
     say(f'   Using up to {budget // 1024} GB of RAM to compile. You can leave the computer working.')
@@ -331,7 +331,7 @@ def windows_shortcut():
     answer = input('   Add a shortcut to your Start menu? [Y/n] ').strip().lower()
     if answer not in ('', 'y', 'yes', 's', 'sim'):
         return
-    link = Path(os.environ['APPDATA']) / 'Microsoft/Windows/Start Menu/Programs/Tomodachi Life (native).lnk'
+    link = Path(os.environ['APPDATA']) / 'Microsoft/Windows/Start Menu/Programs/Tomodachi Life (experimental recompilation).lnk'
     script = ('$s = (New-Object -ComObject WScript.Shell).CreateShortcut($env:LNK); '
               '$s.TargetPath = $env:EXE; $s.Arguments = \'-g "game\\main"\'; $s.WorkingDirectory = $env:PKG; $s.Save()')
     env = dict(os.environ, LNK=str(link), EXE=str(pkg / 'tomodachi-native.exe'), PKG=str(pkg))
@@ -342,37 +342,73 @@ def windows_shortcut():
 CI = '--ci' in sys.argv  # build check without a game: steps 1, 3, 4 and 5 only
 CI_STEPS = ('check', 'fetch', 'patches', 'backend')
 
+# Inputs whose changes require rerunning each stage. Later stages depend on earlier ones.
+# Changing install.py is conservatively treated as a change to the fetch-and-build pipeline.
+# "check" and "choose" retain their resume markers (and never re-prompt for game/keys).
+STAGE_INPUTS = {
+    'fetch': ('upstream.lock.json', 'scripts/install.py', 'scripts/verify-upstream.py'),
+    'patches': ('patches/*.patch',),
+    'backend': ('scripts/package-standalone.py', 'scripts/plat.py'),
+    'dump': ('scripts/dump-exefs.py', 'scripts/lab.py', f'adapters/{TARGET}/target.json'),
+    'export': ('scripts/export-aot.py', f'adapters/{TARGET}/target.json'),
+    'package': ('scripts/package-standalone.py', 'scripts/compile-meter.py', 'scripts/lab.py',
+                f'adapters/{TARGET}/target.json'),
+    'install': ('scripts/install-native.py', 'scripts/inventory-romfs.py', 'scripts/lab.py',
+                f'adapters/{TARGET}/target.json'),
+    'bundle': ('scripts/assemble-package.py', 'scripts/lab.py', f'adapters/{TARGET}/target.json'),
+}
 
-def patches_fingerprint():
-    import hashlib
-    h = hashlib.sha256()
-    for p in sorted((ROOT / 'patches').glob('*.patch')):
-        h.update(p.name.encode() + b'\0' + p.read_bytes())
-    return h.hexdigest()
+
+def stage_fingerprint(key):
+    digest = hashlib.sha256()
+    for pattern in STAGE_INPUTS[key]:
+        digest.update(pattern.encode() + b'\0')
+        for path in sorted(ROOT.glob(pattern)):
+            if path.is_file():
+                digest.update(path.relative_to(ROOT).as_posix().encode() + b'\0' + path.read_bytes())
+    return digest.hexdigest()
+
+
+def stage_paths(index, key):
+    stem = STATE / f'{index:02d}-{key}'
+    return stem.with_suffix('.ok'), stem.with_suffix('.sha256')
 
 
 def refresh_after_update():
-    """After an update brings new fixes, redo the patched tools, game dump/export, and final package.
-    The object's cache keeps unchanged generated C compilation work reusable."""
-    stamp = STATE / 'patches.sha256'
-    current = patches_fingerprint()
-    keys = [key for key, _, _ in STEPS]
-    applied = STATE / f'{keys.index("patches") + 1:02d}-patches.ok'
-    if applied.exists() and (not stamp.exists() or stamp.read_text().strip() != current):
-        say(f'{YELLOW}New fixes in this version: re-applying them and rebuilding the parts that use them.{RESET}')
-        for key in ('patches', 'backend', 'dump', 'export', 'package', 'install', 'bundle'):
-            (STATE / f'{keys.index(key) + 1:02d}-{key}.ok').unlink(missing_ok=True)
-    return stamp, current
+    """Invalidate changed stages and every downstream stage before resuming.
+
+    Old .ok markers without fingerprints are intentionally considered stale: without a
+    previous input snapshot, silently reusing them after a git pull would be unsafe.
+    """
+    changed_at = None
+    for index, (key, _, _) in enumerate(STEPS, 1):
+        if key not in STAGE_INPUTS:
+            continue
+        marker, stamp = stage_paths(index, key)
+        if marker.exists() and (not stamp.exists() or stamp.read_text().strip() != stage_fingerprint(key)):
+            changed_at = index
+            break
+        if not marker.exists() and any(stage_paths(j, later)[0].exists()
+                                      for j, (later, _, _) in enumerate(STEPS, 1) if j > index):
+            changed_at = index
+            break
+    if changed_at is not None:
+        say(f'{YELLOW}Build inputs changed (or old state found): rerunning dependent steps from '
+            f'{STEPS[changed_at - 1][0]}.{RESET}')
+        for index, (key, _, _) in enumerate(STEPS[changed_at - 1:], changed_at):
+            marker, stamp = stage_paths(index, key)
+            marker.unlink(missing_ok=True)
+            stamp.unlink(missing_ok=True)
 
 
 def main():
     STATE.mkdir(parents=True, exist_ok=True)
-    stamp, fingerprint = refresh_after_update()
-    say(f'{BOLD}Tomodachi Life: Living the Dream — native build installer{RESET}')
+    refresh_after_update()
+    say(f'{BOLD}Tomodachi Life: Living the Dream — experimental PC recompilation installer{RESET}')
     say('Educational, experimental project. Use only with your own copy of the game.\n')
     started = time.time()
     for i, (key, title, fn) in enumerate(STEPS, 1):
-        marker = STATE / f'{i:02d}-{key}.ok'
+        marker, fingerprint_stamp = stage_paths(i, key)
         if CI and key not in CI_STEPS:
             say(f'- {i}/{len(STEPS)} {title} (skipped: needs a game)')
             continue
@@ -382,9 +418,9 @@ def main():
         say(f'{YELLOW}▶{RESET} {BOLD}{i}/{len(STEPS)} {title}{RESET}')
         t0 = time.time()
         fn()
+        if key in STAGE_INPUTS:
+            atomic_write_text(fingerprint_stamp, stage_fingerprint(key))
         atomic_write_text(marker, time.strftime('%Y-%m-%d %H:%M:%S'))
-        if key == 'patches':
-            atomic_write_text(stamp, fingerprint)
         say(f'{GREEN}✓{RESET} done ({(time.time() - t0) / 60:.0f} min)\n')
     say(f'{GREEN}{BOLD}All done!{RESET} ({(time.time() - started) / 60:.0f} min this run)')
     if not CI:

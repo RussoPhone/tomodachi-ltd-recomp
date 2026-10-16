@@ -1,6 +1,6 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1100 300" width="1100" height="300" role="img" aria-labelledby="t d">
   <title id="t">How it works</title>
-  <desc id="d">Three steps: 1, your game and keys; 2, the installer translates and compiles on your PC; 3, you play, with no emulator.</desc>
+  <desc id="d">Three steps: 1, your game and keys; 2, the installer translates and compiles on your PC; 3, you play with a suyu-derived runtime.</desc>
   <rect width="1100" height="300" rx="24" fill="#f4f9fd"/>
   <defs>
     <marker id="arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="8" markerHeight="8" orient="auto">
@@ -36,6 +36,6 @@
     <path d="M908 98 L908 128 L934 113 Z" fill="#4fae5d"/>
     <rect x="905" y="150" width="30" height="10" rx="3" fill="#4fae5d"/>
     <text x="920" y="200" font-size="22" font-weight="800" fill="#173a5e">./play.sh</text>
-    <text x="920" y="230" font-size="16" fill="#4a6a86">native, no emulator</text>
+    <text x="920" y="230" font-size="16" fill="#4a6a86">recompiled CPU + suyu runtime</text>
   </g>
 </svg>
