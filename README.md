@@ -1,12 +1,12 @@
 <p align="center">
-  <img src="docs/images/banner.svg" alt="Tomodachi LTD Recomp — native PC build" width="100%">
+  <img src="docs/images/banner.svg" alt="Tomodachi LTD Recomp — experimental PC recompilation" width="100%">
 </p>
 
 # Tomodachi LTD Recomp
 
-Play **Tomodachi Life: Living the Dream** as a **native program on your PC**, without an emulator running underneath.
+**Current release: experimental static recompilation, not an emulator-free native port.** The game's ARM code is recompiled for x86-64, but the resulting PC executable still relies on **suyu-derived emulation and runtime components** for graphics, audio and Switch system services. Calling it "no emulator" would be misleading.
 
-This project **does not contain the game**. You bring **your own copy**, and the installer turns its code, on your own computer, into a program that runs directly on your PC.
+This project **does not contain the game**. You bring **your own copy**, and the installer uses it to build a PC executable on your computer. A more independent native PC port is **in development**, but this release is an intermediate step.
 
 🇧🇷 [Leia em português](README.pt-BR.md)
 
@@ -197,9 +197,9 @@ Delete the `tomodachi-ltd-recomp` folder and the shortcut at `~/.local/share/app
 <summary><b>How does it work under the hood?</b></summary>
 
 Switch games are built for the console's ARM processor. The installer:
-1. Reads the code of **your** game and **translates every piece of it into C** (static recompilation), using [mk8-recomp](https://github.com/dougchansan/mk8-recomp), which is based on suyu.
-2. **Compiles** that C for your PC's processor and links everything into one executable, **with no CPU emulator**.
-3. Graphics (Vulkan), audio and system services come from suyu's libraries, compiled natively together with the game.
+1. Reads the ARM machine code from **your** game and statically recompiles it into C using [mk8-recomp](https://github.com/dougchansan/mk8-recomp), which builds on suyu.
+2. **Compiles** the generated code for the PC's x86-64 processor. The recompiled game code does not need ARM CPU interpretation or JIT translation while running.
+3. **Still uses suyu-derived runtime/emulation components** for graphics, audio and Switch system services, including GPU command-level emulation. This is not a fully independent native port.
 
 The fixes this project needed in suyu are in [`patches/`](patches/), each explained inside the file. The generated C is a machine translation. **It is not the game's original source code.**
 </details>
@@ -210,16 +210,23 @@ The fixes this project needed in suyu are in [`patches/`](patches/), each explai
 
 🧪 **Experimental — first public version.**
 
-- ✅ **All of the game's code runs as native x86-64** (static recompilation: no CPU emulation, no JIT), as a standalone executable that needs no `.nsp`, keys or firmware once installed. Audio and video work. The opening and the start of the game have been tested.
-- ℹ️ What is not native yet: graphics, audio and system services come from suyu's runtime libraries, built into the executable. The Switch GPU is still emulated at the command level; a native NVN → Vulkan renderer is in development and will arrive as an experimental option.
+- ✅ The game's code is **statically recompiled to x86-64**, rather than being run by an ARM CPU interpreter or JIT. A PC executable is built; it does not need the original `.nsp` or keys to launch after installation. Audio, video, the opening and the start of the game have been tested.
+- ⚠️ **Emulation remains:** the executable includes suyu-derived runtime components for graphics, audio and Switch system services. GPU commands are still emulated. This release is **not emulator-free** and is **not yet a fully native port**.
+- 🔧 A more independent PC port, including work on an NVN → Vulkan renderer, is in development. There is **no promised completion date**.
 - ✅ The **installer was tested end to end on a fresh clone**: all 10 steps passed and the resulting game started. It took about **2 hours** on a laptop with an Intel i5-13450HX and 16 GB of RAM (about 9 minutes for suyu, the rest compiling the game).
 - 🆕 It is still new, so it has only been run on that one machine. If a step fails for you, please open an [issue](https://github.com/RussoPhone/tomodachi-ltd-recomp/issues) and attach the log file the installer points to (in `local/logs/`). **Never attach your keys or game files.**
 - 🐞 There may be bugs in parts of the game nobody has played yet. Report them the same way.
 
+## AI assistance and authorship
+
+This is a **human-directed project with substantial generative-AI assistance**. AI tools have been used extensively to produce and revise code, patches, build and installation scripts, and documentation, as well as to support debugging. Presenting this as an entirely hand-written implementation would be inaccurate.
+
+The maintainer directs the project and is responsible for what is published. AI-generated changes can contain mistakes, and **the code has not been fully independently audited**. Corrections, technical scrutiny and bug reports are welcome.
+
 ## Credits and license
 
 - [**mk8-recomp**](https://github.com/dougchansan/mk8-recomp) and its **suyu** fork: the recompiler and runtime. suyu is derived from yuzu.
-- This project: the installer, the patches and the Tomodachi Life: Living the Dream support.
+- This project: integration, installer, patches and support for Tomodachi Life: Living the Dream, developed with substantial AI assistance as disclosed above.
 
 Licensed under **GPL-3.0-or-later** (see [`LICENSE`](LICENSE)), the same as suyu.
 
