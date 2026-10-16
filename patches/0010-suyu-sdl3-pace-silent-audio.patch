@@ -1,0 +1,47 @@
+diff --git a/src/audio_core/sink/sdl3_sink.cpp b/src/audio_core/sink/sdl3_sink.cpp
+index e542577..e3d4db6 100644
+--- a/src/audio_core/sink/sdl3_sink.cpp
++++ b/src/audio_core/sink/sdl3_sink.cpp
+@@ -4,7 +4,9 @@
+ // SPDX-FileCopyrightText: Copyright 2018 yuzu Emulator Project
+ // SPDX-License-Identifier: GPL-2.0-or-later
+ 
++#include <chrono>
+ #include <span>
++#include <thread>
+ #include <vector>
+ 
+ #include <SDL3/SDL.h>
+@@ -110,8 +112,20 @@ public:
+ 
+     void AppendBuffer(SinkBuffer& buffer, std::span<s16> samples) override {
+         // If SDL could not open a device, no callback will drain the queue.
+-        // Discard audio as the null sink does so the ADSP cannot block forever.
++        // Discard audio as the null sink does so the ADSP cannot block forever, but at the device
++        // rate: returning at once lets the audio renderer spin unpaced, starving the game threads
++        // on smaller CPUs (blue window, game never reaches its first frame).
+         if (stream == nullptr) {
++            using Clock = std::chrono::steady_clock;
++            const auto now = Clock::now();
++            if (silent_frames == 0 || now > silent_due + std::chrono::milliseconds(200)) {
++                silent_start = now;
++                silent_frames = 0;
++            }
++            silent_frames += buffer.frames;
++            silent_due = silent_start + std::chrono::nanoseconds(silent_frames * 1'000'000'000ULL /
++                                                                 TargetSampleRate);
++            std::this_thread::sleep_until(silent_due);
+             return;
+         }
+         SinkStream::AppendBuffer(buffer, samples);
+@@ -211,6 +225,10 @@ private:
+ 
+     /// SDL stream attached to an opened input/output device
+     SDL_AudioStream* stream{};
++    /// Pacing of the silent output used when no audio device could be opened.
++    std::chrono::steady_clock::time_point silent_start{};
++    std::chrono::steady_clock::time_point silent_due{};
++    u64 silent_frames{};
+ };
+ 
+ SDLSink::SDLSink(std::string_view target_device_name) {
