@@ -28,7 +28,7 @@ O projeto **não contém o jogo**. Você usa a **sua própria cópia**, e o inst
 | 🖥️ **Sistema** | **Linux**, testado no Arch Linux / EndeavourOS; funcionou no Fedora. **Windows 10/11**: experimental, veja [Windows](#windows-experimental). |
 | 🧠 **Memória** | **16 GB de RAM** e pelo menos **8 GB de swap** (memória virtual) |
 | 💾 **Espaço livre** | **35 GB** |
-| 🎮 **Placa de vídeo** | Qualquer uma com **Vulkan** (NVIDIA, AMD ou Intel recentes) |
+| 🎮 **Placa de vídeo** | GPU com suporte a **Vulkan**; a compatibilidade não é garantida em todos os modelos ou drivers |
 | 📦 **Seu jogo** | O arquivo **`.nsp`** do Tomodachi Life: Living the Dream, **versão 1.0.0, sem atualização** |
 | 🔑 **Suas chaves** | O arquivo **`prod.keys`** do seu console |
 
@@ -42,13 +42,13 @@ O projeto **não contém o jogo**. Você usa a **sua própria cópia**, e o inst
 
 Abra o **Terminal**, cole o comando da sua distribuição Linux e aperte **Enter**. Ele vai pedir a sua senha.
 
-**Arch Linux, EndeavourOS, Manjaro, CachyOS** (testado):
+**Arch Linux, EndeavourOS, Manjaro, CachyOS** (configuração do mantenedor no Arch/EndeavourOS; as outras variantes não foram verificadas independentemente):
 
 ```bash
 sudo pacman -S --needed base-devel git cmake ninja clang python python-cryptography qt6-base qt6-svg qt6-5compat qt6-charts quazip-qt6 sdl3 ffmpeg opus zstd lz4 libusb openssl glslang nasm vulkan-icd-loader zenity
 ```
 
-**Fedora** (funcionou para um usuário; o pacote `ffmpeg` vem do RPM Fusion):
+**Fedora** (relato positivo de um colaborador, não verificado pela CI; o pacote `ffmpeg` vem do RPM Fusion):
 
 ```bash
 sudo dnf install git cmake ninja clang python3 python-cryptography qt6-qtbase qt6-qtsvg qt6-qt5compat qt6-qtcharts quazip-qt6 quazip-qt6-devel SDL3 ffmpeg opus zstd lz4 libusb openssl glslang nasm vulkan-loader zenity @development-tools qt6-qtsvg-devel qt6-qtcharts-devel SDL3-devel ffmpeg-free-devel qt6-qtbase-private-devel
@@ -91,7 +91,7 @@ cd tomodachi-ltd-recomp
 2. Outra janela pede a **pasta onde está o seu `prod.keys`**. Escolha e clique em OK.
 3. O instalador faz o resto sozinho e mostra o andamento em **10 passos**.
 
-⏱️ **Demora de 1 a 4 horas**, dependendo do computador. A maior parte é a compilação do jogo, e o PC vai ficar ocupado nesse tempo. Pode deixar rodando e voltar depois.
+⏱️ **Reserve várias horas**; 1 a 4 horas é apenas uma estimativa baseada nas primeiras compilações, não uma garantia. A maior parte do tempo é compilação.
 
 💡 **Precisou parar?** Feche o Terminal ou aperte `Ctrl+C`. Quando rodar `./install.sh` de novo, ele **continua de onde parou**.
 
@@ -122,17 +122,17 @@ Depois de instalado, o jogo **não precisa mais do `.nsp` nem das chaves**. Tudo
 ## Windows (experimental)
 
 > [!NOTE]
-> O instalador para Windows é **novo e ainda não foi testado com o jogo num PC Windows de verdade**. Um teste automático no GitHub compila as ferramentas no Windows (passos 1–5 passam, cerca de 45 minutos), mas a instalação completa ainda precisa de alguém para testar primeiro. Se você testar, abra uma [issue](https://github.com/RussoPhone/tomodachi-ltd-recomp/issues) com o resultado e o log de `local\logs\`. **Nunca anexe suas chaves nem arquivos do jogo.**
+> O instalador para Windows é **experimental; uma instalação completa com o jogo ainda não foi verificada independentemente no Windows**. O workflow executa o caminho sem arquivos do jogo (passos 1, 3, 4 e 5); isso não comprova compatibilidade. Se você testar, abra uma [issue](https://github.com/RussoPhone/tomodachi-ltd-recomp/issues) com o resultado e o log de `local\logs\`. **Nunca anexe suas chaves nem arquivos do jogo.**
 
 1. Clique no botão verde **Code → Download ZIP** aqui no GitHub.
 2. Extraia numa **pasta de caminho curto**, por exemplo `C:\tomodachi`. Caminhos longos podem quebrar as ferramentas de compilação do Windows.
 3. Dê dois cliques em **`install.bat`**.
    - Na primeira vez, ele instala as ferramentas pelo **winget**: Git, CMake, Ninja, Python, LLVM e o **Visual Studio 2022 Build Tools** (vários GB). O Windows pede permissão uma vez.
    - Depois ele faz os mesmos 10 passos do Linux. Uma janela pede o seu **`.nsp`** e outra a **pasta com o seu `prod.keys`**.
-   - Demora de **2 a 4 horas**. Se parar, dê dois cliques em `install.bat` de novo: ele continua de onde parou.
+   - O tempo necessário **ainda não foi estabelecido no Windows**. Se parar, dê dois cliques em `install.bat` de novo: ele aproveita etapas concluídas cujas entradas não mudaram.
    - Se parar com **`Could not find patch executable`**, aponte um `patch.exe` à mão. O Git for Windows tem um. Abra o PowerShell na pasta e rode:
      `powershell -ExecutionPolicy Bypass -File scripts\windows\install.ps1 -PatchExe "C:\Program Files\Git\usr\bin\patch.exe"`
-4. Para jogar, abra **Tomodachi Life (native)** no Menu Iniciar, ou dê dois cliques em **`play.bat`**. As mesmas opções funcionam: `play.bat --fullscreen`, `play.bat --scale 2`.
+4. Para iniciar, abra **Tomodachi Life (experimental recompilation)** no Menu Iniciar, ou dê dois cliques em **`play.bat`**. Opções: `play.bat --fullscreen`, `play.bat --scale 2`.
 
 Você precisa do mesmo que no Linux: 16 GB de RAM, cerca de 35 GB livres (mais ~10 GB do Visual Studio) e uma placa de vídeo com Vulkan.
 
@@ -149,7 +149,7 @@ Quando o jogo pede texto, abre uma caixinha: digite e clique em OK. No Linux ela
 <details>
 <summary><b>Como atualizar para uma versão nova?</b></summary>
 
-Baixe o projeto de novo (ou `git pull`) na mesma pasta e rode o instalador outra vez. Ele só refaz o que mudou: aplica as correções novas e religa o jogo em poucos minutos, mantendo o jogo já compilado e os seus saves.
+Rode `git pull` na pasta existente e inicie o instalador novamente. Ele compara as impressões digitais de scripts, patches, adaptador e trava de versões upstream, e refaz as etapas afetadas e suas dependentes. **Uma atualização pode exigir nova exportação ou compilação demorada**, especialmente na primeira execução desta versão, pois os marcadores antigos ainda não têm essas impressões digitais. O cache pode reaproveitar objetos que não mudaram; a montagem do pacote preserva a pasta `user/` com os saves. Faça backup dos saves antes de atualizar.
 </details>
 
 <details>
@@ -213,8 +213,8 @@ Os ajustes que este projeto precisou fazer no suyu estão em [`patches/`](patche
 - ✅ O código do jogo é **recompilado estaticamente para x86-64**, em vez de rodar por um interpretador ou JIT da CPU ARM. É gerado um executável para PC, que não precisa do `.nsp` original nem das chaves para abrir depois da instalação. Foram testados áudio, vídeo, a abertura e o início do jogo.
 - ⚠️ **Ainda existe emulação:** o executável inclui componentes de runtime derivados do suyu para gráficos, áudio e serviços do Switch. Os comandos da GPU ainda são emulados. Esta versão **não é livre de emulação** e **ainda não é um port totalmente nativo**.
 - 🔧 Um port mais independente para PC, incluindo o trabalho num renderizador NVN → Vulkan, está em desenvolvimento, **sem data de conclusão prometida**.
-- ✅ O **instalador foi testado do início ao fim num clone limpo**: os 10 passos passaram e o jogo gerado abriu. Levou cerca de **2 horas** num notebook com Intel i5-13450HX e 16 GB de RAM (uns 9 minutos para o suyu, o resto compilando o jogo).
-- 🆕 Ele ainda é novo e só rodou nessa máquina. Se algum passo falhar, abra uma [issue](https://github.com/RussoPhone/tomodachi-ltd-recomp/issues) e anexe o arquivo de log indicado pelo instalador (em `local/logs/`). **Nunca anexe suas chaves nem arquivos do jogo.**
+- 🧪 O mantenedor **relata** uma instalação completa em 10 passos e abertura do jogo num notebook Linux com Intel i5-13450HX e 16 GB de RAM, em aproximadamente 2 horas. Esse relato **não foi reproduzido nos testes automáticos sem arquivos do jogo**.
+- 🆕 A cobertura de hardware e distribuições ainda é limitada; relatos individuais não garantem compatibilidade. Se algum passo falhar, abra uma [issue](https://github.com/RussoPhone/tomodachi-ltd-recomp/issues) e anexe o arquivo de log indicado pelo instalador (em `local/logs/`). **Nunca anexe suas chaves nem arquivos do jogo.**
 - 🐞 Pode haver bugs em partes do jogo que ainda não foram jogadas. Relate do mesmo jeito.
 
 ## Uso de IA e autoria
@@ -222,6 +222,12 @@ Os ajustes que este projeto precisou fazer no suyu estão em [`patches/`](patche
 Este é um **projeto dirigido por uma pessoa, com uso substancial de IA generativa**. Ferramentas de IA foram usadas extensivamente para produzir e revisar código, patches, scripts de compilação e instalação, documentação e para auxiliar na depuração. Seria incorreto apresentar a implementação como inteiramente escrita à mão.
 
 A pessoa responsável pelo projeto define sua direção e responde pelo que é publicado. Alterações geradas por IA podem conter erros, e **o código ainda não passou por uma auditoria manual independente e completa**. Correções, análises técnicas e relatos de bugs são bem-vindos.
+
+## Verificações automáticas e limites
+
+O [workflow Linux](.github/workflows/linux.yml) verifica sintaxe Python, sintaxe dos scripts shell, JSON de configuração e casos sintéticos em `unittest` para invalidação do instalador, headers no cache C, empacotamento e versões upstream. Esses testes rodam **sem jogo, chaves ou firmware**. O [workflow Windows](.github/workflows/windows.yml) tenta compilar o backend sem arquivos do jogo.
+
+**Nenhum dos dois workflows comprova que o jogo completo instala ou roda corretamente.** Gameplay, compatibilidade de GPU/driver, preservação de saves em atualizações reais e instalação completa no Windows exigem verificações separadas em hardware real.
 
 ## Créditos e licença
 

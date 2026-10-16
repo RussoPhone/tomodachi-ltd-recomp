@@ -3,7 +3,7 @@
 
 With COMPILE_OBJ_CACHE=<dir> it is also a content-addressed object cache (ccache is not available
 here): the key covers the compiler binary, every flag except output/depfile paths, the source text
-and the text of every header in its -I directories, so paths of different exports do not matter.
+and the content of headers in its -I directories and next to its sources, including subdirectories.
 A hit copies the object and writes a depfile; the log line then ends with '\thit' (or '\tmiss').
 
 With COMPILE_MEM_BUDGET_MB=<n> it is also a memory-aware scheduler: a compile starts only when its
@@ -42,7 +42,8 @@ def cache_key(args):
     stat = compiler.stat()
     digest.update(f'{compiler}:{stat.st_size}:{stat.st_mtime_ns}\0'.encode())
     skip_next, sources, include_dirs = False, [], []
-    for arg in args[1:]:
+    arguments = iter(args[1:])
+    for arg in arguments:
         if skip_next:
             skip_next = False
             continue
@@ -50,6 +51,10 @@ def cache_key(args):
             skip_next = True
             continue
         if arg.startswith(('/Fo', '-Fo', '/Fd', '-Fd')):  # clang-cl output paths
+            continue
+        if arg in ('-I', '/I'):
+            include_dirs.append(next(arguments).strip('"'))
+            digest.update(b'-I\0')
             continue
         if arg.startswith(('-I', '/I')):
             include_dirs.append(arg[2:].strip('"'))
@@ -62,10 +67,25 @@ def cache_key(args):
         digest.update(arg.encode() + b'\0')
     for source in sources:
         digest.update(Path(source).read_bytes())
-    for directory in include_dirs:
-        for header in sorted(Path(directory).glob('*.h')):
-            digest.update(header.name.encode() + b'\0' + header.read_bytes())
+    # Account for both source-local #include "..." and nested include directories.
+    for base, header in headers_for_cache(sources, include_dirs):
+        digest.update(header.relative_to(base).as_posix().encode() + b'\0' + header.read_bytes())
     return digest.hexdigest(), sources, include_dirs
+
+
+def headers_for_cache(sources, include_dirs):
+    roots = [Path(source).parent for source in sources] + [Path(directory) for directory in include_dirs]
+    seen = set()
+    for root in roots:
+        if not root.is_dir():
+            continue
+        for header in sorted(root.rglob('*')):
+            if header.suffix.lower() not in ('.h', '.hpp', '.hxx', '.inc') or not header.is_file():
+                continue
+            resolved = header.resolve()
+            if resolved not in seen:
+                seen.add(resolved)
+                yield root, header
 
 
 def option(args, name):
@@ -156,7 +176,7 @@ if cache_dir and is_compile:
         shutil.copyfile(cached, output)
         depfile = option(argv, '-MF')
         if depfile:
-            headers = [str(h) for d in include_dirs for h in sorted(Path(d).glob('*.h'))]
+            headers = [str(h) for _, h in headers_for_cache(sources, include_dirs)]
             Path(depfile).write_text(f'{output}: ' + ' '.join(s.replace(' ', '\\ ') for s in sources + headers) + '\n')
         rc, status = 0, '\thit'
     else:

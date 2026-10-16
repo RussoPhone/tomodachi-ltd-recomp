@@ -88,7 +88,7 @@ def seed_shader_cache(pkg, title):
 
 def write_windows_launcher(pkg, name):
     scales = '; '.join(f"'{k}' = {v}" for k, v in SCALES.items())
-    (pkg / 'run.ps1').write_text(f'''# Start the native build from this folder; the folder can be moved as a whole.
+    (pkg / 'run.ps1').write_text(f'''# Start the experimental recompilation from this folder; the folder can be moved as a whole.
 #   run.bat [--scale 0.5|1|1.5|2|3|4] [--fullscreen]
 Set-Location -LiteralPath $PSScriptRoot
 $ini = 'user\\config\\sdl2-config.ini'
@@ -163,7 +163,7 @@ def main():
     run = pkg / 'run.sh'
     scale_cases = '\n'.join(f'      {k}) set_res {v} ;;' for k, v in SCALES.items())
     run.write_text(f'''#!/bin/sh
-# Start the native build from this folder; the folder can be moved as a whole.
+# Start the experimental recompilation from this folder; the folder can be moved as a whole.
 #   ./run.sh [--scale 0.5|1|1.5|2|3|4] [--fullscreen]
 cd "$(dirname "$(readlink -f "$0")")" || exit 1
 INI=user/config/sdl2-config.ini
@@ -191,12 +191,17 @@ exec ./{name} $EXTRA -g game/main
     title = lab.adapter(target).get('name', target)
     (pkg / f'{name}.desktop').write_text(
         '[Desktop Entry]\nType=Application\n'
-        f'Name={title} (native)\nComment=Native build made locally by SWITCHPILER from your own copy\n'
+        f'Name={title} (experimental recompilation)\n'
+        'Comment=PC recompilation with suyu-derived emulation and runtime components\n'
         f'Exec={pkg / "run.sh"}\nIcon={pkg / "icon.jpg"}\nTerminal=false\nCategories=Game;\n')
     (pkg / 'README.txt').write_text(
-        f'{title} - native build (made by SWITCHPILER on this machine)\n\n'
+        f'{title} - experimental PC recompilation (built locally with SWITCHPILER)\n\n'
         'Start: ./run.sh   (or copy the .desktop file into ~/.local/share/applications)\n\n'
         'This folder contains your own game data and machine-translated game code.\n'
+        'The executable still uses suyu-derived emulation/runtime components for graphics,\n'
+        'audio and Switch services. It is not an emulator-free native port.\n'
+        'This project has been developed with substantial generative AI assistance;\n'
+        'the implementation has not undergone a complete independent audit.\n'
         'It is for your personal use on this machine. Do not share or upload it.\n'
         'The translated C is generated from the binary; it is not the original source code.\n')
     size = sum(p.stat().st_size for p in pkg.rglob('*') if p.is_file())
