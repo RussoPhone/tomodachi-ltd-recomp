@@ -1,14 +1,14 @@
 <p align="center">
-  <img src="docs/images/banner.pt-BR.svg" alt="Tomodachi LTD Recomp — versão nativa para PC" width="100%">
+  <img src="docs/images/banner.pt-BR.svg" alt="Tomodachi LTD Recomp — recompilação experimental para PC" width="100%">
 </p>
 
 # Tomodachi LTD Recomp
 
 🇺🇸 [Read in English](README.md)
 
-Jogue **Tomodachi Life: Living the Dream** como um **programa nativo do seu PC**, sem rodar um emulador por trás.
+**Versão atual: recompilação estática experimental, ainda não um port nativo livre de emulação.** O código ARM do jogo é recompilado para x86-64, mas o executável para PC ainda depende de **componentes de emulação e runtime derivados do suyu** para gráficos, áudio e serviços do Switch. Dizer que funciona "sem emulador" seria enganoso.
 
-O projeto **não contém o jogo**. Você usa a **sua própria cópia**, e o instalador transforma o código dela, no seu computador, em um programa que roda direto no PC.
+O projeto **não contém o jogo**. Você usa a **sua própria cópia**, e o instalador a utiliza para gerar um executável no seu PC. Um port nativo mais independente **está em desenvolvimento**, mas esta versão é uma etapa intermediária.
 
 > [!WARNING]
 > **Projeto educacional e experimental.** Use só com uma cópia do jogo que **você comprou** e extraiu do **seu próprio Switch**.
@@ -197,9 +197,9 @@ Apague a pasta `tomodachi-ltd-recomp` e o atalho em `~/.local/share/applications
 <summary><b>Como isso funciona por dentro?</b></summary>
 
 O jogo do Switch é feito para o processador ARM do console. O instalador:
-1. Lê o código do **seu** jogo e **traduz cada trecho para a linguagem C** (recompilação estática), usando o [mk8-recomp](https://github.com/dougchansan/mk8-recomp), baseado no suyu.
-2. **Compila** esse C para o processador do seu PC e junta tudo num executável próprio, **sem emulador de CPU**.
-3. Gráficos (Vulkan), áudio e serviços do sistema ficam a cargo das bibliotecas do suyu, compiladas nativamente junto com o jogo.
+1. Lê o código de máquina ARM do **seu** jogo e o recompila estaticamente para C usando o [mk8-recomp](https://github.com/dougchansan/mk8-recomp), construído sobre o suyu.
+2. **Compila** o código gerado para o processador x86-64 do PC. O código recompilado do jogo não precisa de interpretação da CPU ARM nem de tradução JIT durante a execução.
+3. **Ainda usa componentes de runtime/emulação derivados do suyu** para gráficos, áudio e serviços do Switch, incluindo emulação dos comandos da GPU. Isso não é um port nativo totalmente independente.
 
 Os ajustes que este projeto precisou fazer no suyu estão em [`patches/`](patches/), cada um com a explicação no próprio arquivo. O código C gerado é uma tradução da máquina. **Não é o código-fonte original do jogo.**
 </details>
@@ -210,16 +210,23 @@ Os ajustes que este projeto precisou fazer no suyu estão em [`patches/`](patche
 
 🧪 **Experimental — primeira versão pública.**
 
-- ✅ **Todo o código do jogo roda como x86-64 nativo** (recompilação estática: sem emulação de CPU, sem JIT), num executável próprio que não precisa de `.nsp`, chaves nem firmware depois de instalado. Áudio e vídeo funcionam. Foram testados a abertura e o início do jogo.
-- ℹ️ O que ainda não é nativo: gráficos, áudio e serviços do sistema vêm das bibliotecas de runtime do suyu, embutidas no executável. A GPU do Switch ainda é emulada no nível de comandos; um renderizador nativo NVN → Vulkan está em desenvolvimento e vai chegar como opção experimental.
+- ✅ O código do jogo é **recompilado estaticamente para x86-64**, em vez de rodar por um interpretador ou JIT da CPU ARM. É gerado um executável para PC, que não precisa do `.nsp` original nem das chaves para abrir depois da instalação. Foram testados áudio, vídeo, a abertura e o início do jogo.
+- ⚠️ **Ainda existe emulação:** o executável inclui componentes de runtime derivados do suyu para gráficos, áudio e serviços do Switch. Os comandos da GPU ainda são emulados. Esta versão **não é livre de emulação** e **ainda não é um port totalmente nativo**.
+- 🔧 Um port mais independente para PC, incluindo o trabalho num renderizador NVN → Vulkan, está em desenvolvimento, **sem data de conclusão prometida**.
 - ✅ O **instalador foi testado do início ao fim num clone limpo**: os 10 passos passaram e o jogo gerado abriu. Levou cerca de **2 horas** num notebook com Intel i5-13450HX e 16 GB de RAM (uns 9 minutos para o suyu, o resto compilando o jogo).
 - 🆕 Ele ainda é novo e só rodou nessa máquina. Se algum passo falhar, abra uma [issue](https://github.com/RussoPhone/tomodachi-ltd-recomp/issues) e anexe o arquivo de log indicado pelo instalador (em `local/logs/`). **Nunca anexe suas chaves nem arquivos do jogo.**
 - 🐞 Pode haver bugs em partes do jogo que ainda não foram jogadas. Relate do mesmo jeito.
 
+## Uso de IA e autoria
+
+Este é um **projeto dirigido por uma pessoa, com uso substancial de IA generativa**. Ferramentas de IA foram usadas extensivamente para produzir e revisar código, patches, scripts de compilação e instalação, documentação e para auxiliar na depuração. Seria incorreto apresentar a implementação como inteiramente escrita à mão.
+
+A pessoa responsável pelo projeto define sua direção e responde pelo que é publicado. Alterações geradas por IA podem conter erros, e **o código ainda não passou por uma auditoria manual independente e completa**. Correções, análises técnicas e relatos de bugs são bem-vindos.
+
 ## Créditos e licença
 
 - [**mk8-recomp**](https://github.com/dougchansan/mk8-recomp) e o fork do **suyu**: o motor de recompilação e o ambiente de execução. O suyu é derivado do yuzu.
-- Este projeto: o instalador, os patches e o suporte ao Tomodachi Life: Living the Dream.
+- Este projeto: integração, instalador, patches e suporte ao Tomodachi Life: Living the Dream, desenvolvidos com uso substancial de IA, conforme informado acima.
 
 Licenciado sob a **GPL-3.0-or-later** (veja [`LICENSE`](LICENSE)), a mesma do suyu.
 
