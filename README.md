@@ -141,6 +141,19 @@ You need the same as on Linux: 16 GB of RAM, about 35 GB of free space (plus ~10
 ## FAQ
 
 <details>
+<summary><b>The game opens a blue window and freezes (no sound, high CPU)</b></summary>
+
+This happened on Linux machines with **no audio device available** (for example, PipeWire not running or no sound card). The silent audio fallback used to discard audio as fast as the game produced it, which starved the game's other threads. Update and reinstall:
+
+```bash
+git pull
+./install.sh
+```
+
+The installer rebuilds the affected steps (this can take a while). If the window still freezes, check that audio works (`pactl info`) and open an [issue](https://github.com/RussoPhone/tomodachi-ltd-recomp/issues) attaching the log from `local/package/tomodachi/user/log/`. **Never attach your keys or game files.**
+</details>
+
+<details>
 <summary><b>How do I type text in the game (names, messages)?</b></summary>
 
 When the game asks for text, a small text box opens: type and press OK. On Linux it needs `zenity` (Step 1 installs it) or `kdialog`; on Windows it is built in. If the box opens behind the game window, switch to it with Alt+Tab.
