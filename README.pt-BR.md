@@ -141,6 +141,19 @@ Você precisa do mesmo que no Linux: 16 GB de RAM, cerca de 35 GB livres (mais ~
 ## Perguntas frequentes
 
 <details>
+<summary><b>O jogo abre uma janela azul e trava (sem som, CPU alta)</b></summary>
+
+Isso aconteceu em Linux **sem dispositivo de áudio disponível** (por exemplo, PipeWire parado ou sem placa de som). A saída de áudio silenciosa descartava o áudio tão rápido quanto o jogo gerava, e isso deixava as outras threads do jogo sem CPU. Atualize e reinstale:
+
+```bash
+git pull
+./install.sh
+```
+
+O instalador refaz as etapas afetadas (pode demorar). Se a janela continuar travando, confira se o áudio funciona (`pactl info`) e abra uma [issue](https://github.com/RussoPhone/tomodachi-ltd-recomp/issues) anexando o log de `local/package/tomodachi/user/log/`. **Nunca anexe suas chaves nem arquivos do jogo.**
+</details>
+
+<details>
 <summary><b>Como digitar texto no jogo (nomes, mensagens)?</b></summary>
 
 Quando o jogo pede texto, abre uma caixinha: digite e clique em OK. No Linux ela precisa do `zenity` (o Passo 1 instala) ou do `kdialog`; no Windows já vem pronta. Se a caixa abrir atrás da janela do jogo, troque para ela com Alt+Tab.
