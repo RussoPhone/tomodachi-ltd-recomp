@@ -4,9 +4,15 @@
 
 # Tomodachi LTD Recomp
 
-**Current release: experimental static recompilation, not an emulator-free native port.** The game's ARM code is recompiled for x86-64, but the resulting PC executable still relies on **suyu-derived emulation and runtime components** for graphics, audio and Switch system services. Calling it "no emulator" would be misleading.
+**Alpha: an unofficial native PC port of Tomodachi Life: Living the Dream, built on your computer from your own copy of the game.** The game's ARM code is statically recompiled to x86-64 and runs on **nxrt**, this project's own runtime, with its own NVN → Vulkan renderer. Parts of the Switch system services still come from suyu-derived code, so this is **not a from-scratch rewrite**.
 
-This project **does not contain the game**. You bring **your own copy**, and the installer uses it to build a PC executable on your computer. A more independent native PC port is **in development**, but this release is an intermediate step.
+This project **does not contain the game, firmware or keys**. You bring **your own copy** and your own `prod.keys`; the installer builds everything on your computer. This is a fan project, **not affiliated with Nintendo** or the game's creators, made so fans can play and tinker with it.
+
+> [!NOTE]
+> **Alpha status.** Tested so far on one NVIDIA laptop on Linux (Arch/EndeavourOS). AMD and Intel GPUs, other distributions and Windows are untested for the native port. Capped at 30 FPS; brief drops to ~23 FPS happen while a new scene loads. The first time you open the face-paint editor it takes about 40 seconds (it prepares a cache on your computer); later openings take a few seconds.
+
+> [!NOTE]
+> **Want to help test?** See [`docs/TESTING.md`](docs/TESTING.md): what was tested and where, what is still untested, how to test and how to report problems.
 
 🇧🇷 [Leia em português](README.pt-BR.md)
 
@@ -89,7 +95,9 @@ cd tomodachi-ltd-recomp
 
 1. A window asks for your **game file (`.nsp`)**. Pick it and click OK.
 2. Another window asks for **the folder that contains your `prod.keys`**. Pick it and click OK.
-3. The installer does the rest by itself and shows its progress in **10 steps**.
+3. The installer does the rest by itself and shows its progress in **11 steps**, including building the native runtime (nxrt).
+
+If a step fails, the installer saves a **report** (`local/logs/report-*.txt`, no game data or keys inside) and tells you where it is. Run `./install.sh --report` to bundle every log into one zip and attach it to an [issue](https://github.com/RussoPhone/tomodachi-ltd-recomp/issues).
 
 ⏱️ **Plan for several hours**; 1 to 4 hours is only a rough estimate from early builds, not a guarantee. Most of that is compiling, and the PC will be busy meanwhile.
 
@@ -103,7 +111,7 @@ At the end it asks whether you want a **shortcut in your applications menu**. An
 
 ## Step 4 — Play 🎉
 
-Look for **Tomodachi** in your applications menu, or run:
+Run:
 
 ```bash
 ./play.sh
@@ -111,9 +119,11 @@ Look for **Tomodachi** in your applications menu, or run:
 
 | To… | Use |
 |---|---|
-| Play fullscreen | `./play.sh --fullscreen` |
-| Get a sharper image | `./play.sh --scale 2` (`1`, `1.5`, `2`, `3` or `4`) |
-| Set up controls | Press **F12** in the game |
+| Play the native port (default) | `./play.sh` |
+| Play the older suyu-based build | `./play.sh --legacy` (kept for comparison, not actively maintained) |
+| Look for problems | each run writes `local/logs/play-nxrt-*.log`; attach it to bug reports |
+
+Your saves for the native port live in `local/user-nxrt` (inside the project folder).
 
 Once installed, the game **no longer needs the `.nsp` or the keys**. Everything lives inside the project folder.
 
@@ -128,7 +138,7 @@ Once installed, the game **no longer needs the `.nsp` or the keys**. Everything 
 2. Extract it to a **short folder**, for example `C:\tomodachi`. Long paths can break the Windows build tools.
 3. Double-click **`install.bat`**.
    - The first time, it installs the build tools with **winget**: Git, CMake, Ninja, Python, LLVM and the **Visual Studio 2022 Build Tools** (several GB). Windows asks for permission once.
-   - Then it does the same 10 steps as on Linux. A window asks for your **`.nsp`**, another for the **folder with your `prod.keys`**.
+   - On Windows the installer builds the **older suyu-based version**; the native port (nxrt) is Linux-only for now. Otherwise it runs the same steps as on Linux. A window asks for your **`.nsp`**, another for the **folder with your `prod.keys`**.
    - The time required is **not yet established on Windows**. If it stops, double-click `install.bat` again: it resumes completed steps when their inputs are unchanged.
    - If it stops with **`Could not find patch executable`**, point it to a `patch.exe` by hand. Git for Windows has one. Open PowerShell in the folder and run:
      `powershell -ExecutionPolicy Bypass -File scripts\windows\install.ps1 -PatchExe "C:\Program Files\Git\usr\bin\patch.exe"`
@@ -212,7 +222,7 @@ Delete the `tomodachi-ltd-recomp` folder and the shortcut at `~/.local/share/app
 Switch games are built for the console's ARM processor. The installer:
 1. Reads the ARM machine code from **your** game and statically recompiles it into C using [mk8-recomp](https://github.com/dougchansan/mk8-recomp), which builds on suyu.
 2. **Compiles** the generated code for the PC's x86-64 processor. The recompiled game code does not need ARM CPU interpretation or JIT translation while running.
-3. **Still uses suyu-derived runtime/emulation components** for graphics, audio and Switch system services, including GPU command-level emulation. This is not a fully independent native port.
+3. **Builds nxrt**, this project's runtime, on your computer. It renders through its own NVN → Vulkan layer and still uses suyu-derived code for part of the Switch system services and shader translation. The resulting program contains code from your game, so it is built locally and **must never be shared**.
 
 The fixes this project needed in suyu are in [`patches/`](patches/), each explained inside the file. The generated C is a machine translation. **It is not the game's original source code.**
 </details>
@@ -221,7 +231,7 @@ The fixes this project needed in suyu are in [`patches/`](patches/), each explai
 
 ## Project status
 
-🧪 **Experimental — first public version.**
+🧪 **Experimental alpha.**
 
 - ✅ The game's code is **statically recompiled to x86-64**, rather than being run by an ARM CPU interpreter or JIT. A PC executable is built; it does not need the original `.nsp` or keys to launch after installation. Audio, video, the opening and the start of the game have been tested.
 - ⚠️ **Emulation remains:** the executable includes suyu-derived runtime components for graphics, audio and Switch system services. GPU commands are still emulated. This release is **not emulator-free** and is **not yet a fully native port**.

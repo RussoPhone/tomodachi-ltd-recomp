@@ -6,9 +6,15 @@
 
 🇺🇸 [Read in English](README.md)
 
-**Versão atual: recompilação estática experimental, ainda não um port nativo livre de emulação.** O código ARM do jogo é recompilado para x86-64, mas o executável para PC ainda depende de **componentes de emulação e runtime derivados do suyu** para gráficos, áudio e serviços do Switch. Dizer que funciona "sem emulador" seria enganoso.
+**Alpha: um port nativo não oficial de Tomodachi Life: Living the Dream para PC, gerado no seu computador a partir da sua própria cópia do jogo.** O código ARM do jogo é recompilado estaticamente para x86-64 e roda no **nxrt**, o runtime próprio deste projeto, com renderizador NVN → Vulkan próprio. Parte dos serviços do sistema Switch ainda vem de código derivado do suyu, então **não é uma reescrita do zero**.
 
-O projeto **não contém o jogo**. Você usa a **sua própria cópia**, e o instalador a utiliza para gerar um executável no seu PC. Um port nativo mais independente **está em desenvolvimento**, mas esta versão é uma etapa intermediária.
+O projeto **não contém o jogo, o firmware nem as chaves**. Você usa a **sua própria cópia** e o seu próprio `prod.keys`; o instalador gera tudo no seu PC. É um projeto de fãs, **sem afiliação com a Nintendo** nem com os criadores do jogo, feito para que fãs possam jogar e mexer nele.
+
+> [!NOTE]
+> **Status alpha.** Testado até agora em um notebook NVIDIA com Linux (Arch/EndeavourOS). GPUs AMD e Intel, outras distribuições e Windows não foram testados para o port nativo. Limitado a 30 FPS; há quedas breves para ~23 FPS enquanto uma cena nova carrega. Na primeira vez que abrir o editor de facepaint ele leva cerca de 40 segundos (prepara um cache no seu computador); as próximas aberturas levam poucos segundos.
+
+> [!NOTE]
+> **Quer ajudar a testar?** Veja [`docs/TESTING.pt-BR.md`](docs/TESTING.pt-BR.md): o que foi testado e onde, o que ainda falta, como testar e como relatar problemas.
 
 > [!WARNING]
 > **Projeto educacional e experimental.** Use só com uma cópia do jogo que **você comprou** e extraiu do **seu próprio Switch**.
@@ -89,7 +95,9 @@ cd tomodachi-ltd-recomp
 
 1. Uma janela pede o **arquivo do jogo (`.nsp`)**. Escolha e clique em OK.
 2. Outra janela pede a **pasta onde está o seu `prod.keys`**. Escolha e clique em OK.
-3. O instalador faz o resto sozinho e mostra o andamento em **10 passos**.
+3. O instalador faz o resto sozinho e mostra o andamento em **11 passos**, incluindo a compilação do runtime nativo (nxrt).
+
+Se um passo falhar, o instalador salva um **relatório** (`local/logs/report-*.txt`, sem dados do jogo nem chaves) e diz onde ele está. Rode `./install.sh --report` para juntar todos os logs em um zip e anexar numa [issue](https://github.com/RussoPhone/tomodachi-ltd-recomp/issues).
 
 ⏱️ **Reserve várias horas**; 1 a 4 horas é apenas uma estimativa baseada nas primeiras compilações, não uma garantia. A maior parte do tempo é compilação.
 
@@ -111,9 +119,11 @@ Procure **Tomodachi** no menu de aplicativos, ou rode no Terminal:
 
 | Para… | Use |
 |---|---|
-| Tela cheia | `./play.sh --fullscreen` |
-| Imagem mais nítida | `./play.sh --scale 2` (pode ser `1`, `1.5`, `2`, `3` ou `4`) |
-| Configurar controles | Aperte **F12** dentro do jogo |
+| Jogar o port nativo (padrão) | `./play.sh` |
+| Jogar a versão antiga baseada no suyu | `./play.sh --legacy` (mantida só para comparação) |
+| Investigar problemas | cada execução grava `local/logs/play-nxrt-*.log`; anexe aos relatórios de bug |
+
+Os saves do port nativo ficam em `local/user-nxrt` (dentro da pasta do projeto).
 
 Depois de instalado, o jogo **não precisa mais do `.nsp` nem das chaves**. Tudo fica dentro da pasta do projeto.
 
@@ -128,7 +138,7 @@ Depois de instalado, o jogo **não precisa mais do `.nsp` nem das chaves**. Tudo
 2. Extraia numa **pasta de caminho curto**, por exemplo `C:\tomodachi`. Caminhos longos podem quebrar as ferramentas de compilação do Windows.
 3. Dê dois cliques em **`install.bat`**.
    - Na primeira vez, ele instala as ferramentas pelo **winget**: Git, CMake, Ninja, Python, LLVM e o **Visual Studio 2022 Build Tools** (vários GB). O Windows pede permissão uma vez.
-   - Depois ele faz os mesmos 10 passos do Linux. Uma janela pede o seu **`.nsp`** e outra a **pasta com o seu `prod.keys`**.
+   - No Windows o instalador gera a **versão antiga baseada no suyu**; o port nativo (nxrt) é só para Linux por enquanto. No mais, ele faz os mesmos passos do Linux. Uma janela pede o seu **`.nsp`** e outra a **pasta com o seu `prod.keys`**.
    - O tempo necessário **ainda não foi estabelecido no Windows**. Se parar, dê dois cliques em `install.bat` de novo: ele aproveita etapas concluídas cujas entradas não mudaram.
    - Se parar com **`Could not find patch executable`**, aponte um `patch.exe` à mão. O Git for Windows tem um. Abra o PowerShell na pasta e rode:
      `powershell -ExecutionPolicy Bypass -File scripts\windows\install.ps1 -PatchExe "C:\Program Files\Git\usr\bin\patch.exe"`

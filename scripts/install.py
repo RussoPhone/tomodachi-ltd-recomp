@@ -4,9 +4,10 @@
 Runs every step in order, shows progress, and resumes where it stopped if interrupted:
   1. check this computer          6. extract your game's code
   2. take your game and keys      7. translate the code to C
-  3. download suyu/mk8-recomp     8. compile the recompiled executable
+  3. download suyu/mk8-recomp     8. compile the recompiled game code
   4. apply this project's fixes    9. extract the game data
-  5. build the tools             10. assemble the folder you play from
+  5. build the tools             10. build the nxrt runtime (the unofficial native port)
+                                 11. assemble the folder you play from
 
 Nothing from the game ships with this project: everything is generated on your computer from your copy.
 """
@@ -42,8 +43,79 @@ def say(text=''):
     print(text, flush=True)
 
 
+CURRENT_STEP = None  # (index, key, title) of the step being run, for the error report
+STEP_LOGS = {}
+
+
+def scrub(text):
+    """Remove personal paths from anything that goes into a report."""
+    home = str(Path.home())
+    return text.replace(str(ROOT), '<project>').replace(home, '~')
+
+
+def _cmd(args):
+    try:
+        out = subprocess.run(args, capture_output=True, text=True, timeout=20)
+        return (out.stdout + out.stderr).strip()
+    except Exception:  # noqa: BLE001 - a missing tool is just reported as such
+        return 'not available'
+
+
+def write_report(failed=None):
+    """Write local/logs/report-<time>.txt: everything needed to investigate an install problem.
+    It contains no game data and no key material; personal folders are replaced by ~ and <project>."""
+    logs = ROOT / 'local/logs'
+    logs.mkdir(parents=True, exist_ok=True)
+    path = logs / f"report-{time.strftime('%Y%m%d-%H%M%S')}.txt"
+    lines = ['Tomodachi LTD Recomp (nxrt) install report', '=' * 44]
+    lines.append('project: ' + _cmd(['git', '-C', str(ROOT), 'log', '-1', '--format=%h %ad %s', '--date=short']))
+    lines.append(f'time: {time.strftime("%Y-%m-%d %H:%M:%S")}')
+    lines.append(f'failed step: {failed or "none (report requested)"}')
+    lines.append('')
+    lines.append('--- system ---')
+    osr = Path('/etc/os-release')
+    if osr.exists():
+        lines += [l for l in osr.read_text().splitlines() if l.startswith(('PRETTY_NAME', 'VERSION_ID'))]
+    lines.append('kernel: ' + _cmd(['uname', '-sr']))
+    cpu = next((l.split(':', 1)[1].strip() for l in Path('/proc/cpuinfo').read_text().splitlines()
+                if l.startswith('model name')), 'unknown') if Path('/proc/cpuinfo').exists() else 'unknown'
+    lines.append(f'cpu: {cpu} ({os.cpu_count()} threads)')
+    try:
+        lines.append(f'ram: {ram_gb():.1f} GB, swap: {swap_gb():.1f} GB')
+    except Exception:  # noqa: BLE001
+        lines.append('ram/swap: unknown')
+    lines.append(f'free disk in project: {shutil.disk_usage(ROOT).free / 2**30:.0f} GB')
+    lines.append('gpu: ' + _cmd(['nvidia-smi', '--query-gpu=name,driver_version', '--format=csv,noheader']))
+    vk = _cmd(['vulkaninfo', '--summary'])
+    lines += ['vulkan: ' + l.strip() for l in vk.splitlines() if 'deviceName' in l or 'apiVersion' in l][:6]
+    lines.append('')
+    lines.append('--- tools ---')
+    for tool, arg in (('python3', '--version'), ('git', '--version'), ('cmake', '--version'), ('ninja', '--version'),
+                      ('clang', '--version'), ('clang++', '--version'), ('gcc', '--version')):
+        lines.append(f'{tool}: ' + (_cmd([tool, arg]).splitlines() or ['not found'])[0])
+    lines.append('')
+    lines.append('--- steps ---')
+    for i, (key, title, _) in enumerate(STEPS, 1):
+        marker, _stamp = stage_paths(i, key)
+        lines.append(f'{i:2d}. {"done   " if marker.exists() else "pending"} {title}')
+    if failed and CURRENT_STEP:
+        log_name = STEP_LOGS.get(CURRENT_STEP[1])
+        log = logs / log_name if log_name else None
+        if log and log.exists():
+            lines += ['', f'--- last 60 lines of {log_name} ---']
+            lines += log.read_text(errors='replace').splitlines()[-60:]
+    path.write_text(scrub('\n'.join(lines)) + '\n')
+    return path
+
+
 def fail(text):
     say(f'\n{RED}{BOLD}✗ {text}{RESET}')
+    try:
+        report = write_report(CURRENT_STEP[2] if CURRENT_STEP else None)
+        say(f'A report to attach to a bug report was saved in {report.relative_to(ROOT)}')
+        say(f'(it has no game data or keys; run {RERUN} --report to bundle all logs in one zip)')
+    except Exception:  # noqa: BLE001 - never hide the original error
+        pass
     say(f'Fix the problem above and run {RERUN} again: it resumes where it stopped.')
     sys.exit(1)
 
@@ -51,6 +123,8 @@ def fail(text):
 def run(cmd, log, env=None, cwd=ROOT):
     if cmd and cmd[0] == 'git':
         env = plat.git_env(env)
+    if CURRENT_STEP:
+        STEP_LOGS[CURRENT_STEP[1]] = log
     log = ROOT / 'local/logs' / log
     log.parent.mkdir(parents=True, exist_ok=True)
     with log.open('w') as out:
@@ -308,6 +382,31 @@ def install():
     run([sys.executable, 'scripts/install-native.py', '--force'], 'install-native.log')
 
 
+def find_one(pattern, base):
+    hits = sorted(base.glob(pattern))
+    if not hits:
+        fail(f'Could not find {pattern} in {scrub(str(base))}. A previous step did not finish: run {RERUN} again.')
+    return hits[0]
+
+
+@step('Build the nxrt runtime (the unofficial native port) — about 20 to 40 minutes')
+def nxrt():
+    if plat.IS_WINDOWS:
+        say('   The native port is not available on Windows yet; skipping (the older build still works).')
+        return
+    export = find_one('export-*/**/aot_cache/exefs', ROOT / 'local/aot')
+    recomp = UPSTREAM / 'build/suyu-static/src/suyu_cmd/recomp'
+    boost = find_one('.cache/cpm/boost/boost-*', SUYU)
+    if not (recomp / 'main').is_dir():
+        fail('The compiled game code was not found. Run the installer again so the compile step finishes.')
+    say('   This builds the runtime on your computer; it contains code from your game and must not be shared.')
+    run(['bash', 'runtime/scripts/install.sh', '--game-export', export, '--recomp-build', recomp,
+         '--boost-root', boost, '--prefix', ROOT / 'local/nxrt', '--build-dir', ROOT / 'local/build-nxrt',
+         '-j', str(max(2, min(jobs(), 8)))], 'build-nxrt.log')
+    if not (ROOT / 'local/nxrt/bin/nxrt').exists():
+        fail('The nxrt build finished but the executable is missing. Send the report to the project.')
+
+
 @step('Assemble the folder you play from')
 def bundle():
     run([sys.executable, 'scripts/assemble-package.py', '--name', 'tomodachi-native'], 'assemble-package.log')
@@ -355,6 +454,7 @@ STAGE_INPUTS = {
                 f'adapters/{TARGET}/target.json'),
     'install': ('scripts/install-native.py', 'scripts/inventory-romfs.py', 'scripts/lab.py',
                 f'adapters/{TARGET}/target.json'),
+    'nxrt': ('runtime/scripts/install.sh', 'runtime/CMakeLists.txt', 'runtime/src/**/*', 'scripts/lab.py'),
     'bundle': ('scripts/assemble-package.py', 'scripts/lab.py', f'adapters/{TARGET}/target.json'),
 }
 
@@ -401,7 +501,21 @@ def refresh_after_update():
             stamp.unlink(missing_ok=True)
 
 
+def bundle_report():
+    import zipfile
+    report = write_report()
+    out = ROOT / f"install-report-{time.strftime('%Y%m%d-%H%M%S')}.zip"
+    with zipfile.ZipFile(out, 'w', zipfile.ZIP_DEFLATED) as z:
+        z.write(report, report.name)
+        for log in sorted((ROOT / 'local/logs').glob('*.log')):
+            z.writestr(log.name, scrub(log.read_text(errors='replace')))
+    say(f'Report bundle: {out.name}  (no game data or keys inside; attach it to a GitHub issue)')
+
+
 def main():
+    if '--report' in sys.argv:
+        bundle_report()
+        return
     STATE.mkdir(parents=True, exist_ok=True)
     refresh_after_update()
     say(f'{BOLD}Tomodachi Life: Living the Dream — experimental PC recompilation installer{RESET}')
@@ -417,6 +531,8 @@ def main():
             continue
         say(f'{YELLOW}▶{RESET} {BOLD}{i}/{len(STEPS)} {title}{RESET}')
         t0 = time.time()
+        global CURRENT_STEP
+        CURRENT_STEP = (i, key, title)
         fn()
         if key in STAGE_INPUTS:
             atomic_write_text(fingerprint_stamp, stage_fingerprint(key))
@@ -425,6 +541,7 @@ def main():
     say(f'{GREEN}{BOLD}All done!{RESET} ({(time.time() - started) / 60:.0f} min this run)')
     if not CI:
         say(f'To play:  {PLAY}          (fullscreen: {PLAY} --fullscreen)')
+        say('The first time you open the face-paint editor it takes about 40 seconds (it prepares a cache on your computer); after that it opens in seconds.')
 
 
 if __name__ == '__main__':
