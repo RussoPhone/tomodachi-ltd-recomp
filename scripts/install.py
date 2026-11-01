@@ -1,13 +1,13 @@
 #!/usr/bin/env python3
-"""Installer for Tomodachi Life: Living the Dream (experimental PC recompilation).
+"""Installer for the unofficial native PC port of Tomodachi Life: Living the Dream (nxrt).
 
 Runs every step in order, shows progress, and resumes where it stopped if interrupted:
   1. check this computer          6. extract your game's code
   2. take your game and keys      7. translate the code to C
-  3. download suyu/mk8-recomp     8. compile the recompiled game code
+  3. download the build tools     8. compile the recompiled game code
   4. apply this project's fixes    9. extract the game data
-  5. build the tools             10. build the nxrt runtime (the unofficial native port)
-                                 11. assemble the folder you play from
+  5. build the extraction tools  10. build the nxrt runtime (the native port)
+                                 11. create a shortcut (optional)
 
 Nothing from the game ships with this project: everything is generated on your computer from your copy.
 """
@@ -285,7 +285,7 @@ def choose():
     say(f'   Game: {dump.name}\n   Keys: copied into the installer folder (they are never sent anywhere)')
 
 
-@step('Download suyu/mk8-recomp (open source, GPL)')
+@step('Download the build tools (mk8-recomp and suyu, open source, GPL)')
 def fetch():
     lock = json.loads((ROOT / 'upstream.lock.json').read_text())
     if not (UPSTREAM / '.git').exists():
@@ -339,7 +339,7 @@ def jobs():
     return max(1, min(os.cpu_count() or 1, int((ram_gb() - 3) / 1.5)))
 
 
-@step('Build the tools (suyu) — about 15 to 30 minutes')
+@step('Build the extraction tools — about 15 to 30 minutes')
 def backend():
     run([sys.executable, 'scripts/package-standalone.py', '--backend-only', '--jobs', str(jobs())], 'build-backend.log')
 
@@ -361,7 +361,7 @@ def dump():
     say(f"   Version verified: {adapter['supported_version']}")
 
 
-@step("Translate the game's code to C — a few seconds (a window opens and closes by itself)")
+@step("Translate the game's code to C — a few seconds (a tool window opens and closes by itself; it is not the game)")
 def export():
     if not plat.IS_WINDOWS and not (os.environ.get('DISPLAY') or os.environ.get('WAYLAND_DISPLAY')):
         fail('This step needs your desktop session (run the installer from a terminal window, not over SSH).')
@@ -407,35 +407,19 @@ def nxrt():
         fail('The nxrt build finished but the executable is missing. Send the report to the project.')
 
 
-@step('Assemble the folder you play from')
-def bundle():
-    run([sys.executable, 'scripts/assemble-package.py', '--name', 'tomodachi-native'], 'assemble-package.log')
-    if plat.IS_WINDOWS:
-        windows_shortcut()
+@step('Create a shortcut (optional)')
+def shortcut():
+    if plat.IS_WINDOWS or not sys.stdin.isatty():
         return
-    desktop = ROOT / 'local/package/tomodachi/tomodachi-native.desktop'
-    apps = Path.home() / '.local/share/applications'
-    if desktop.exists() and sys.stdin.isatty():
-        answer = input('   Add a shortcut to your applications menu? [Y/n] ').strip().lower()
-        if answer in ('', 'y', 'yes', 's', 'sim'):
-            apps.mkdir(parents=True, exist_ok=True)
-            shutil.copyfile(desktop, apps / 'tomodachi-native.desktop')
-            say('   Shortcut added: look for "Tomodachi" in your menu.')
-
-
-def windows_shortcut():
-    pkg = ROOT / 'local/package/tomodachi'
-    if not sys.stdin.isatty():
-        return
-    answer = input('   Add a shortcut to your Start menu? [Y/n] ').strip().lower()
+    answer = input('   Add Tomodachi Life to your applications menu? [Y/n] ').strip().lower()
     if answer not in ('', 'y', 'yes', 's', 'sim'):
         return
-    link = Path(os.environ['APPDATA']) / 'Microsoft/Windows/Start Menu/Programs/Tomodachi Life (experimental recompilation).lnk'
-    script = ('$s = (New-Object -ComObject WScript.Shell).CreateShortcut($env:LNK); '
-              '$s.TargetPath = $env:EXE; $s.Arguments = \'-g "game\\main"\'; $s.WorkingDirectory = $env:PKG; $s.Save()')
-    env = dict(os.environ, LNK=str(link), EXE=str(pkg / 'tomodachi-native.exe'), PKG=str(pkg))
-    if subprocess.run(['powershell', '-NoProfile', '-Command', script], env=env).returncode == 0:
-        say('   Shortcut added: look for "Tomodachi" in your Start menu.')
+    apps = Path.home() / '.local/share/applications'
+    apps.mkdir(parents=True, exist_ok=True)
+    entry = ('[Desktop Entry]\nType=Application\nName=Tomodachi Life (unofficial native port)\n'
+             f'Exec={ROOT / "play.sh"}\nPath={ROOT}\nTerminal=false\nCategories=Game;\n')
+    (apps / 'tomodachi-nxrt.desktop').write_text(entry)
+    say('   Shortcut added: look for "Tomodachi" in your applications menu.')
 
 
 CI = '--ci' in sys.argv  # build check without a game: steps 1, 3, 4 and 5 only
@@ -455,7 +439,6 @@ STAGE_INPUTS = {
     'install': ('scripts/install-native.py', 'scripts/inventory-romfs.py', 'scripts/lab.py',
                 f'adapters/{TARGET}/target.json'),
     'nxrt': ('runtime/scripts/install.sh', 'runtime/CMakeLists.txt', 'runtime/src/**/*', 'scripts/lab.py'),
-    'bundle': ('scripts/assemble-package.py', 'scripts/lab.py', f'adapters/{TARGET}/target.json'),
 }
 
 
@@ -516,9 +499,11 @@ def main():
     if '--report' in sys.argv:
         bundle_report()
         return
+    if plat.IS_WINDOWS and not CI:
+        fail('The native port is Linux-only for now; there is no Windows installer yet.')
     STATE.mkdir(parents=True, exist_ok=True)
     refresh_after_update()
-    say(f'{BOLD}Tomodachi Life: Living the Dream — experimental PC recompilation installer{RESET}')
+    say(f'{BOLD}Tomodachi Life: Living the Dream — unofficial native PC port (nxrt), installer{RESET}')
     say('Educational, experimental project. Use only with your own copy of the game.\n')
     started = time.time()
     for i, (key, title, fn) in enumerate(STEPS, 1):

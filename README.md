@@ -31,7 +31,7 @@ This project **does not contain the game, firmware or keys**. You bring **your o
 
 | | |
 |---|---|
-| 🖥️ **System** | **Linux**, tested on Arch Linux / EndeavourOS; Fedora reported working. **Windows 10/11**: experimental, see [Windows](#windows-experimental). |
+| 🖥️ **System** | **Linux**, tested on Arch Linux / EndeavourOS. **Windows is not supported yet** (the native port is Linux-only for now). |
 | 🧠 **Memory** | **16 GB of RAM** and at least **8 GB of swap** (virtual memory) |
 | 💾 **Free space** | **35 GB** |
 | 🎮 **Graphics card** | A GPU with **Vulkan** support; compatibility is not guaranteed on every driver or model |
@@ -41,8 +41,6 @@ This project **does not contain the game, firmware or keys**. You bring **your o
 > The game and the keys must be dumped from **your own** Switch with the tools made for that. This project does not provide them.
 
 ---
-
-> 🪟 **On Windows?** Skip to [Windows (experimental)](#windows-experimental). Steps 1 to 4 below are for Linux.
 
 ## Step 1 — Prepare your computer
 
@@ -95,23 +93,23 @@ cd tomodachi-ltd-recomp
 
 1. A window asks for your **game file (`.nsp`)**. Pick it and click OK.
 2. Another window asks for **the folder that contains your `prod.keys`**. Pick it and click OK.
-3. The installer does the rest by itself and shows its progress in **11 steps**, including building the native runtime (nxrt).
+3. The installer does the rest by itself and shows its progress in **11 steps**: it prepares the extraction tools, translates your game's code to C, compiles it, extracts the game data and builds the native runtime (**nxrt**).
 
-If a step fails, the installer saves a **report** (`local/logs/report-*.txt`, no game data or keys inside) and tells you where it is. Run `./install.sh --report` to bundle every log into one zip and attach it to an [issue](https://github.com/RussoPhone/tomodachi-ltd-recomp/issues).
-
-⏱️ **Plan for several hours**; 1 to 4 hours is only a rough estimate from early builds, not a guarantee. Most of that is compiling, and the PC will be busy meanwhile.
+⏱️ **Plan for about 2 hours** (measured on a 16-thread laptop with 16 GB of RAM; most of it is compiling the game code, about 100 minutes) and **~27 GB of disk**. Slower machines will take longer. The PC will be busy meanwhile.
 
 💡 **Need to stop?** Close the Terminal or press `Ctrl+C`. Next time you run `./install.sh` it **picks up where it left off**.
 
-During step 7 an emulator window opens and closes by itself. That is normal, don't close it.
+During step 7 a window of the extraction tool opens and closes by itself. It is **not the game**; don't close it.
 
-At the end it asks whether you want a **shortcut in your applications menu**. Answer `Y`.
+If a step fails, the installer saves a **report** (`local/logs/report-*.txt`, no game data or keys inside) and tells you where it is. Run `./install.sh --report` to bundle every log into one zip and attach it to an [issue](https://github.com/RussoPhone/tomodachi-ltd-recomp/issues).
+
+At the end it offers a **shortcut in your applications menu**. Answer `Y`.
 
 ---
 
 ## Step 4 — Play 🎉
 
-Run:
+Open **Tomodachi Life** from your applications menu, or run:
 
 ```bash
 ./play.sh
@@ -123,54 +121,15 @@ Run:
 | Start the game directly | `./play.sh --nogui` |
 | Fullscreen / window size | `./play.sh --nogui --fullscreen`, `./play.sh --nogui --size 1920x1080` (F11 toggles fullscreen in the game) |
 | Game language | `./play.sh --nogui --language en-GB` (codes: `ja`, `en-US`, `en-GB`, `fr`, `fr-CA`, `de`, `it`, `es`, `es-419`, `pt-BR`, `nl`, `ru`, `ko`, `zh-Hans`, `zh-Hant`; default `en-US`) |
-| Play the older suyu-based build | `./play.sh --legacy` (kept for comparison, not actively maintained) |
 | Look for problems | each run writes `local/logs/play-nxrt-*.log`; attach it to bug reports |
 
-Your saves for the native port live in `local/user-nxrt` (inside the project folder).
+Your saves live in `local/user-nxrt` (inside the project folder). Back that folder up now and then (the launcher has a **Back up now** button).
 
 Once installed, the game **no longer needs the `.nsp` or the keys**. Everything lives inside the project folder.
 
 ---
 
-## Windows (experimental)
-
-> [!NOTE]
-> The Windows installer is **experimental; a full game install has not been independently verified on Windows**. The Windows workflow runs the no-game path (steps 1, 3, 4 and 5); it does not prove game compatibility. If you try it, please open an [issue](https://github.com/RussoPhone/tomodachi-ltd-recomp/issues) with the result and the log from `local\logs\`. **Never attach your keys or game files.**
-
-1. Click the green **Code → Download ZIP** button here on GitHub.
-2. Extract it to a **short folder**, for example `C:\tomodachi`. Long paths can break the Windows build tools.
-3. Double-click **`install.bat`**.
-   - The first time, it installs the build tools with **winget**: Git, CMake, Ninja, Python, LLVM and the **Visual Studio 2022 Build Tools** (several GB). Windows asks for permission once.
-   - On Windows the installer builds the **older suyu-based version**; the native port (nxrt) is Linux-only for now. Otherwise it runs the same steps as on Linux. A window asks for your **`.nsp`**, another for the **folder with your `prod.keys`**.
-   - The time required is **not yet established on Windows**. If it stops, double-click `install.bat` again: it resumes completed steps when their inputs are unchanged.
-   - If it stops with **`Could not find patch executable`**, point it to a `patch.exe` by hand. Git for Windows has one. Open PowerShell in the folder and run:
-     `powershell -ExecutionPolicy Bypass -File scripts\windows\install.ps1 -PatchExe "C:\Program Files\Git\usr\bin\patch.exe"`
-4. To launch, open **Tomodachi Life (experimental recompilation)** from the Start menu, or double-click **`play.bat`**. Options include `play.bat --fullscreen` and `play.bat --scale 2`.
-
-You need the same as on Linux: 16 GB of RAM, about 35 GB of free space (plus ~10 GB for Visual Studio) and a Vulkan graphics card.
-
----
-
 ## FAQ
-
-<details>
-<summary><b>The game opens a blue window and freezes (no sound, high CPU)</b></summary>
-
-This happened on Linux machines with **no audio device available** (for example, PipeWire not running or no sound card). The silent audio fallback used to discard audio as fast as the game produced it, which starved the game's other threads. Update and reinstall:
-
-```bash
-git pull
-./install.sh
-```
-
-The installer rebuilds the affected steps (this can take a while). If the window still freezes, check that audio works (`pactl info`) and open an [issue](https://github.com/RussoPhone/tomodachi-ltd-recomp/issues) attaching the log from `local/package/tomodachi/user/log/`. **Never attach your keys or game files.**
-</details>
-
-<details>
-<summary><b>How do I type text in the game (names, messages)?</b></summary>
-
-When the game asks for text, a small text box opens: type and press OK. On Linux it needs `zenity` (Step 1 installs it) or `kdialog`; on Windows it is built in. If the box opens behind the game window, switch to it with Alt+Tab.
-</details>
 
 <details>
 <summary><b>How do I update to a new version?</b></summary>
@@ -192,7 +151,7 @@ Fixed it? Just run `./install.sh` again.
 <details>
 <summary><b>Where are my saves?</b></summary>
 
-In `local/package/tomodachi/user/nand/user/save/`. Back that folder up now and then.
+In `local/user-nxrt`. Back that folder up now and then (the launcher's **Back up now** button makes a zip in `local/backups`).
 </details>
 
 <details>
@@ -208,26 +167,20 @@ KDE's file indexer (Baloo) tries to read the gigabytes of generated code and can
 </details>
 
 <details>
-<summary><b>Does it work on Windows?</b></summary>
-
-Experimentally. See [Windows (experimental)](#windows-experimental). It builds the `.exe` on your own PC, like on Linux, and still needs its first full test with the game.
-</details>
-
-<details>
 <summary><b>How do I uninstall it?</b></summary>
 
-Delete the `tomodachi-ltd-recomp` folder and the shortcut at `~/.local/share/applications/tomodachi-native.desktop`.
+Delete the `tomodachi-ltd-recomp` folder and the shortcut at `~/.local/share/applications/tomodachi-nxrt.desktop`. Your saves are inside the folder, so back them up first.
 </details>
 
 <details>
 <summary><b>How does it work under the hood?</b></summary>
 
 Switch games are built for the console's ARM processor. The installer:
-1. Reads the ARM machine code from **your** game and statically recompiles it into C using [mk8-recomp](https://github.com/dougchansan/mk8-recomp), which builds on suyu.
-2. **Compiles** the generated code for the PC's x86-64 processor. The recompiled game code does not need ARM CPU interpretation or JIT translation while running.
-3. **Builds nxrt**, this project's runtime, on your computer. It renders through its own NVN → Vulkan layer and still uses suyu-derived code for part of the Switch system services and shader translation. The resulting program contains code from your game, so it is built locally and **must never be shared**.
+1. Reads the ARM machine code from **your** game and statically recompiles it into C using [mk8-recomp](https://github.com/dougchansan/mk8-recomp) (a recompiler built on suyu code, used only while installing).
+2. **Compiles** the generated code for the PC's x86-64 processor. At run time there is **no ARM interpreter and no JIT**: the game's code is ordinary PC code.
+3. **Builds nxrt**, this project's runtime, on your computer. It implements the Switch system services the game asks for, and its own **NVN → Vulkan renderer** draws the game: GPU commands are translated to Vulkan, not emulated. The game's shaders are translated to SPIR-V with a translator derived from suyu's.
 
-The fixes this project needed in suyu are in [`patches/`](patches/), each explained inside the file. The generated C is a machine translation. **It is not the game's original source code.**
+The program built on your computer contains code from your game, so it is **never distributed as a binary** and must not be shared. The generated C is a machine translation, **not the game's original source code**.
 </details>
 
 ---
@@ -236,11 +189,11 @@ The fixes this project needed in suyu are in [`patches/`](patches/), each explai
 
 🧪 **Experimental alpha.**
 
-- ✅ The game's code is **statically recompiled to x86-64**, rather than being run by an ARM CPU interpreter or JIT. A PC executable is built; it does not need the original `.nsp` or keys to launch after installation. Audio, video, the opening and the start of the game have been tested.
-- ⚠️ **Emulation remains:** the executable includes suyu-derived runtime components for graphics, audio and Switch system services. GPU commands are still emulated. This release is **not emulator-free** and is **not yet a fully native port**.
-- 🔧 A more independent PC port, including work on an NVN → Vulkan renderer, is in development. There is **no promised completion date**.
-- 🧪 The maintainer **reports** a complete 10-step installation and launch on an Intel i5-13450HX Linux laptop with 16 GB of RAM, taking approximately 2 hours. This report has **not been reproduced by the no-game automated checks**.
-- 🆕 Hardware and distro coverage remains limited, and individual community reports are not a compatibility guarantee. If a step fails for you, please open an [issue](https://github.com/RussoPhone/tomodachi-ltd-recomp/issues) and attach the log file the installer points to (in `local/logs/`). **Never attach your keys or game files.**
+- ✅ **CPU:** the game's code is statically recompiled to x86-64. No ARM interpreter and no JIT at run time.
+- ✅ **GPU:** nxrt has its own NVN → Vulkan renderer (no GPU-command emulation). Shaders are translated to SPIR-V.
+- ℹ️ **What still comes from suyu:** the installer's extraction and recompilation tools (suyu and mk8-recomp, used only while installing), plus parts of nxrt: the shader translator and some of the Switch system-service code are derived from suyu. They are credited below, under GPL-3.0.
+- 🧪 Tested on one machine so far (EndeavourOS, Intel i5-13450HX, NVIDIA RTX 4050). See [docs/TESTING.md](docs/TESTING.md) for what works, what is untested and how to help.
+- 🆕 Other GPUs, distributions and saves are untested, and a clean install on another computer is the most useful thing you can try. If a step fails for you, open an [issue](https://github.com/RussoPhone/tomodachi-ltd-recomp/issues) and attach the report from `./install.sh --report`.
 - 🐞 There may be bugs in parts of the game nobody has played yet. Report them the same way.
 
 ## AI assistance and authorship

@@ -30,7 +30,7 @@ Nothing from the game, the firmware or your keys is distributed.
 
 - **AMD and Intel GPUs**, and NVIDIA GPUs other than the RTX 4050 (the GPU texture decoder and the asynchronous submit path are new).
 - **Other distributions** (Fedora, Ubuntu, Debian, Arch derivatives, SteamOS) and Wayland-only sessions.
-- **Windows**: the native port is Linux-only for now; the Windows installer builds the older suyu-based version.
+- **Windows**: not supported yet (the native port is Linux-only for now).
 - Long play sessions, other parts of the game nobody has played yet, and saves from a real console.
 - A clean installation from the `.nsp` on a fresh machine (the maintainer's own build was done step by step in a lab).
 
@@ -58,4 +58,3 @@ Please do **not** post keys, firmware, the `.nsp` or any copy of the game.
 - First face-paint opening is slow (~40 s).
 - Fullscreen, window size and language options (and the launcher) are new: tried only on the maintainer's machine (Japanese and English text and a custom window size were checked); there is no in-game settings menu yet.
 - Alpha: expect crashes and graphical glitches, and do not trust it with the only copy of a save you care about (`local/user-nxrt` is a separate folder, but back it up).
-- The older suyu-based build (`./play.sh --legacy`) is kept only for comparison and is not actively maintained.
