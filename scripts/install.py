@@ -115,6 +115,11 @@ def write_report(failed=None):
         if log and log.exists():
             lines += ['', f'--- last 60 lines of {log_name} ---']
             lines += log.read_text(errors='replace').splitlines()[-60:]
+    # Tools such as cmake/ninja write their own logs under artifacts/; the step log only says "see that file".
+    recent = [f for f in sorted((ROOT / 'artifacts').glob('*.log')) if time.time() - f.stat().st_mtime < 6 * 3600] if (ROOT / 'artifacts').is_dir() else []
+    for extra in recent[-4:]:
+        lines += ['', f'--- last 40 lines of artifacts/{extra.name} ---']
+        lines += extra.read_text(errors='replace').splitlines()[-40:]
     path.write_text(scrub('\n'.join(lines)) + '\n')
     return path
 
@@ -529,6 +534,8 @@ def bundle_report():
         z.write(report, report.name)
         for log in sorted((ROOT / 'local/logs').glob('*.log')):
             z.writestr(log.name, scrub(log.read_text(errors='replace')))
+        for log in sorted((ROOT / 'artifacts').glob('*.log')) if (ROOT / 'artifacts').is_dir() else []:
+            z.writestr('artifacts-' + log.name, scrub(log.read_text(errors='replace')))
     say(f'Report bundle: {out.name}  (no game data or keys inside; attach it to a GitHub issue)')
 
 
