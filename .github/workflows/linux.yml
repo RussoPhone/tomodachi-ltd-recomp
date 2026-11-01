@@ -21,8 +21,10 @@ jobs:
       - name: Check Python syntax
         run: python -m compileall -q scripts tests
       - name: Check shell syntax
-        run: sh -n install.sh play.sh
+        run: sh -n install.sh play.sh scripts/play-nxrt.sh
       - name: Validate adapter and upstream JSON
         run: python -m json.tool upstream.lock.json > /dev/null && python -m json.tool adapters/tomodachi/target.json > /dev/null
+      - name: Install test dependencies
+        run: python -m pip install cryptography
       - name: Run synthetic tests (no game, keys or firmware)
         run: python -m unittest discover -s tests -v
