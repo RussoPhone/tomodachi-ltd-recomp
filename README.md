@@ -12,6 +12,9 @@ This project **does not contain the game, firmware or keys**. You bring **your o
 > **Alpha status.** Tested so far on one NVIDIA laptop on Linux (Arch/EndeavourOS). AMD and Intel GPUs, other distributions and Windows are untested for the native port. Capped at 30 FPS; brief drops to ~23 FPS happen while a new scene loads. The first time you open the face-paint editor it takes about 40 seconds (it prepares a cache on your computer); later openings take a few seconds.
 
 > [!NOTE]
+> **Where the project is going:** [docs/ROADMAP-RECOMPILER.md](docs/ROADMAP-RECOMPILER.md) (our own recompiler, step by step).
+
+> [!NOTE]
 > **Want to help test?** See [`docs/TESTING.md`](docs/TESTING.md): what was tested and where, what is still untested, how to test and how to report problems.
 
 🇧🇷 [Leia em português](README.pt-BR.md)

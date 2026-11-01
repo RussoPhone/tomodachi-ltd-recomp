@@ -14,6 +14,9 @@ O projeto **não contém o jogo, o firmware nem as chaves**. Você usa a **sua p
 > **Status alpha.** Testado até agora em um notebook NVIDIA com Linux (Arch/EndeavourOS). GPUs AMD e Intel, outras distribuições e Windows não foram testados para o port nativo. Limitado a 30 FPS; há quedas breves para ~23 FPS enquanto uma cena nova carrega. Na primeira vez que abrir o editor de facepaint ele leva cerca de 40 segundos (prepara um cache no seu computador); as próximas aberturas levam poucos segundos.
 
 > [!NOTE]
+> **Para onde o projeto vai:** [docs/ROADMAP-RECOMPILER.pt-BR.md](docs/ROADMAP-RECOMPILER.pt-BR.md) (o nosso recompilador, passo a passo).
+
+> [!NOTE]
 > **Quer ajudar a testar?** Veja [`docs/TESTING.pt-BR.md`](docs/TESTING.pt-BR.md): o que foi testado e onde, o que ainda falta, como testar e como relatar problemas.
 
 > [!WARNING]
