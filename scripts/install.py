@@ -2,12 +2,12 @@
 """Installer for the unofficial native PC port of Tomodachi Life: Living the Dream (nxrt).
 
 Runs every step in order, shows progress, and resumes where it stopped if interrupted:
-  1. check this computer          6. extract your game's code
-  2. take your game and keys      7. translate the code to C
-  3. download the build tools     8. compile the recompiled game code
-  4. apply this project's fixes    9. extract the game data
-  5. build the extraction tools  10. build the nxrt runtime (the native port)
-                                 11. create a shortcut (optional)
+  1. check this computer          7. translate the code to C
+  2. take your game and keys      8. trim the generated code
+  3. download the build tools     9. compile the recompiled game code
+  4. apply this project's fixes  10. extract the game data
+  5. build the extraction tools  11. build the nxrt runtime (the native port)
+  6. extract your game's code    12. create a shortcut (optional)
 
 Nothing from the game ships with this project: everything is generated on your computer from your copy.
 """

@@ -101,7 +101,7 @@ cd tomodachi-ltd-recomp
 
 1. Uma janela pede o **arquivo do jogo (`.nsp`)**. Escolha e clique em OK.
 2. Outra janela pede a **pasta onde está o seu `prod.keys`**. Escolha e clique em OK.
-3. O instalador faz o resto sozinho e mostra o andamento em **11 passos**: prepara as ferramentas de extração, traduz o código do seu jogo para C, compila, extrai os dados do jogo e gera o runtime nativo (**nxrt**).
+3. O instalador faz o resto sozinho e mostra o andamento em **12 passos**: prepara as ferramentas de extração, traduz o código do seu jogo para C, compila, extrai os dados do jogo e gera o runtime nativo (**nxrt**).
 
 ⏱️ **Reserve de 1h30 a 2 horas** (medido num notebook de 16 threads com 16 GB de RAM; a maior parte é compilar o código do jogo, uns 80 minutos) e **~27 GB de disco**. Máquinas mais lentas demoram mais. O PC fica ocupado nesse tempo.
 
