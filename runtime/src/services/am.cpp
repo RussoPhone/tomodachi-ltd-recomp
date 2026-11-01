@@ -1,10 +1,14 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // am (applet manager) as an application sees it: appletOE and the interfaces of
 // IApplicationProxy. One application, always in focus, docked.
+#include <array>
+#include <cstdlib>
 #include <cstring>
 #include <deque>
 #include <fstream>
 #include <mutex>
+#include <string>
+#include <string_view>
 
 #include "memory.h"
 #include "runtime.h"
@@ -243,8 +247,27 @@ public:
         });
         Register(20, "EnsureSaveData", [](Ctx& ctx) { ctx.Push<u64>(0); });
         Register(21, "GetDesiredLanguage", [](Ctx& ctx) {
+            // NXRT_LANGUAGE=<Switch language code> (default en-US): ja, en-US, fr, de, it, es, zh-CN, ko, nl, pt, ru,
+            // zh-TW, en-GB, fr-CA, es-419, zh-Hans, zh-Hant, pt-BR.
+            static const std::string language = [] {
+                static constexpr std::array<std::string_view, 18> kCodes = {
+                    "ja", "en-US", "fr", "de", "it", "es", "zh-CN", "ko", "nl", "pt", "ru", "zh-TW", "en-GB",
+                    "fr-CA", "es-419", "zh-Hans", "zh-Hant", "pt-BR"};
+                const char* configured = std::getenv("NXRT_LANGUAGE");
+                if (configured && *configured) {
+                    for (std::string_view known : kCodes)
+                        if (known == configured) return std::string(known);
+                    LOG_WARN("am: ignoring unknown NXRT_LANGUAGE=%s", configured);
+                }
+                return std::string("en-US");
+            }();
+            static bool logged = false;
+            if (!logged) {
+                logged = true;
+                LOG_INFO("am: GetDesiredLanguage -> %s", language.c_str());
+            }
             u64 code = 0;
-            std::memcpy(&code, "en-US", 5);
+            std::memcpy(&code, language.data(), language.size());
             ctx.Push<u64>(code);
         });
         RegisterStub(22, "SetTerminateResult");

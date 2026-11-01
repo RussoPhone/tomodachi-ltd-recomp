@@ -119,7 +119,10 @@ Run:
 
 | To… | Use |
 |---|---|
-| Play the native port (default) | `./play.sh` |
+| Open the launcher (default) | `./play.sh`: PLAY, fullscreen, window size, language, save backup/restore, bug report |
+| Start the game directly | `./play.sh --nogui` |
+| Fullscreen / window size | `./play.sh --nogui --fullscreen`, `./play.sh --nogui --size 1920x1080` (F11 toggles fullscreen in the game) |
+| Game language | `./play.sh --nogui --language en-GB` (codes: `ja`, `en-US`, `en-GB`, `fr`, `fr-CA`, `de`, `it`, `es`, `es-419`, `pt-BR`, `nl`, `ru`, `ko`, `zh-Hans`, `zh-Hant`; default `en-US`) |
 | Play the older suyu-based build | `./play.sh --legacy` (kept for comparison, not actively maintained) |
 | Look for problems | each run writes `local/logs/play-nxrt-*.log`; attach it to bug reports |
 

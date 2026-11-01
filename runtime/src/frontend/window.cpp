@@ -223,11 +223,30 @@ bool Init(const char* title) {
         LOG_ERROR("SDL: %s", SDL_GetError());
         return false;
     }
-    g_window = SDL_CreateWindow(title, SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED, 1280, 720,
-                                SDL_WINDOW_RESIZABLE | SDL_WINDOW_VULKAN);
+    // NXRT_WINDOW_SIZE=<W>x<H> (default 1280x720) and NXRT_FULLSCREEN=1 (borderless desktop fullscreen); F11 toggles it.
+    int window_w = 1280, window_h = 720;
+    if (const char* size = std::getenv("NXRT_WINDOW_SIZE")) {
+        int w = 0, h = 0;
+        if (std::sscanf(size, "%dx%d", &w, &h) == 2 && w >= 320 && h >= 180 && w <= 16384 && h <= 16384) {
+            window_w = w;
+            window_h = h;
+        } else {
+            LOG_WARN("window: ignoring NXRT_WINDOW_SIZE=%s (expected <W>x<H>, e.g. 1920x1080)", size);
+        }
+    }
+    const char* fullscreen_env = std::getenv("NXRT_FULLSCREEN");
+    const bool start_fullscreen = fullscreen_env && *fullscreen_env && std::strcmp(fullscreen_env, "0") != 0;
+    g_window = SDL_CreateWindow(title, SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED, window_w, window_h,
+                                SDL_WINDOW_RESIZABLE | SDL_WINDOW_VULKAN |
+                                    (start_fullscreen ? SDL_WINDOW_FULLSCREEN_DESKTOP : 0));
     if (!g_window) {
         LOG_ERROR("SDL window: %s", SDL_GetError());
         return false;
+    }
+    {
+        int w = 0, h = 0;
+        SDL_GetWindowSize(g_window, &w, &h);
+        LOG_INFO("window: %dx%d fullscreen=%d", w, h, start_fullscreen ? 1 : 0);
     }
     SDL_StartTextInput();
     return true;
@@ -336,6 +355,11 @@ void RunEventLoop() {
                 break;
             }
             case SDL_KEYDOWN:
+                if (e.key.keysym.scancode == SDL_SCANCODE_F11 && !e.key.repeat) {
+                    const bool is_fullscreen = (SDL_GetWindowFlags(g_window) & SDL_WINDOW_FULLSCREEN_DESKTOP) != 0;
+                    SDL_SetWindowFullscreen(g_window, is_fullscreen ? 0 : SDL_WINDOW_FULLSCREEN_DESKTOP);
+                    LOG_INFO("window: fullscreen %s", is_fullscreen ? "off" : "on");
+                }
                 if (e.key.keysym.scancode == SDL_SCANCODE_F9 && !e.key.repeat && hle::InputRecordEnabled())
                     hle::InputRecordMarker(g_frames.load());
                 if (e.key.keysym.scancode == SDL_SCANCODE_F10 && !e.key.repeat && tts_trace::Enabled())

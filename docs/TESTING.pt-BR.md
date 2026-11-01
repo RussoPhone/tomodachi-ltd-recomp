@@ -56,6 +56,6 @@ Por favor, **não** publique chaves, firmware, o `.nsp` nem qualquer cópia do j
 
 - Limite de 30 FPS; quedas enquanto cenas carregam.
 - A primeira abertura do facepaint é lenta (~40 s).
-- Ainda não há opções de tela cheia nem de escala no lançador nativo.
+- As opções de tela cheia, tamanho da janela e idioma (e o launcher) são novas: só foram testadas na máquina do mantenedor (texto em japonês e inglês e um tamanho de janela personalizado foram conferidos); não existe um menu de configurações dentro do jogo.
 - Alpha: espere travamentos e falhas gráficas, e não confie na única cópia de um save importante (`local/user-nxrt` é uma pasta separada, mas faça backup).
 - A versão antiga baseada no suyu (`./play.sh --legacy`) é mantida só para comparação e não recebe manutenção ativa.

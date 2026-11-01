@@ -119,7 +119,10 @@ Procure **Tomodachi** no menu de aplicativos, ou rode no Terminal:
 
 | Para… | Use |
 |---|---|
-| Jogar o port nativo (padrão) | `./play.sh` |
+| Abrir o launcher (padrão) | `./play.sh`: JOGAR, tela cheia, tamanho da janela, idioma, backup e restauração do save, relatório de bug |
+| Iniciar o jogo direto | `./play.sh --nogui` |
+| Tela cheia / tamanho da janela | `./play.sh --nogui --fullscreen`, `./play.sh --nogui --size 1920x1080` (F11 alterna a tela cheia no jogo) |
+| Idioma do jogo | `./play.sh --nogui --language en-GB` (códigos: `ja`, `en-US`, `en-GB`, `fr`, `fr-CA`, `de`, `it`, `es`, `es-419`, `pt-BR`, `nl`, `ru`, `ko`, `zh-Hans`, `zh-Hant`; padrão `en-US`) |
 | Jogar a versão antiga baseada no suyu | `./play.sh --legacy` (mantida só para comparação) |
 | Investigar problemas | cada execução grava `local/logs/play-nxrt-*.log`; anexe aos relatórios de bug |
 

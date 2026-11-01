@@ -56,6 +56,6 @@ Please do **not** post keys, firmware, the `.nsp` or any copy of the game.
 
 - 30 FPS cap; dips while scenes load.
 - First face-paint opening is slow (~40 s).
-- No fullscreen or scale options yet in the native launcher.
+- Fullscreen, window size and language options (and the launcher) are new: tried only on the maintainer's machine (Japanese and English text and a custom window size were checked); there is no in-game settings menu yet.
 - Alpha: expect crashes and graphical glitches, and do not trust it with the only copy of a save you care about (`local/user-nxrt` is a separate folder, but back it up).
 - The older suyu-based build (`./play.sh --legacy`) is kept only for comparison and is not actively maintained.
