@@ -1,0 +1,593 @@
+[    0.000] info  program 010051f0207b2000, main thread priority 44, stack 0x100000
+[    0.000] info  loaded rtld     at 0x80000000 (0x6000 bytes)
+[    0.150] info  loaded main     at 0x80006000 (0x5299000 bytes)
+[    0.180] info  loaded sdk      at 0x8529f000 (0xc52000 bytes)
+[    0.180] info  recompiled module rtld  -> rtld at 0x80000000 (abi 6)
+[    0.205] info  recompiled module main  -> main at 0x80006000 (abi 6)
+[    0.209] info  recompiled module sdk   -> sdk at 0x8529f000 (abi 6)
+[    0.209] info  code guard: verify once per generation
+[    0.209] info  native FP fast paths: on
+[    0.210] info  NVN: nvnBootstrapLoader at sdk+0x502d10
+[    0.210] info  starting the game (headless)
+[    0.262] info  sm: GetServiceHandle("lm")
+[    0.263] info  sm: GetServiceHandle("apm")
+[    0.263] info  sm: GetServiceHandle("appletOE")
+[    0.263] info  sm: GetServiceHandle("aoc:u")
+[    0.263] info  sm: GetServiceHandle("ectx:aw")
+[    0.263] info  sm: GetServiceHandle("pctl")
+[    0.264] info  sm: GetServiceHandle("pctl:s")
+[    0.264] info  sm: GetServiceHandle("pctl:a")
+[    0.264] info  sm: GetServiceHandle("pctl:r")
+[    0.264] info  sm: GetServiceHandle("time:u")
+[    0.305] info  sm: GetServiceHandle("fsp-srv")
+[    0.310] info  sm: GetServiceHandle("nvdrv")
+[    0.310] info  sm: GetServiceHandle("vi:m")
+[    0.310] info  sm: GetServiceHandle("vi:s")
+[    0.310] info  sm: GetServiceHandle("vi:u")
+[    0.319] info  vi: buffer slot 0 preallocated (364 bytes)
+[    0.319] info  vi: buffer slot 1 preallocated (364 bytes)
+[    0.323] info  sm: GetServiceHandle("acc:u0")
+[    0.963] info  save data (space 1, type 1) at /tmp/claude-1000/nxrt-user2/save/1/010051f0207b2000/fedcba98765432100123456789abcdef/1
+[    0.967] info  sm: GetServiceHandle("hid")
+[    1.360] info  sm: GetServiceHandle("mii:e")
+[    1.562] info  sm: GetServiceHandle("audren:u")
+[    1.562] info  audio renderer: 48000 Hz, 240 samples, 96 voices, 2 sinks, 17 effects, revision 15
+[    2.610] info  sm: GetServiceHandle("pl:u")
+[    2.610] info  sm: GetServiceHandle("pl:u")
+[    2.616] info  sm: GetServiceHandle("pl:u")
+[    2.616] info  sm: GetServiceHandle("pl:u")
+[    2.617] info  sm: GetServiceHandle("pl:u")
+[    2.617] info  sm: GetServiceHandle("pl:u")
+[    2.617] info  sm: GetServiceHandle("pl:u")
+[    2.617] info  sm: GetServiceHandle("pl:u")
+[    2.617] info  sm: GetServiceHandle("pl:u")
+[    2.617] info  sm: GetServiceHandle("pl:u")
+[    2.617] info  sm: GetServiceHandle("pl:u")
+[    2.617] info  sm: GetServiceHandle("pl:u")
+[    2.617] info  sm: GetServiceHandle("pl:u")
+[    2.617] info  sm: GetServiceHandle("pl:u")
+[    2.617] info  sm: GetServiceHandle("pl:u")
+[    2.617] info  sm: GetServiceHandle("pl:u")
+[    2.617] info  sm: GetServiceHandle("pl:u")
+[    2.617] info  sm: GetServiceHandle("pl:u")
+[    2.617] info  sm: GetServiceHandle("pl:u")
+[    2.780] info  sm: GetServiceHandle("prepo:u")
+[   10.348] info  vi: 301 frames presented (60.2 fps), 1920x1080 format 1
+[   15.357] info  vi: 578 frames presented (55.3 fps), 1920x1080 format 1
+[   18.752] info  sm: GetServiceHandle("ngc:u")
+[   20.369] info  vi: 874 frames presented (59.1 fps), 1920x1080 format 1
+[   25.386] info  vi: 1175 frames presented (60.0 fps), 1920x1080 format 1
+nvn	435529	nvnChannelMaskStateSetChannelMask
+nvn	300148	nvnCommandBufferBindTexture
+nvn	221893	nvnCommandBufferBindBlendState
+nvn	210247	nvnBlendStateSetBlendTarget
+nvn	210247	nvnBlendStateSetBlendFunc
+nvn	210247	nvnBlendStateSetBlendEquation
+nvn	210247	nvnColorStateSetBlendEnable
+nvn	202530	nvnBufferGetAddress
+nvn	198431	nvnDeviceGetTextureHandle
+nvn	117433	nvnMemoryPoolGetFlags
+nvn	100368	nvnTextureViewSetDefaults
+nvn	98906	nvnTextureViewSetLevels
+nvn	98811	nvnTextureViewSetLayers
+nvn	80122	nvnCommandBufferBindProgram
+nvn	78606	nvnCommandBufferBindVertexAttribState
+nvn	78606	nvnCommandBufferBindVertexStreamState
+nvn	69604	nvnCommandBufferBindUniformBuffer
+nvn	66697	nvnCommandBufferBindColorState
+nvn	66697	nvnCommandBufferBindChannelMaskState
+nvn	66697	nvnCommandBufferSetBlendColor
+nvn	55640	nvnDepthStencilStateSetStencilFunc
+nvn	55640	nvnDepthStencilStateSetStencilOp
+nvn	55051	nvnBlendStateSetDefaults
+nvn	55051	nvnColorStateSetDefaults
+nvn	54997	nvnDepthStencilStateSetDepthTestEnable
+nvn	54997	nvnDepthStencilStateSetDepthWriteEnable
+nvn	54997	nvnDepthStencilStateSetDepthFunc
+nvn	54997	nvnDepthStencilStateSetStencilTestEnable
+nvn	54994	nvnPolygonStateSetCullFace
+nvn	54994	nvnPolygonStateSetFrontFace
+nvn	54994	nvnPolygonStateSetPolygonMode
+nvn	54994	nvnPolygonStateSetPolygonOffsetEnables
+nvn	54410	nvnCommandBufferBindDepthStencilState
+nvn	54410	nvnCommandBufferBindPolygonState
+nvn	54410	nvnCommandBufferSetPolygonOffsetClamp
+nvn	54410	nvnCommandBufferSetDepthClamp
+nvn	54354	nvnColorStateSetLogicOp
+nvn	51705	nvnCommandBufferSetRenderTargets
+nvn	51594	nvnBufferBuilderSetDevice
+nvn	51594	nvnBufferBuilderSetDefaults
+nvn	51594	nvnBufferBuilderSetStorage
+nvn	51594	nvnBufferInitialize
+nvn	47679	nvnCommandBufferSetDepthRange
+nvn	47665	nvnCommandBufferSetViewport
+nvn	47665	nvnCommandBufferSetScissor
+nvn	38737	nvnBufferFinalize
+nvn	32827	nvnDeviceGetInteger
+nvn	27871	nvnCommandBufferAddCommandMemory
+nvn	27871	nvnCommandBufferAddControlMemory
+nvn	27871	nvnCommandBufferGetCommandMemoryUsed
+nvn	27871	nvnCommandBufferGetControlMemoryUsed
+nvn	27871	nvnCommandBufferEndRecording
+nvn	26347	nvnCommandBufferInitialize
+nvn	26347	nvnCommandBufferSetMemoryCallback
+nvn	26347	nvnCommandBufferSetMemoryCallbackData
+nvn	26346	nvnCommandBufferFinalize
+nvn	26102	nvnCommandBufferBarrier
+nvn	20343	nvnBufferMap
+nvn	15690	nvnTextureBuilderSetDevice
+nvn	15690	nvnTextureBuilderSetDefaults
+nvn	15690	nvnTextureBuilderSetFlags
+nvn	15690	nvnTextureBuilderSetTarget
+nvn	15690	nvnTextureBuilderSetFormat
+nvn	15687	nvnTextureBuilderSetWidth
+nvn	15687	nvnTextureBuilderSetHeight
+nvn	15687	nvnTextureBuilderSetDepth
+nvn	15687	nvnTextureBuilderSetLevels
+nvn	14047	nvnVertexAttribStateSetDefaults
+nvn	12165	nvnVertexAttribStateSetFormat
+nvn	12165	nvnVertexAttribStateSetStreamIndex
+nvn	11911	nvnCommandBufferSetPointSize
+nvn	11632	nvnMemoryPoolFlushMappedRange
+nvn	11283	nvnCommandBufferSetLineWidth
+nvn	11078	nvnVertexStreamStateSetDefaults
+nvn	10774	nvnTextureBuilderSetSamples
+nvn	10774	nvnTextureBuilderSetSwizzle
+nvn	10774	nvnTextureBuilderSetDepthStencilMode
+nvn	10708	nvnCommandBufferDrawElementsBaseVertex
+nvn	10388	nvnVertexStreamStateSetStride
+nvn	10342	nvnVertexStreamStateSetDivisor
+nvn	8149	nvnCommandBufferBindVertexBuffer
+nvn	7427	nvnCommandBufferReportCounter
+nvn	7235	nvnCommandBufferSignalEvent
+nvn	6525	nvnProgramInitialize
+nvn	6489	nvnProgramSetShadersExt
+nvn	6290	nvnTextureGetFlags
+nvn	6290	nvnTexturePoolRegisterTexture
+nvn	6171	nvnTextureBuilderGetStorageSize
+nvn	5938	nvnDeviceGetTimestampInNanoseconds
+nvn	5866	nvnQueueFlush
+nvn	5450	nvnTextureViewSetFormat
+nvn	5426	nvnTextureBuilderSetStorage
+nvn	5426	nvnTextureInitialize
+nvn	5230	nvnTextureBuilderGetStorageAlignment
+nvn	4419	nvnCommandBufferSetShaderScratchMemory
+nvn	4419	nvnQueueSubmitCommands
+nvn	4419	nvnCommandBufferSetTexturePool
+nvn	4419	nvnCommandBufferSetSamplerPool
+nvn	4247	nvnTextureBuilderSetPackagedTextureLayout
+nvn	4006	nvnTextureViewSetSwizzle
+nvn	4003	nvnTextureViewSetTarget
+nvn	3991	nvnTextureViewSetDepthStencilMode
+nvn	3799	nvnCommandBufferClearDepthStencil
+nvn	3781	nvnTextureBuilderGetZCullStorageSize
+nvn	2970	nvnSyncWait
+nvn	2838	nvnCommandBufferDrawElementsInstanced
+nvn	2516	nvnMemoryPoolInvalidateMappedRange
+nvn	2134	nvnCommandBufferBindStorageBuffer
+nvn	1666	nvnMemoryPoolBuilderSetDevice
+nvn	1666	nvnMemoryPoolBuilderSetDefaults
+nvn	1666	nvnMemoryPoolBuilderSetStorage
+nvn	1666	nvnMemoryPoolBuilderSetFlags
+nvn	1666	nvnMemoryPoolInitialize
+nvn	1525	nvnCommandBufferBeginRecording
+nvn	1525	nvnQueueFenceSync
+nvn	1453	nvnCommandBufferCallCommands
+nvn	1447	nvnWindowSetCrop
+nvn	1447	nvnWindowAcquireTexture
+nvn	1447	nvnQueuePresentTexture
+nvn	1102	nvnMemoryPoolMap
+nvn	975	nvnSamplerBuilderSetDevice
+nvn	975	nvnSamplerBuilderSetDefaults
+nvn	975	nvnSamplerBuilderSetMinMagFilter
+nvn	975	nvnSamplerInitialize
+nvn	974	nvnSamplerBuilderSetWrapMode
+nvn	974	nvnSamplerBuilderSetLodClamp
+nvn	974	nvnSamplerBuilderSetLodBias
+nvn	974	nvnSamplerBuilderSetCompare
+nvn	974	nvnSamplerBuilderSetBorderColor
+nvn	974	nvnSamplerBuilderSetReductionFilter
+nvn	795	nvnTextureBuilderGetStorageClass
+nvn	697	nvnChannelMaskStateSetDefaults
+nvn	666	nvnCommandBufferClearColor
+nvn	647	nvnTextureFinalize
+nvn	643	nvnDepthStencilStateSetDefaults
+nvn	640	nvnPolygonStateSetDefaults
+nvn	640	nvnMultisampleStateSetDefaults
+nvn	640	nvnMultisampleStateSetMultisampleEnable
+nvn	640	nvnMultisampleStateSetAlphaToCoverageEnable
+nvn	640	nvnMultisampleStateSetSamples
+nvn	628	nvnCommandBufferDrawArraysInstanced
+nvn	519	nvnTextureGetTarget
+nvn	493	nvnTextureGetWidth
+nvn	493	nvnTextureGetHeight
+nvn	493	nvnTextureGetDepth
+nvn	491	nvnTextureBuilderSetPackagedTextureData
+nvn	491	nvnTextureGetLevels
+nvn	491	nvnTextureGetFormat
+nvn	491	nvnTextureGetSamples
+nvn	491	nvnTextureGetSwizzle
+nvn	491	nvnTextureGetStride
+nvn	362	nvnCommandBufferSetCommandMemoryCallbackEnabled
+nvn	264	nvnSamplerBuilderSetMaxAnisotropy
+nvn	260	nvnTextureBuilderSetStride
+nvn	221	nvnSamplerPoolRegisterSampler
+nvn	213	nvnMemoryPoolGetBufferAddress
+nvn	195	nvnTextureSetDebugLabel
+nvn	128	nvnSamplerSetDebugLabel
+nvn	112	nvnCommandBufferSetStencilRef
+nvn	98	nvnBufferFlushMappedRange
+nvn	56	nvnCommandBufferBindMultisampleState
+nvn	56	nvnCommandBufferSetStencilValueMask
+nvn	56	nvnCommandBufferSetStencilMask
+nvn	56	nvnCommandBufferSetDepthBounds
+nvn	56	nvnCommandBufferSetRasterizerDiscard
+nvn	52	nvnTextureWriteTexels
+nvn	52	nvnTextureFlushTexels
+nvn	46	nvnMemoryPoolSetDebugLabel
+nvn	36	nvnProgramSetShaders
+nvn	36	nvnCommandBufferSetRenderEnable
+nvn	36	nvnCommandBufferSetRenderEnableConditional
+nvn	30	nvnMemoryPoolMapVirtual
+nvn	21	nvnBufferSetDebugLabel
+nvn	20	nvnCommandBufferUpdateUniformBuffer
+nvn	14	nvnCommandBufferCopyTextureToTexture
+nvn	14	nvnCommandBufferSetViewports
+nvn	14	nvnCommandBufferSetScissors
+nvn	11	nvnSamplerGetMinMagFilter
+nvn	11	nvnSamplerGetWrapMode
+nvn	11	nvnSamplerGetLodClamp
+nvn	11	nvnSamplerGetLodBias
+nvn	11	nvnSamplerGetCompare
+nvn	11	nvnSamplerGetBorderColor
+nvn	11	nvnSamplerGetMaxAnisotropy
+nvn	11	nvnSamplerGetReductionFilter
+nvn	7	nvnSyncInitialize
+nvn	7	nvnCommandBufferClearTexture
+nvn	5	nvnEventBuilderSetDefaults
+nvn	5	nvnEventBuilderSetStorage
+nvn	5	nvnEventInitialize
+nvn	5	nvnMemoryPoolFinalize
+nvn	4	nvnQueueBuilderSetDevice
+nvn	4	nvnQueueBuilderSetDefaults
+nvn	4	nvnQueueBuilderSetFlags
+nvn	4	nvnQueueBuilderSetCommandMemorySize
+nvn	4	nvnQueueBuilderSetComputeMemorySize
+nvn	4	nvnQueueBuilderSetControlMemorySize
+nvn	4	nvnQueueBuilderSetQueueMemory
+nvn	4	nvnQueueBuilderGetQueueMemorySize
+nvn	4	nvnQueueInitialize
+nvn	3	nvnTextureBuilderSetSize2D
+nvn	2	nvnTextureViewGetLevels
+nvn	2	nvnTextureViewGetLayers
+nvn	2	nvnTextureViewGetTarget
+nvn	1	nvnDeviceBuilderSetDefaults
+nvn	1	nvnDeviceBuilderSetFlags
+nvn	1	nvnDeviceInitialize
+nvn	1	nvnDeviceRegisterFastClearColor
+nvn	1	nvnDeviceSetDepthMode
+nvn	1	nvnDeviceSetWindowOriginMode
+nvn	1	nvnSamplerPoolInitialize
+nvn	1	nvnTexturePoolInitialize
+nvn	1	nvnWindowBuilderSetDevice
+nvn	1	nvnWindowBuilderSetDefaults
+nvn	1	nvnWindowBuilderSetNativeWindow
+nvn	1	nvnWindowBuilderSetTextures
+nvn	1	nvnWindowBuilderSetPresentInterval
+nvn	1	nvnWindowBuilderSetNumActiveTextures
+nvn	1	nvnWindowInitialize
+nvn	1	nvnWindowSetPresentInterval
+nvn	0	nvnBufferBuilderGetDevice
+nvn	0	nvnBufferBuilderGetMemoryPool
+nvn	0	nvnBufferBuilderGetMemoryOffset
+nvn	0	nvnBufferBuilderGetSize
+nvn	0	nvnBufferInvalidateMappedRange
+nvn	0	nvnBufferGetMemoryPool
+nvn	0	nvnBufferGetMemoryOffset
+nvn	0	nvnBufferGetSize
+nvn	0	nvnBufferGetDebugID
+nvn	0	nvnCommandBufferInsertCheckpointStatic
+nvn	0	nvnCommandBufferInsertCheckpointDynamic
+nvn	0	nvnDeviceSetAutomaticCheckpointsEnable
+nvn	0	nvnDeviceSetAutomaticCheckpointsMask
+nvn	0	nvnDeviceSetAutomaticCheckpointsSamplingInterval
+nvn	0	nvnDeviceSetAutomaticCheckpointsByDebugGroup
+nvn	0	nvnDeviceSetCheckpointCallStacksEnable
+nvn	0	nvnDeviceSetCheckpointMaxCallStacksDepth
+nvn	0	nvnCommandBufferGetMemoryCallback
+nvn	0	nvnCommandBufferGetMemoryCallbackData
+nvn	0	nvnCommandBufferSetControlMemoryCallbackEnabled
+nvn	0	nvnCommandBufferGetCommandMemorySize
+nvn	0	nvnCommandBufferGetCommandMemoryFree
+nvn	0	nvnCommandBufferGetControlMemorySize
+nvn	0	nvnCommandBufferGetControlMemoryFree
+nvn	0	nvnCommandBufferCopyCommands
+nvn	0	nvnCommandBufferFenceSync
+nvn	0	nvnCommandBufferWaitSync
+nvn	0	nvnCommandBufferSetProgramSubroutines
+nvn	0	nvnCommandBufferIsRecording
+nvn	0	nvnDeviceFinalizeCommandHandle
+nvn	0	nvnCommandBufferCopyBufferToTexture
+nvn	0	nvnCommandBufferCopyTextureToBuffer
+nvn	0	nvnCommandBufferCopyBufferToBuffer
+nvn	0	nvnCommandBufferDownsample
+nvn	0	nvnCommandBufferDownsampleTextureView
+nvn	0	nvnCommandBufferSetCopyRowStride
+nvn	0	nvnCommandBufferSetCopyImageStride
+nvn	0	nvnCommandBufferGetCopyRowStride
+nvn	0	nvnCommandBufferGetCopyImageStride
+nvn	0	nvnDeviceInstallDebugCallback
+nvn	0	nvnCommandBufferSetDebugLabel
+nvn	0	nvnDeviceSetDebugLabel
+nvn	0	nvnProgramSetDebugLabel
+nvn	0	nvnQueueSetDebugLabel
+nvn	0	nvnSyncSetDebugLabel
+nvn	0	nvnWindowSetDebugLabel
+nvn	0	nvnTexturePoolSetDebugLabel
+nvn	0	nvnSamplerPoolSetDebugLabel
+nvn	0	nvnDeviceBuilderGetFlags
+nvn	0	nvnDeviceFinalize
+nvn	0	nvnDeviceGenerateDebugDomainId
+nvn	0	nvnDeviceGetCurrentTimestampInNanoseconds
+nvn	0	nvnDeviceGetDepthMode
+nvn	0	nvnDeviceGetImageHandle
+nvn	0	nvnDeviceGetProcAddress
+nvn	0	nvnDeviceGetSeparateSamplerHandle
+nvn	0	nvnDeviceGetSeparateTextureHandle
+nvn	0	nvnDeviceGetTexelFetchHandle
+nvn	0	nvnDeviceGetWindowOriginMode
+nvn	0	nvnDeviceIsExternalDebuggerAttached
+nvn	0	nvnDeviceRegisterFastClearColori
+nvn	0	nvnDeviceRegisterFastClearColorui
+nvn	0	nvnDeviceRegisterFastClearDepth
+nvn	0	nvnDeviceSetIntermediateShaderCache
+nvn	0	nvnDeviceWalkDebugDatabase
+nvn	0	nvnEventBuilderGetStorage
+nvn	0	nvnEventBuilderGetMemoryPool
+nvn	0	nvnEventBuilderGetMemoryOffset
+nvn	0	nvnEventFinalize
+nvn	0	nvnEventGetValue
+nvn	0	nvnEventGetMemoryPool
+nvn	0	nvnEventGetMemoryOffset
+nvn	0	nvnEventSignal
+nvn	0	nvnCommandBufferWaitEvent
+nvn	0	nvnMemoryPoolBuilderGetDevice
+nvn	0	nvnMemoryPoolBuilderGetMemory
+nvn	0	nvnMemoryPoolBuilderGetSize
+nvn	0	nvnMemoryPoolBuilderGetFlags
+nvn	0	nvnMemoryPoolGetSize
+nvn	0	nvnProgramFinalize
+nvn	0	nvnProgramSetSubroutineLinkage
+nvn	0	nvnProgramSetSampleShading
+nvn	0	nvnProgramGetSubtileSize
+nvn	0	nvnQueueBuilderSetCommandFlushThreshold
+nvn	0	nvnQueueBuilderGetDevice
+nvn	0	nvnQueueBuilderGetFlags
+nvn	0	nvnQueueBuilderGetCommandMemorySize
+nvn	0	nvnQueueBuilderGetComputeMemorySize
+nvn	0	nvnQueueBuilderGetControlMemorySize
+nvn	0	nvnQueueBuilderGetCommandFlushThreshold
+nvn	0	nvnQueueBuilderGetMemorySize
+nvn	0	nvnQueueBuilderGetMemory
+nvn	0	nvnQueueBuilderSetQueuePriority
+nvn	0	nvnQueueBuilderGetQueuePriority
+nvn	0	nvnQueueFinalize
+nvn	0	nvnQueueFinish
+nvn	0	nvnQueueGetError
+nvn	0	nvnQueueGetTotalCommandMemoryUsed
+nvn	0	nvnQueueGetTotalControlMemoryUsed
+nvn	0	nvnQueueGetTotalComputeMemoryUsed
+nvn	0	nvnQueueResetMemoryUsageCounts
+nvn	0	nvnSamplerBuilderSetBorderColori
+nvn	0	nvnSamplerBuilderSetBorderColorui
+nvn	0	nvnSamplerBuilderSetLodSnap
+nvn	0	nvnSamplerBuilderGetDevice
+nvn	0	nvnSamplerBuilderGetMinMagFilter
+nvn	0	nvnSamplerBuilderGetWrapMode
+nvn	0	nvnSamplerBuilderGetLodClamp
+nvn	0	nvnSamplerBuilderGetLodBias
+nvn	0	nvnSamplerBuilderGetCompare
+nvn	0	nvnSamplerBuilderGetBorderColor
+nvn	0	nvnSamplerBuilderGetBorderColori
+nvn	0	nvnSamplerBuilderGetBorderColorui
+nvn	0	nvnSamplerBuilderGetMaxAnisotropy
+nvn	0	nvnSamplerBuilderGetReductionFilter
+nvn	0	nvnSamplerBuilderGetLodSnap
+nvn	0	nvnSamplerFinalize
+nvn	0	nvnSamplerGetBorderColori
+nvn	0	nvnSamplerGetBorderColorui
+nvn	0	nvnSamplerPoolFinalize
+nvn	0	nvnSamplerPoolRegisterSamplerBuilder
+nvn	0	nvnSamplerPoolGetMemoryPool
+nvn	0	nvnSamplerPoolGetMemoryOffset
+nvn	0	nvnSamplerPoolGetSize
+nvn	0	nvnSamplerCompare
+nvn	0	nvnSamplerGetDebugID
+nvn	0	nvnBlendStateSetAdvancedMode
+nvn	0	nvnBlendStateSetAdvancedOverlap
+nvn	0	nvnBlendStateSetAdvancedPremultipliedSrc
+nvn	0	nvnBlendStateSetAdvancedNormalizedDst
+nvn	0	nvnBlendStateGetBlendTarget
+nvn	0	nvnBlendStateGetBlendFunc
+nvn	0	nvnBlendStateGetBlendEquation
+nvn	0	nvnBlendStateGetAdvancedMode
+nvn	0	nvnBlendStateGetAdvancedOverlap
+nvn	0	nvnBlendStateGetAdvancedPremultipliedSrc
+nvn	0	nvnBlendStateGetAdvancedNormalizedDst
+nvn	0	nvnChannelMaskStateGetChannelMask
+nvn	0	nvnColorStateSetAlphaTest
+nvn	0	nvnColorStateGetBlendEnable
+nvn	0	nvnColorStateGetLogicOp
+nvn	0	nvnColorStateGetAlphaTest
+nvn	0	nvnVertexAttribStateGetFormat
+nvn	0	nvnVertexAttribStateGetStreamIndex
+nvn	0	nvnVertexStreamStateGetStride
+nvn	0	nvnVertexStreamStateGetDivisor
+nvn	0	nvnDepthStencilStateGetDepthTestEnable
+nvn	0	nvnDepthStencilStateGetDepthWriteEnable
+nvn	0	nvnDepthStencilStateGetDepthFunc
+nvn	0	nvnDepthStencilStateGetStencilTestEnable
+nvn	0	nvnDepthStencilStateGetStencilFunc
+nvn	0	nvnDepthStencilStateGetStencilOp
+nvn	0	nvnPolygonStateGetCullFace
+nvn	0	nvnPolygonStateGetFrontFace
+nvn	0	nvnPolygonStateGetPolygonMode
+nvn	0	nvnPolygonStateGetPolygonOffsetEnables
+nvn	0	nvnMultisampleStateSetAlphaToCoverageDither
+nvn	0	nvnMultisampleStateGetMultisampleEnable
+nvn	0	nvnMultisampleStateGetSamples
+nvn	0	nvnMultisampleStateGetAlphaToCoverageEnable
+nvn	0	nvnMultisampleStateGetAlphaToCoverageDither
+nvn	0	nvnMultisampleStateSetRasterSamples
+nvn	0	nvnMultisampleStateGetRasterSamples
+nvn	0	nvnMultisampleStateSetCoverageModulationMode
+nvn	0	nvnMultisampleStateGetCoverageModulationMode
+nvn	0	nvnMultisampleStateSetCoverageToColorEnable
+nvn	0	nvnMultisampleStateGetCoverageToColorEnable
+nvn	0	nvnMultisampleStateSetCoverageToColorOutput
+nvn	0	nvnMultisampleStateGetCoverageToColorOutput
+nvn	0	nvnMultisampleStateSetSampleLocationsEnable
+nvn	0	nvnMultisampleStateGetSampleLocationsEnable
+nvn	0	nvnMultisampleStateGetSampleLocationsGrid
+nvn	0	nvnMultisampleStateSetSampleLocationsGridEnable
+nvn	0	nvnMultisampleStateGetSampleLocationsGridEnable
+nvn	0	nvnMultisampleStateSetSampleLocations
+nvn	0	nvnSyncFinalize
+nvn	0	nvnQueueWaitSync
+nvn	0	nvnSyncInitializeFromFencedGLSync
+nvn	0	nvnSyncCreateGLSync
+nvn	0	nvnTextureBuilderSetSize1D
+nvn	0	nvnTextureBuilderSetSize3D
+nvn	0	nvnTextureBuilderSetGLTextureName
+nvn	0	nvnTextureBuilderGetDevice
+nvn	0	nvnTextureBuilderGetFlags
+nvn	0	nvnTextureBuilderGetTarget
+nvn	0	nvnTextureBuilderGetWidth
+nvn	0	nvnTextureBuilderGetHeight
+nvn	0	nvnTextureBuilderGetDepth
+nvn	0	nvnTextureBuilderGetLevels
+nvn	0	nvnTextureBuilderGetFormat
+nvn	0	nvnTextureBuilderGetSamples
+nvn	0	nvnTextureBuilderGetSwizzle
+nvn	0	nvnTextureBuilderGetDepthStencilMode
+nvn	0	nvnTextureBuilderGetPackagedTextureData
+nvn	0	nvnTextureBuilderGetPackagedTextureLayout
+nvn	0	nvnTextureBuilderGetStride
+nvn	0	nvnTextureBuilderGetMemoryPool
+nvn	0	nvnTextureBuilderGetMemoryOffset
+nvn	0	nvnTextureBuilderGetViewOffset
+nvn	0	nvnTextureBuilderGetGLTextureName
+nvn	0	nvnTextureBuilderGetRawStorageClass
+nvn	0	nvnTextureViewGetFormat
+nvn	0	nvnTextureViewGetSwizzle
+nvn	0	nvnTextureViewGetDepthStencilMode
+nvn	0	nvnTextureViewCompare
+nvn	0	nvnTextureGetZCullStorageSize
+nvn	0	nvnTextureGetStorageClass
+nvn	0	nvnTextureGetViewOffset
+nvn	0	nvnTextureGetDepthStencilMode
+nvn	0	nvnTextureGetTextureAddress
+nvn	0	nvnTexturePoolFinalize
+nvn	0	nvnTexturePoolRegisterImage
+nvn	0	nvnTexturePoolGetMemoryPool
+nvn	0	nvnTexturePoolGetMemoryOffset
+nvn	0	nvnTexturePoolGetSize
+nvn	0	nvnTextureBuilderGetSparseTileLayout
+nvn	0	nvnTextureGetSparseTileLayout
+nvn	0	nvnTextureWriteTexelsStrided
+nvn	0	nvnTextureReadTexelsStrided
+nvn	0	nvnTextureReadTexels
+nvn	0	nvnTextureInvalidateTexels
+nvn	0	nvnTextureGetMemoryPool
+nvn	0	nvnTextureGetMemoryOffset
+nvn	0	nvnTextureGetStorageSize
+nvn	0	nvnTextureCompare
+nvn	0	nvnTextureGetDebugID
+nvn	0	nvnTextureGetRawStorageClass
+nvn	0	nvnWindowBuilderGetDevice
+nvn	0	nvnWindowBuilderGetNumTextures
+nvn	0	nvnWindowBuilderGetTexture
+nvn	0	nvnWindowBuilderGetPresentInterval
+nvn	0	nvnWindowBuilderGetNumActiveTextures
+nvn	0	nvnWindowBuilderGetNativeWindow
+nvn	0	nvnWindowSetNumActiveTextures
+nvn	0	nvnWindowFinalize
+nvn	0	nvnWindowGetNativeWindow
+nvn	0	nvnWindowGetPresentInterval
+nvn	0	nvnWindowGetCrop
+nvn	0	nvnWindowGetNumTextures
+nvn	0	nvnWindowGetNumActiveTextures
+nvn	0	nvnCommandBufferBindVertexBuffers
+nvn	0	nvnCommandBufferBindUniformBuffers
+nvn	0	nvnCommandBufferBindUniformBuffersDeferred
+nvn	0	nvnCommandBufferBindStorageBuffers
+nvn	0	nvnCommandBufferBindStorageBuffersDeferred
+nvn	0	nvnCommandBufferBindSeparateTexture
+nvn	0	nvnCommandBufferBindSeparateTextures
+nvn	0	nvnCommandBufferBindSeparateTexturesDeferred
+nvn	0	nvnCommandBufferBindSeparateSampler
+nvn	0	nvnCommandBufferBindSeparateSamplers
+nvn	0	nvnCommandBufferBindSeparateSamplersDeferred
+nvn	0	nvnCommandBufferBindTextures
+nvn	0	nvnCommandBufferBindTexturesDeferred
+nvn	0	nvnCommandBufferBindImage
+nvn	0	nvnCommandBufferBindImages
+nvn	0	nvnCommandBufferBindImagesDeferred
+nvn	0	nvnCommandBufferDrawArrays
+nvn	0	nvnCommandBufferDrawElements
+nvn	0	nvnCommandBufferDrawArraysIndirect
+nvn	0	nvnCommandBufferDrawElementsIndirect
+nvn	0	nvnCommandBufferMultiDrawArraysIndirectCount
+nvn	0	nvnCommandBufferMultiDrawElementsIndirectCount
+nvn	0	nvnCommandBufferSetPrimitiveRestart
+nvn	0	nvnCommandBufferSetAlphaRef
+nvn	0	nvnCommandBufferSetSampleMask
+nvn	0	nvnCommandBufferClearColori
+nvn	0	nvnCommandBufferClearColorui
+nvn	0	nvnCommandBufferSetDepthRanges
+nvn	0	nvnCommandBufferSetViewportSwizzles
+nvn	0	nvnCommandBufferSetPatchSize
+nvn	0	nvnCommandBufferSetInnerTessellationLevels
+nvn	0	nvnCommandBufferSetOuterTessellationLevels
+nvn	0	nvnCommandBufferBindTransformFeedbackBuffer
+nvn	0	nvnCommandBufferBindTransformFeedbackBuffers
+nvn	0	nvnCommandBufferBeginTransformFeedback
+nvn	0	nvnCommandBufferEndTransformFeedback
+nvn	0	nvnCommandBufferPauseTransformFeedback
+nvn	0	nvnCommandBufferResumeTransformFeedback
+nvn	0	nvnCommandBufferDrawTransformFeedback
+nvn	0	nvnCommandBufferSetTiledCacheAction
+nvn	0	nvnCommandBufferSetTiledCacheTileSize
+nvn	0	nvnCommandBufferSetConservativeRasterEnable
+nvn	0	nvnCommandBufferSetConservativeRasterDilate
+nvn	0	nvnCommandBufferSetSubpixelPrecisionBias
+nvn	0	nvnCommandBufferSaveZCullData
+nvn	0	nvnCommandBufferRestoreZCullData
+nvn	0	nvnCommandBufferDrawTexture
+nvn	0	nvnCommandBufferBindCoverageModulationTable
+nvn	0	nvnCommandBufferResolveDepthBuffer
+nvn	0	nvnCommandBufferClearBuffer
+nvn	0	nvnCommandBufferPopDebugGroup
+nvn	0	nvnCommandBufferPopDebugGroupId
+nvn	0	nvnCommandBufferPushDebugGroup
+nvn	0	nvnCommandBufferPushDebugGroupStatic
+nvn	0	nvnCommandBufferInsertDebugMarker
+nvn	0	nvnCommandBufferInsertDebugMarkerStatic
+nvn	0	nvnCommandBufferPushDebugGroupDynamic
+nvn	0	nvnCommandBufferInsertDebugMarkerDynamic
+nvn	0	nvnCommandBufferSetColorReductionEnable
+nvn	0	nvnCommandBufferSetColorReductionThresholds
+nvn	0	nvnCommandBufferSetStencilCullCriteria
+nvn	0	nvnCommandBufferOverrideSubtileSize
+nvn	0	nvnCommandBufferSetZCullZF32CompressionEnable
+nvn	0	nvnCommandBufferSetProvokingVertexMode
+nvn	0	nvnCommandBufferDispatchCompute
+nvn	0	nvnCommandBufferDispatchComputeIndirect
+nvn	0	nvnCommandBufferDiscardColor
+nvn	0	nvnCommandBufferDiscardDepthStencil
+nvn	0	nvnCommandBufferReportValue
+nvn	0	nvnCommandBufferResetCounter
+nvn	0	nvnCommandBufferTiledDownsample
+nvn	0	nvnCommandBufferTiledDownsampleTextureView
+nvn	0	nvnCommandBufferClearTexturei
+nvn	0	nvnCommandBufferClearTextureui
