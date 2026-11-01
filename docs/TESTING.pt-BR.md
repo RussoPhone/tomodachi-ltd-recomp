@@ -55,6 +55,7 @@ Por favor, **não** publique chaves, firmware, o `.nsp` nem qualquer cópia do j
 
 ## Limitações conhecidas
 
+- **O suporte ao mouse é experimental e esquisito** em alguns menus (o criador de Mii em especial); funciona melhor na ilha. Teclado e controle funcionam em tudo. Veja [CONTROLS.pt-BR.md](CONTROLS.pt-BR.md).
 - Limite de 30 FPS; quedas enquanto cenas carregam.
 - A primeira abertura do facepaint é lenta (~40 s).
 - As opções de tela cheia, tamanho da janela e idioma (e o launcher) são novas: só foram testadas na máquina do mantenedor (texto em japonês e inglês e um tamanho de janela personalizado foram conferidos); não existe um menu de configurações dentro do jogo.

@@ -6,6 +6,8 @@
 
 #include <algorithm>
 #include <cstdio>
+#include <algorithm>
+#include <atomic>
 #include <cstdlib>
 #include <cstring>
 
@@ -267,22 +269,57 @@ void VulkanContext::Destroy(Buffer& b) {
     b = {};
 }
 
+namespace {
+std::atomic<u64> g_image_bytes{0};  // device memory held by images made through CreateImage (diagnostic for allocation failures)
+std::atomic<u64> g_image_count{0};
+} // namespace
+
 Image VulkanContext::CreateImage(const VkImageCreateInfo& info) {
     Image i;
-    if (vkCreateImage(device, &info, nullptr, &i.image) != VK_SUCCESS) return {};
+    if (const VkResult r = vkCreateImage(device, &info, nullptr, &i.image); r != VK_SUCCESS) {
+        LOG_ERROR("vulkan: vkCreateImage failed (%d): format=%d %ux%u layers=%u mips=%u usage=0x%x flags=0x%x; %llu images, %llu MiB held",
+                  static_cast<int>(r), static_cast<int>(info.format), info.extent.width, info.extent.height, info.arrayLayers,
+                  info.mipLevels, info.usage, info.flags, static_cast<unsigned long long>(g_image_count.load()),
+                  static_cast<unsigned long long>(g_image_bytes.load() >> 20));
+        return {};
+    }
     VkMemoryRequirements req;
     vkGetImageMemoryRequirements(device, i.image, &req);
     i.allocation_size = req.size;
     const VkMemoryAllocateInfo mai{VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO, nullptr, req.size,
                                    FindMemoryType(req.memoryTypeBits, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT)};
-    vkAllocateMemory(device, &mai, nullptr, &i.memory);
-    vkBindImageMemory(device, i.image, i.memory, 0);
+    // Binding an image to a null memory object crashes the NVIDIA driver, so an allocation that fails (device memory exhausted)
+    // has to stop here instead of being ignored.
+    if (const VkResult r = vkAllocateMemory(device, &mai, nullptr, &i.memory); r != VK_SUCCESS) {
+        LOG_ERROR("vulkan: image memory allocation failed (%d): %llu KiB for format=%d %ux%u layers=%u; %llu images, %llu MiB held",
+                  static_cast<int>(r), static_cast<unsigned long long>(req.size >> 10), static_cast<int>(info.format),
+                  info.extent.width, info.extent.height, info.arrayLayers,
+                  static_cast<unsigned long long>(g_image_count.load()), static_cast<unsigned long long>(g_image_bytes.load() >> 20));
+        vkDestroyImage(device, i.image, nullptr);
+        return {};
+    }
+    if (const VkResult r = vkBindImageMemory(device, i.image, i.memory, 0); r != VK_SUCCESS) {
+        LOG_ERROR("vulkan: vkBindImageMemory failed (%d)", static_cast<int>(r));
+        vkFreeMemory(device, i.memory, nullptr);
+        vkDestroyImage(device, i.image, nullptr);
+        return {};
+    }
+    const u64 before = g_image_bytes.fetch_add(req.size);
+    ++g_image_count;
+    if ((before >> 28) != ((before + req.size) >> 28)) {  // every 256 MiB of growth: a timeline of device memory held by images
+        LOG_INFO("vulkan: images hold %llu MiB (%llu images)", static_cast<unsigned long long>((before + req.size) >> 20),
+                 static_cast<unsigned long long>(g_image_count.load()));
+    }
     return i;
 }
 
 void VulkanContext::Destroy(Image& i) {
     if (i.image) vkDestroyImage(device, i.image, nullptr);
-    if (i.memory) vkFreeMemory(device, i.memory, nullptr);
+    if (i.memory) {
+        vkFreeMemory(device, i.memory, nullptr);
+        g_image_bytes -= std::min<u64>(g_image_bytes.load(), i.allocation_size);
+        if (g_image_count.load()) --g_image_count;
+    }
     i = {};
 }
 

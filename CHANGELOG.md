@@ -1,5 +1,13 @@
 # Changelog
 
+## Alpha 1.7.2 — 2026-11-01
+- **Experimental mouse support** (awkward in some menus; it will be improved over time): edge scrolling and middle-button drag to move the island
+  camera, the wheel zooms, right click is B, **F8** captures the mouse as an analog stick (hand follows it where the game shows its hand;
+  F6/F7 sensitivity, acceleration). See [docs/CONTROLS.md](docs/CONTROLS.md). The Mii creator does not respond well to the mouse yet.
+- **Fixed:** a crash right after finishing a Mii: image creation ignored a failed device-memory allocation, which crashed the NVIDIA driver. Every
+  Vulkan step is checked now, a failure skips the texture instead of crashing, and the log says how much memory images hold.
+- The installer inserts a call at the game's hand-pointer update (`scripts/slim-export.py`) so the mouse can steer the hand.
+
 ## Alpha 1.7.1 — 2026-11-01
 - **Fixed:** the game no longer says "Your system time has changed since the last time you played" every time it starts. The game saves the
   system clock context of the last session and compares it at start-up; nxrt rebuilt that context from the run's uptime on every launch, so

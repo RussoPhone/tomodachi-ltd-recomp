@@ -116,7 +116,7 @@ def main():
     settings = load_settings()
     root = tk.Tk()
     root.title('Tomodachi Life (unofficial native port, alpha)')
-    root.geometry('660x600')
+    root.geometry('760x620')
     root.minsize(560, 480)
     frame = ttk.Frame(root, padding=16)
     frame.pack(fill='both', expand=True)
@@ -209,6 +209,19 @@ def main():
             return
         log_var.set('Save restored.' + (f' Previous save kept in {safety.relative_to(ROOT)}.' if safety else ''))
 
+    def on_controls():
+        messagebox.showinfo('Controls', (
+            'KEYBOARD\n'
+            '  Left stick: I K J L      Right stick: Q / E      D-pad: arrow keys\n'
+            '  A: X   B: Z   X: S   Y: A   L: W   R: R   ZL: 1   ZR: 3\n'
+            '  +: Enter   -: Backspace   HOME (close the game): Home   Fullscreen: F11\n\n'
+            'MOUSE (experimental, awkward in some menus)\n'
+            '  Island: push the mouse to a window edge, or middle-button drag, to move the camera; wheel = zoom\n'
+            '  Left click: touch screen / A   Right click: B   F8: capture the mouse as an analog stick (F6/F7 = sensitivity)\n\n'
+            'CONTROLLER (Nintendo layout)\n'
+            '  Right face button = A, bottom = B, top = X, left = Y   Guide = close the game\n\n'
+            'Full table: docs/CONTROLS.md'))
+
     def on_check():
         result = subprocess.run([sys.executable, str(ROOT / 'scripts/doctor.py')], cwd=ROOT, capture_output=True, text=True)
         messagebox.showinfo('Check my computer', (result.stdout or result.stderr).strip() or 'No output.')
@@ -224,11 +237,12 @@ def main():
     ttk.Button(saves, text='Back up now', command=on_backup).pack(side='left')
     ttk.Button(saves, text='Restore…', command=on_restore).pack(side='left', padx=6)
     ttk.Button(saves, text='Open save folder', command=lambda: open_folder(SAVE_DIR)).pack(side='left')
-    ttk.Button(help_box, text='Check my computer', command=on_check).pack(side='left')
-    ttk.Button(help_box, text='Create bug report', command=on_report).pack(side='left', padx=6)
-    ttk.Button(help_box, text='Open logs', command=lambda: open_folder(LOGS)).pack(side='left')
-    ttk.Button(help_box, text='Testing guide', command=lambda: webbrowser.open(TESTING_URL)).pack(side='left', padx=6)
-    ttk.Button(help_box, text='Report a problem', command=lambda: webbrowser.open(ISSUES_URL)).pack(side='left')
+    ttk.Button(help_box, text='Controls', command=on_controls).pack(side='left')
+    ttk.Button(help_box, text='Check my computer', command=on_check).pack(side='left', padx=6)
+    ttk.Button(help_box, text='Create bug report', command=on_report).pack(side='left')
+    ttk.Button(help_box, text='Open logs', command=lambda: open_folder(LOGS)).pack(side='left', padx=6)
+    ttk.Button(help_box, text='Testing guide', command=lambda: webbrowser.open(TESTING_URL)).pack(side='left')
+    ttk.Button(help_box, text='Report a problem', command=lambda: webbrowser.open(ISSUES_URL)).pack(side='left', padx=6)
 
     refresh_status()
     if '--smoke' in sys.argv:  # used by the tests: build the window, then close it

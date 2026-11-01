@@ -19,6 +19,18 @@ BLOCK = b"""void blk_main_0000000001cdfd14(GuestContext* c){
 """
 
 
+HOOKED_BLOCK = b"""void blk_main_000000000022dce0(GuestContext* c){
+    { uint64_t _entry=c->pc-g_module_base; if(_entry!=0x22dce0ULL){ if(_entry<0x22dce0ULL){ recomp_unhandled(c,0U,c->pc); return; } switch((unsigned)((_entry-0x22dce0ULL)>>2)){
+      case 1U: goto _recomp_entry_1;
+      default: recomp_unhandled(c,0U,c->pc); return;
+    } } }
+    c->x[8]=1;
+_recomp_entry_1: ;
+    c->pc=c->x[30]; return;
+}
+"""
+
+
 class SlimExportTests(unittest.TestCase):
     def test_removes_arrays_and_guards_and_keeps_code(self):
         new, n, g = slim.slim_text(BLOCK * 3)
@@ -30,6 +42,15 @@ class SlimExportTests(unittest.TestCase):
     def test_refuses_mismatched_counts(self):
         with self.assertRaises(ValueError):
             slim.slim_text(BLOCK + b'    RECOMP_GG_GUARD(_expected,9U);\n')
+
+    def test_hook_goes_after_the_dispatcher_and_only_once(self):
+        once = slim.apply_hooks(HOOKED_BLOCK)
+        self.assertEqual(once.count(b'nxrt_hook_pointer(c);'), 1)
+        self.assertTrue(once.index(b'    } } }') < once.index(b'nxrt_hook_pointer(c);') < once.index(b'c->x[8]=1;'))
+        self.assertTrue(once.startswith(b'void nxrt_hook_pointer(GuestContext* c);'))
+        self.assertEqual(slim.apply_hooks(once), once)
+        other = BLOCK
+        self.assertEqual(slim.apply_hooks(other), other)
 
     def test_folder_is_idempotent(self):
         folder = Path(tempfile.mkdtemp())

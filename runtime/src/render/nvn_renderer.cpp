@@ -4990,6 +4990,11 @@ HostImage* NvnRenderer::SampledImage(u32 texture_id, u32 sample_handle, bool tra
                                     static_cast<VkImageUsageFlags>(gpu_astc ? VK_IMAGE_USAGE_STORAGE_BIT : 0),
                                 VK_SHARING_MODE_EXCLUSIVE, 0, nullptr, VK_IMAGE_LAYOUT_UNDEFINED};
     img.image = vk_.CreateImage(ici);
+    if (!img.image.image) {
+        sampled_.erase(key);  // not remembered as failed: device memory may free up
+        texture_error_ = "image-create";
+        return nullptr;
+    }
     img.layers = layers;
     img.aspect = tf.depth ? VK_IMAGE_ASPECT_DEPTH_BIT : VK_IMAGE_ASPECT_COLOR_BIT;
     const VkImageViewUsageCreateInfo sampled_usage{VK_STRUCTURE_TYPE_IMAGE_VIEW_USAGE_CREATE_INFO, nullptr,

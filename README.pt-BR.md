@@ -131,6 +131,7 @@ Abra **Tomodachi Life** no menu de aplicativos, ou rode:
 | Idioma do jogo | `./play.sh --nogui --language en-GB` (códigos: `ja`, `en-US`, `en-GB`, `fr`, `fr-CA`, `de`, `it`, `es`, `es-419`, `pt-BR`, `nl`, `ru`, `ko`, `zh-Hans`, `zh-Hant`; padrão `en-US`) |
 | Verificar o computador | `./play.sh --nogui --diagnose` (GPU, Vulkan, memória, ferramentas que faltam) |
 | A imagem está errada | `./play.sh --nogui --safe` (caminho gráfico conservador; conte se resolveu) |
+| Controles (teclado, mouse, controle) | [docs/CONTROLS.pt-BR.md](docs/CONTROLS.pt-BR.md); o mouse é a tela de toque e a roda dá zoom na ilha |
 | Fechar o jogo | a tecla **Home** (ou o botão Guide do controle) fecha, como o HOME do console |
 | Investigar problemas | cada execução grava `local/logs/play-nxrt-*.log`; anexe aos relatórios de bug |
 

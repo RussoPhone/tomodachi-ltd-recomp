@@ -55,6 +55,7 @@ Please do **not** post keys, firmware, the `.nsp` or any copy of the game.
 
 ## Known limitations
 
+- **Mouse support is experimental and awkward** in some menus (the Mii creator especially); it works best on the island. Keyboard and controller work everywhere. See [CONTROLS.md](CONTROLS.md).
 - 30 FPS cap; dips while scenes load.
 - First face-paint opening is slow (~40 s).
 - Fullscreen, window size and language options (and the launcher) are new: tried only on the maintainer's machine (Japanese and English text and a custom window size were checked); there is no in-game settings menu yet.
