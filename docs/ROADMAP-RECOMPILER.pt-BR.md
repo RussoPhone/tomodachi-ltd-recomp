@@ -56,11 +56,19 @@ e o atual responde pelo resto.
 - O contrato atual tem pontos finos (geração de guardas, o formato da memória rápida) que precisam ser reproduzidos exatamente no começo.
 - A velocidade do código recém-gerado dentro do jogo é desconhecida até ser medida.
 
-## Coisas baratas para tentar primeiro (ainda não feitas)
+## O que foi tentado e o que vem a seguir
 
-- `export-aot.py --backend static` em vez de `hybrid`. O backend híbrido é o que inclui as guardas de JIT; se o runtime aceita a saída
-  estática e quanto ela diminui são **hipóteses não testadas**.
-- Unidades ainda menores (`unit_insns` abaixo de 6000): em teste.
+- **`--backend static`** em vez de `hybrid`: **testado, sem ganho.** A saída tem o mesmo tamanho (4.543 MB) e o mesmo formato; os dois
+  continuam com as guardas de JIT.
+- **Unidades de compilação menores** (`unit_insns`): de 15000 para 6000 o passo de compilação caiu de 99 para 78 min e o pico de RAM por
+  compilação de 3,5 para 1,6 GB (agora é o padrão); 3000 ganhou só 3 a 5% a mais, então não foi adotado.
+- **Para onde vai o C gerado** (medido numa unidade de 1,8 MB com 1.777 blocos): cerca de 39% é o seletor de entrada de cada bloco, 11% é a
+  lista `_expected[]` de palavras da instrução, 5% são rótulos de entrada e 4% chamadas de guarda, então **~58% é andaime** para entrar num
+  bloco em qualquer instrução (necessário para a passagem para um JIT, que o `nxrt` não usa). A aritmética traduzida é ~31%, os saltos ~8% e
+  os acessos à memória ~3%.
+- **A seguir, mais barato que um recompilador novo:** modificar o exportador (já o modificamos) para gerar um andaime mais enxuto, ou
+  remover esse andaime do C gerado, e medir o tempo de compilação. Um corte plausível do C é de 40 a 50%; o efeito no tempo de compilação
+  **ainda não foi medido**.
 
 ## Créditos e licenças
 

@@ -56,11 +56,17 @@ current one answers for the rest.
 - The current contract has fine points (guard generation, the fast-memory layout) that must be reproduced exactly at first.
 - The speed of newly generated code inside the game is unknown until measured.
 
-## Cheap things to try first (not done yet)
+## What was tried, and what is next
 
-- `export-aot.py --backend static` instead of `hybrid`. The hybrid backend is the one that includes the JIT guards; whether the runtime accepts
-  the static output, and how much smaller it is, are **untested hypotheses**.
-- Even smaller units (`unit_insns` below 6000): being tested.
+- **`--backend static`** instead of `hybrid`: **tested, no gain.** The output is identical in size (4,543 MB) and shape; both still carry the
+  JIT guards.
+- **Smaller compilation units** (`unit_insns`): 15000 → 6000 cut the compile step from 99 to 78 min and the peak RAM per compile from 3.5 to
+  1.6 GB (now the default); 3000 gained only 3-5% more, so it was not adopted.
+- **Where the generated C goes** (measured on one 1.8 MB unit with 1,777 blocks): about 39% is the entry dispatcher of each block, 11% is the
+  `_expected[]` array of instruction words, 5% entry labels and 4% guard calls, so **~58% is scaffolding** for entering a block at any
+  instruction (needed by a JIT hand-off, which `nxrt` does not use). The translated arithmetic is ~31%, jumps ~8% and memory accesses ~3%.
+- **Next, cheaper than a new recompiler:** patch the exporter (we already patch it) to emit a leaner scaffold, or strip it from the generated
+  C, and measure the compile time. A plausible cut of the C is 40-50%; the effect on compile time is **not measured yet**.
 
 ## Credit and licensing
 
