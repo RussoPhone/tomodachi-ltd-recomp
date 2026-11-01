@@ -98,7 +98,7 @@ cd tomodachi-ltd-recomp
 2. Another window asks for **the folder that contains your `prod.keys`**. Pick it and click OK.
 3. The installer does the rest by itself and shows its progress in **11 steps**: it prepares the extraction tools, translates your game's code to C, compiles it, extracts the game data and builds the native runtime (**nxrt**).
 
-⏱️ **Plan for about 2 hours** (measured on a 16-thread laptop with 16 GB of RAM; most of it is compiling the game code, about 100 minutes) and **~27 GB of disk**. Slower machines will take longer. The PC will be busy meanwhile.
+⏱️ **Plan for about 1.5 to 2 hours** (measured on a 16-thread laptop with 16 GB of RAM; most of it is compiling the game code, about 80 minutes) and **~27 GB of disk**. Slower machines will take longer. The PC will be busy meanwhile.
 
 💡 **Need to stop?** Close the Terminal or press `Ctrl+C`. Next time you run `./install.sh` it **picks up where it left off**.
 

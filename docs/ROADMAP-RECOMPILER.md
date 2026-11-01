@@ -15,7 +15,7 @@ That is the slowest and heaviest part of the installation, measured on a clean i
 | Generated C | ~4.5 GB in ~800 compilation units |
 | Compiling it | 99 min wall time, ~780 min of CPU in total |
 | Where the time goes | the 30 largest units are 55% of the CPU time; one 45 MB unit takes ~6 min alone and ~3.6 GB of RAM |
-| Install, end to end | about 2 h 10 min and ~27 GB of disk |
+| Install, end to end | about 2 h 10 min and ~27 GB of disk with the first setting (15000 instructions per unit). Splitting into smaller units (6000) cut the compile step to 78 min and the peak RAM per compile from 3.5 GB to 1.6 GB, with the same total C, and is now the default |
 
 Part of that size comes from the way the code is generated: every block carries a guard that re-checks the instruction words (to be able to
 fall back to a JIT) and an entry dispatcher. The runtime (`nxrt`) has no JIT, so a recompiler of our own does not need either, and could
@@ -60,7 +60,7 @@ current one answers for the rest.
 
 - `export-aot.py --backend static` instead of `hybrid`. The hybrid backend is the one that includes the JIT guards; whether the runtime accepts
   the static output, and how much smaller it is, are **untested hypotheses**.
-- Smaller compilation units (`unit_insns`): a first experiment is running; no result yet.
+- Even smaller units (`unit_insns` below 6000): being tested.
 
 ## Credit and licensing
 

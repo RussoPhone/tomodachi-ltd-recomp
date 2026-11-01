@@ -27,9 +27,9 @@
   },
   "aot": {
     "backend": "hybrid",
-    "unit_insns": 15000,
+    "unit_insns": 6000,
     "jobs": 2,
     "compiler": "clang",
-    "note": "unit_insns needs patch 0002; 15000 keeps the heaviest generated units near 3.3 GB of compiler RAM so several compile at once"
+    "note": "unit_insns needs patch 0002. Measured on a clean install (16 threads, 16 GB): 15000 -> 663 files, biggest 45 MB, 99 min of compiling, 3.5 GB peak RAM per compile; 6000 -> 1653 files, biggest 20 MB, 78 min, 1.6 GB peak. Same total C; the game ran the same on the island replay within noise."
   }
 }

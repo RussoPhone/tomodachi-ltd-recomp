@@ -15,7 +15,7 @@ jogo em C. Essa é a parte mais lenta e pesada da instalação, medida numa inst
 | C gerado | ~4,5 GB em ~800 unidades de compilação |
 | Compilar | 99 min de relógio, ~780 min de CPU no total |
 | Onde vai o tempo | as 30 maiores unidades são 55% do tempo de CPU; uma unidade de 45 MB leva ~6 min sozinha e ~3,6 GB de RAM |
-| Instalação completa | cerca de 2 h 10 min e ~27 GB de disco |
+| Instalação completa | cerca de 2 h 10 min e ~27 GB de disco com a primeira configuração (15000 instruções por unidade). Dividir em unidades menores (6000) reduziu o passo de compilação para 78 min e o pico de RAM por compilação de 3,5 GB para 1,6 GB, com o mesmo total de C, e agora é o padrão |
 
 Parte desse tamanho vem do jeito de gerar o código: cada bloco leva uma guarda que confere de novo as palavras da instrução (para poder cair
 num JIT) e um seletor de entrada. O runtime (`nxrt`) não tem JIT, então um recompilador nosso não precisa de nenhum dos dois e pode gerar bem
@@ -60,7 +60,7 @@ e o atual responde pelo resto.
 
 - `export-aot.py --backend static` em vez de `hybrid`. O backend híbrido é o que inclui as guardas de JIT; se o runtime aceita a saída
   estática e quanto ela diminui são **hipóteses não testadas**.
-- Unidades de compilação menores (`unit_insns`): um primeiro experimento está rodando; ainda sem resultado.
+- Unidades ainda menores (`unit_insns` abaixo de 6000): em teste.
 
 ## Créditos e licenças
 
