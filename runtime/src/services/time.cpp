@@ -81,10 +81,22 @@ constexpr ClockSourceId kClockId{0x6e78727453746561ULL, 0x6479436c6f636b31ULL};
 // Our rule buffers start with this tag; the rest of the 0x4000 bytes is unused.
 constexpr u32 kRuleTag = 0x5A54584E; // "NXTZ"
 
-// Seconds since boot on the guest's steady clock (the 19.2 MHz counter).
-s64 SteadyNs() {
+// Nanoseconds since this run started, from the guest's 19.2 MHz counter.
+s64 UptimeNs() {
     const u64 ticks = ReadCntpct();
     return static_cast<s64>((ticks / 192) * 10000 + (ticks % 192) * 10000 / 192);
+}
+
+// The user clock context the game compares at start-up: a console keeps it until the user changes the clock, and its steady clock keeps
+// counting across power-offs. Rebuilding both from this run's uptime made every launch look like "your system time has changed since
+// the last time you played". So the context offset is a constant (the value the existing saves already hold) and the steady clock is
+// the wall clock minus that offset, which is stable from one run to the next.
+constexpr s64 kUserClockOffset = 1793199229;
+s64 g_steady_base_ns = 0; // set once by TimeState; steady ns = this + uptime
+
+// Nanoseconds on the guest's steady clock.
+s64 SteadyNs() {
+    return g_steady_base_ns + UptimeNs();
 }
 s64 SteadySeconds() {
     return SteadyNs() / 1'000'000'000;
@@ -187,15 +199,21 @@ struct TimeState {
 
     TimeState() {
         location = HostLocation();
-        user_context.offset = static_cast<s64>(::time(nullptr)) - SteadySeconds();
-        user_context.steady = {SteadySeconds(), kClockId};
+        const s64 wall = static_cast<s64>(::time(nullptr));
+        // A host clock set before the constant (not expected) falls back to the old per-run offset.
+        const s64 offset = wall >= kUserClockOffset ? kUserClockOffset : wall - UptimeNs() / 1'000'000'000;
+        g_steady_base_ns = (wall - offset) * 1'000'000'000 - UptimeNs();
+        user_context.offset = offset;
+        user_context.steady = {0, kClockId};
+        LOG_INFO("time: user clock offset=%lld steady=%lld s (location %s)", static_cast<long long>(offset),
+                 static_cast<long long>(wall - offset), location.c_str());
 
         shm = std::make_shared<KSharedMemory>("time", 0x1000);
         u8* p = shm->HostPointer();
         std::memset(p, 0, 0x1000);
         // Steady clock: guest steady time (ns) = uptime + this base.
         auto* steady = reinterpret_cast<LockFree<SteadyClockTimePoint>*>(p + 0x00);
-        steady->value[0] = {0, kClockId};
+        steady->value[0] = {g_steady_base_ns, kClockId};
         auto* local = reinterpret_cast<LockFree<SystemClockContext>*>(p + 0x38);
         local->value[0] = user_context;
         auto* network = reinterpret_cast<LockFree<SystemClockContext>*>(p + 0x80);

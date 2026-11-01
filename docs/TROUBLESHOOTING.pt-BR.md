@@ -28,6 +28,7 @@ report** no launcher) é o que nos permite ajudar.
 | FPS muito baixo | Em notebook com duas GPUs, garanta que a dedicada está em uso (`DRI_PRIME=1 ./play.sh` em AMD/Intel, `prime-run ./play.sh` em NVIDIA). Um dispositivo Vulkan de software (llvmpipe) é lento demais. |
 | Texturas estranhas, faltando ou com cores erradas | Experimente o **Safe mode** (`./play.sh --nogui --safe`). Se resolver, diga isso no relato. |
 | Trava ao iniciar | Envie o `local/logs/play-nxrt-*.log` (as primeiras linhas dizem qual GPU e driver foram usados). |
+| "Your system time has changed since the last time you played" ao abrir | Corrigido na Alpha 1.7.1 (o relógio do jogo agora é estável entre execuções). Um save jogado por última vez numa versão antiga pode mostrar o aviso uma vez; aperte OK e ele não volta. |
 | O editor de facepaint leva ~40 s na primeira vez | É esperado: ele prepara um cache no seu computador. As próximas aberturas levam segundos. |
 | Sem som | Confira se o servidor de som funciona (`pactl info`); envie o log se funcionar. |
 | Controles | Teclado e controles funcionam; ainda não há remapeamento. |

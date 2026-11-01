@@ -305,6 +305,15 @@ void RunEventLoop() {
                 LOG_INFO("window closed");
                 std::fflush(nullptr);
                 std::_Exit(0);
+            case SDL_CONTROLLERBUTTONDOWN:
+                // The Switch's HOME button has no key of its own on a PC: the Guide/Home button of a controller closes the game, the
+                // same way pressing HOME and closing the software does on the console (the game asks for it after some dialogs).
+                if (e.cbutton.button == SDL_CONTROLLER_BUTTON_GUIDE && !g_inline_keyboard_input.Active()) {
+                    LOG_INFO("window: HOME (controller guide button) pressed, closing the game");
+                    std::fflush(nullptr);
+                    std::_Exit(0);
+                }
+                break;
             case SDL_CONTROLLERDEVICEADDED:
                 if (!g_pad) {
                     g_pad = SDL_GameControllerOpen(e.cdevice.which);
@@ -355,6 +364,11 @@ void RunEventLoop() {
                 break;
             }
             case SDL_KEYDOWN:
+                if (e.key.keysym.scancode == SDL_SCANCODE_HOME && !e.key.repeat && !g_inline_keyboard_input.Active()) {
+                    LOG_INFO("window: HOME key pressed, closing the game");
+                    std::fflush(nullptr);
+                    std::_Exit(0);
+                }
                 if (e.key.keysym.scancode == SDL_SCANCODE_F11 && !e.key.repeat) {
                     const bool is_fullscreen = (SDL_GetWindowFlags(g_window) & SDL_WINDOW_FULLSCREEN_DESKTOP) != 0;
                     SDL_SetWindowFullscreen(g_window, is_fullscreen ? 0 : SDL_WINDOW_FULLSCREEN_DESKTOP);

@@ -27,6 +27,7 @@ Whatever you try, a [report](TESTING.md#how-to-report-a-problem) (`./install.sh 
 | Very low FPS | On a laptop with two GPUs, make sure the discrete one is used (`DRI_PRIME=1 ./play.sh` on AMD/Intel, `prime-run ./play.sh` on NVIDIA). A software Vulkan device (llvmpipe) is far too slow. |
 | Textures look garbled, missing or the wrong colours | Try **Safe mode** (`./play.sh --nogui --safe`). If it fixes it, put that in your report. |
 | Crash on start | Send `local/logs/play-nxrt-*.log` (the first lines say which GPU and driver were used). |
+| "Your system time has changed since the last time you played" at start | Fixed in Alpha 1.7.1 (the game's clock is now stable between runs). A save last played on an older version may show it once; press OK and it will not come back. |
 | Face-paint editor takes ~40 s the first time | Expected: it prepares a cache on your computer. Later openings take seconds. |
 | No sound | Check that your sound server works (`pactl info`); send the log if it does. |
 | Controls | The keyboard and controllers are supported; remapping is not available yet. |

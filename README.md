@@ -129,6 +129,7 @@ Open **Tomodachi Life** from your applications menu, or run:
 | Game language | `./play.sh --nogui --language en-GB` (codes: `ja`, `en-US`, `en-GB`, `fr`, `fr-CA`, `de`, `it`, `es`, `es-419`, `pt-BR`, `nl`, `ru`, `ko`, `zh-Hans`, `zh-Hant`; default `en-US`) |
 | Check this computer | `./play.sh --nogui --diagnose` (GPU, Vulkan, memory, missing tools) |
 | Picture looks wrong | `./play.sh --nogui --safe` (conservative graphics path; tell us if it fixes it) |
+| Close the game | the **Home** key (or the controller's Guide button) closes it, like HOME on the console |
 | Look for problems | each run writes `local/logs/play-nxrt-*.log`; attach it to bug reports |
 
 Your saves live in `local/user-nxrt` (inside the project folder). Back that folder up now and then (the launcher has a **Back up now** button).
