@@ -203,6 +203,13 @@ bool VulkanContext::Init(SDL_Window* window) {
         has_push_descriptors = cmd_push_descriptor_set != nullptr;
     }
     LOG_INFO("vulkan: %s", properties.deviceName);
+    // One line with what a bug report needs about the GPU (the install report and the play log both carry it).
+    LOG_INFO("gpu: device=\"%s\" vendor=0x%04x device_id=0x%04x type=%d api=%u.%u.%u driver=0x%x", properties.deviceName,
+             properties.vendorID, properties.deviceID, static_cast<int>(properties.deviceType),
+             VK_API_VERSION_MAJOR(properties.apiVersion), VK_API_VERSION_MINOR(properties.apiVersion),
+             VK_API_VERSION_PATCH(properties.apiVersion), properties.driverVersion);
+    if (const char* safe = std::getenv("NXRT_SAFE_MODE"); safe && *safe && std::strcmp(safe, "0") != 0)
+        LOG_INFO("gpu: safe mode on (asynchronous submit, asynchronous compute and the GPU texture decoder are off)");
     LOG_INFO("vulkan: push descriptors=%s max=%u", has_push_descriptors ? "yes" : "no", max_push_descriptors);
 
     if (surface_) {

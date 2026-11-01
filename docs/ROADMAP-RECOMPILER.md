@@ -65,8 +65,11 @@ current one answers for the rest.
 - **Where the generated C goes** (measured on one 1.8 MB unit with 1,777 blocks): about 39% is the entry dispatcher of each block, 11% is the
   `_expected[]` array of instruction words, 5% entry labels and 4% guard calls, so **~58% is scaffolding** for entering a block at any
   instruction (needed by a JIT hand-off, which `nxrt` does not use). The translated arithmetic is ~31%, jumps ~8% and memory accesses ~3%.
-- **Next, cheaper than a new recompiler:** patch the exporter (we already patch it) to emit a leaner scaffold, or strip it from the generated
-  C, and measure the compile time. A plausible cut of the C is 40-50%; the effect on compile time is **not measured yet**.
+- **Guards removed (done, now in the installer):** `scripts/slim-export.py` deletes the `_expected[]` arrays and guard calls before compiling.
+  Measured on a clean build: generated C 4,543 → 4,132 MB, compile step 78 → 70 min, `nxrt` binary 2.34 → 1.95 GB, and the island replay ran the
+  same or slightly faster (37.3-37.5 ms against 37.9-38.2 ms in the transition window). It is smaller than the 18% seen on a single unit.
+- **Next:** the entry dispatcher of each block (~39% of the C) is the big remaining piece. Which entries are really needed (return points,
+  branch targets, jump tables) must be known exactly before trimming it; the unit test that trimmed it blindly broke that rule on purpose.
 
 ## Credit and licensing
 

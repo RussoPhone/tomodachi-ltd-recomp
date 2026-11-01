@@ -133,9 +133,19 @@ constexpr u32 kUniformSlotBase = 3;    // NVN uniform buffer i is Maxwell const 
 // crosses the flush headroom every frame at 64 MiB and costs a synchronous StreamFull flush each time.
 // NXRT_NO_ASYNC_GRAPHICS=1 opts out: the scene is submitted at the end of Execute/Present without waiting for the GPU; the
 // wait happens when the stream, the descriptor pool or the slot ring is used up. Those are sized up to match.
+// NXRT_SAFE_MODE=1: the conservative path for GPUs/drivers nobody has tested. It turns off the newer, faster paths: asynchronous graphics
+// submit, asynchronous compute flush and the GPU ASTC decoder (textures are decoded on the CPU instead).
+bool SafeMode() {
+    static const bool on = [] {
+        const char* v = std::getenv("NXRT_SAFE_MODE");
+        return v && *v && std::strcmp(v, "0") != 0;
+    }();
+    return on;
+}
+
 bool AsyncGraphicsEnabled() {
-    // On by default since Alpha 1.6.9; NXRT_NO_ASYNC_GRAPHICS=1 waits for the GPU at the end of every Execute/Present again.
-    static const bool on = std::getenv("NXRT_NO_ASYNC_GRAPHICS") == nullptr;
+    // On by default since Alpha 1.6.9; NXRT_NO_ASYNC_GRAPHICS=1 (or NXRT_SAFE_MODE=1) waits for the GPU at the end of every Execute/Present again.
+    static const bool on = std::getenv("NXRT_NO_ASYNC_GRAPHICS") == nullptr && !SafeMode();
     return on;
 }
 size_t StreamSizeFromEnv() {
@@ -220,7 +230,7 @@ const u64 kAsyncDescriptorSetLimit = AsyncGraphicsEnabled() ? 24000 : 6000; // p
 bool AstcGpuEnabled() {
     static const bool enabled = [] {
         const char* v = std::getenv("NXRT_ASTC_GPU");
-        return !(v && std::strcmp(v, "0") == 0);
+        return !SafeMode() && !(v && std::strcmp(v, "0") == 0);
     }();
     return enabled;
 }
@@ -234,6 +244,53 @@ struct AstcGpuPipeline {
 struct AstcGpuPush {
     u32 block_dims[2], layer_stride, block_size, x_shift, block_height, block_height_mask;
 };
+
+AstcGpuPipeline& AstcPipeline(const VulkanContext& vk) {
+    static AstcGpuPipeline astc_pipe;
+    if (!astc_pipe.tried) {
+        astc_pipe.tried = true;
+        const std::array<VkDescriptorSetLayoutBinding, 2> bindings{{
+            {0, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, VK_SHADER_STAGE_COMPUTE_BIT, nullptr},
+            {1, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, 1, VK_SHADER_STAGE_COMPUTE_BIT, nullptr}}};
+        const VkDescriptorSetLayoutCreateInfo dsl{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO, nullptr, 0,
+                                                  2, bindings.data()};
+        const VkPushConstantRange range{VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof(AstcGpuPush)};
+        const VkShaderModuleCreateInfo smi{VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO, nullptr, 0,
+                                           sizeof(kAstcDecoderSpv), kAstcDecoderSpv};
+        VkShaderModule module = VK_NULL_HANDLE;
+        bool ok = vkCreateDescriptorSetLayout(vk.device, &dsl, nullptr, &astc_pipe.set_layout) == VK_SUCCESS;
+        if (ok) {
+            const VkPipelineLayoutCreateInfo pli{VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO, nullptr, 0, 1,
+                                                 &astc_pipe.set_layout, 1, &range};
+            ok = vkCreatePipelineLayout(vk.device, &pli, nullptr, &astc_pipe.layout) == VK_SUCCESS;
+        }
+        ok = ok && vkCreateShaderModule(vk.device, &smi, nullptr, &module) == VK_SUCCESS;
+        if (ok) {
+            const VkComputePipelineCreateInfo cpi{
+                VK_STRUCTURE_TYPE_COMPUTE_PIPELINE_CREATE_INFO, nullptr, 0,
+                {VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO, nullptr, 0, VK_SHADER_STAGE_COMPUTE_BIT,
+                 module, "main", nullptr},
+                astc_pipe.layout, VK_NULL_HANDLE, 0};
+            ok = vkCreateComputePipelines(vk.device, VK_NULL_HANDLE, 1, &cpi, nullptr, &astc_pipe.pipeline) ==
+                 VK_SUCCESS;
+        }
+        if (module) vkDestroyShaderModule(vk.device, module, nullptr);
+        LOG_INFO("renderer: ASTC GPU decoder pipeline %s", ok ? "ready" : "FAILED");
+    }
+    return astc_pipe;
+}
+
+// The GPU decoder needs the pipeline to build and RGBA8 storage images (the sRGB images are written through a UNORM view).
+bool AstcGpuUsable(const VulkanContext& vk) {
+    static const bool usable = [&] {
+        const bool formats = vk.FormatSupports(VK_FORMAT_R8G8B8A8_UNORM, VK_FORMAT_FEATURE_STORAGE_IMAGE_BIT) &&
+                             vk.FormatSupports(VK_FORMAT_R8G8B8A8_UNORM, VK_FORMAT_FEATURE_SAMPLED_IMAGE_BIT);
+        if (!formats) LOG_WARN("renderer: GPU lacks RGBA8 storage images; ASTC textures are decoded on the CPU");
+        return formats && AstcPipeline(vk).pipeline != VK_NULL_HANDLE;
+    }();
+    return usable;
+}
+
 thread_local int t_renderer_depth = 0;         // >0 while the calling thread is inside Execute/Present
 struct RendererScope {
     SamplerScope sampler;
@@ -2588,6 +2645,7 @@ void NvnRenderer::InitAsyncCompute() {
     // On by default; NXRT_NO_ASYNC_COMPUTE_FLUSH=1 (or NXRT_ASYNC_COMPUTE_FLUSH=0) opts out.
     const char* off = std::getenv("NXRT_NO_ASYNC_COMPUTE_FLUSH");
     const char* flag = std::getenv("NXRT_ASYNC_COMPUTE_FLUSH");
+    if (SafeMode()) return;
     if ((off && std::strcmp(off, "1") == 0) || (flag && std::strcmp(flag, "0") == 0)) return;
     const bool explicit_on = flag && std::strcmp(flag, "1") == 0;
     const char* verify = std::getenv("NXRT_ASYNC_COMPUTE_VERIFY");
@@ -4661,7 +4719,7 @@ HostImage* NvnRenderer::SampledImage(u32 texture_id, u32 sample_handle, bool tra
     if (!cpu) return fail("address");
     // Array layers are stored one after another; each layer is a whole number of block-linear blocks.
     const size_t layer_bytes = static_cast<size_t>(wb) * hb * tf.bytes_per_block;
-    const bool gpu_astc = decode_astc && AstcGpuEnabled() && !dump_model_texture && tic->IsBlockLinear() && !is_3d &&
+    const bool gpu_astc = decode_astc && AstcGpuEnabled() && AstcGpuUsable(vk_) && !dump_model_texture && tic->IsBlockLinear() && !is_3d &&
                           !is_array && layers == 1 && tic->TileWidthSpacing() == 0 && tf.bytes_per_block == 16;
     std::vector<u8> linear(gpu_astc ? 0 : layer_bytes * layers);
     if (is_3d && tic->IsBlockLinear()) {
@@ -4951,37 +5009,7 @@ HostImage* NvnRenderer::SampledImage(u32 texture_id, u32 sample_handle, bool tra
     img.view_layer_count = vci.subresourceRange.layerCount;
     img.view_create_result = vkCreateImageView(vk_.device, &vci, nullptr, &img.view);
     if (gpu_astc) {
-        static AstcGpuPipeline astc_pipe;
-        if (!astc_pipe.tried) {
-            astc_pipe.tried = true;
-            const std::array<VkDescriptorSetLayoutBinding, 2> bindings{{
-                {0, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, VK_SHADER_STAGE_COMPUTE_BIT, nullptr},
-                {1, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, 1, VK_SHADER_STAGE_COMPUTE_BIT, nullptr}}};
-            const VkDescriptorSetLayoutCreateInfo dsl{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO, nullptr, 0,
-                                                      2, bindings.data()};
-            const VkPushConstantRange range{VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof(AstcGpuPush)};
-            const VkShaderModuleCreateInfo smi{VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO, nullptr, 0,
-                                               sizeof(kAstcDecoderSpv), kAstcDecoderSpv};
-            VkShaderModule module = VK_NULL_HANDLE;
-            bool ok = vkCreateDescriptorSetLayout(vk_.device, &dsl, nullptr, &astc_pipe.set_layout) == VK_SUCCESS;
-            if (ok) {
-                const VkPipelineLayoutCreateInfo pli{VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO, nullptr, 0, 1,
-                                                     &astc_pipe.set_layout, 1, &range};
-                ok = vkCreatePipelineLayout(vk_.device, &pli, nullptr, &astc_pipe.layout) == VK_SUCCESS;
-            }
-            ok = ok && vkCreateShaderModule(vk_.device, &smi, nullptr, &module) == VK_SUCCESS;
-            if (ok) {
-                const VkComputePipelineCreateInfo cpi{
-                    VK_STRUCTURE_TYPE_COMPUTE_PIPELINE_CREATE_INFO, nullptr, 0,
-                    {VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO, nullptr, 0, VK_SHADER_STAGE_COMPUTE_BIT,
-                     module, "main", nullptr},
-                    astc_pipe.layout, VK_NULL_HANDLE, 0};
-                ok = vkCreateComputePipelines(vk_.device, VK_NULL_HANDLE, 1, &cpi, nullptr, &astc_pipe.pipeline) ==
-                     VK_SUCCESS;
-            }
-            if (module) vkDestroyShaderModule(vk_.device, module, nullptr);
-            LOG_INFO("renderer: ASTC GPU decoder pipeline %s", ok ? "ready" : "FAILED");
-        }
+        AstcGpuPipeline& astc_pipe = AstcPipeline(vk_);
         if (astc_pipe.pipeline) {
             HitchScope gpu_scope(kHitchAstc, u64{texture_id} << 32 | width << 16 | height);
             Transition(img, VK_IMAGE_LAYOUT_GENERAL);

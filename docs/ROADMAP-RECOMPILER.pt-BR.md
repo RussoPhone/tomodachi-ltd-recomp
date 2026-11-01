@@ -66,9 +66,13 @@ e o atual responde pelo resto.
   lista `_expected[]` de palavras da instrução, 5% são rótulos de entrada e 4% chamadas de guarda, então **~58% é andaime** para entrar num
   bloco em qualquer instrução (necessário para a passagem para um JIT, que o `nxrt` não usa). A aritmética traduzida é ~31%, os saltos ~8% e
   os acessos à memória ~3%.
-- **A seguir, mais barato que um recompilador novo:** modificar o exportador (já o modificamos) para gerar um andaime mais enxuto, ou
-  remover esse andaime do C gerado, e medir o tempo de compilação. Um corte plausível do C é de 40 a 50%; o efeito no tempo de compilação
-  **ainda não foi medido**.
+- **Guardas removidas (feito, já no instalador):** `scripts/slim-export.py` apaga as listas `_expected[]` e as chamadas de guarda antes de
+  compilar. Medido numa compilação limpa: C gerado de 4.543 para 4.132 MB, passo de compilação de 78 para 70 min, binário do `nxrt` de 2,34
+  para 1,95 GB, e o replay da ilha rodou igual ou um pouco mais rápido (37,3-37,5 ms contra 37,9-38,2 ms na janela de transição). É menos
+  que os 18% vistos numa unidade isolada.
+- **A seguir:** o seletor de entrada de cada bloco (~39% do C) é a grande peça que sobra. É preciso saber exatamente quais entradas são
+  mesmo necessárias (pontos de retorno, alvos de salto, tabelas de salto) antes de cortá-lo; o teste que o cortou às cegas quebrava essa
+  regra de propósito.
 
 ## Créditos e licenças
 

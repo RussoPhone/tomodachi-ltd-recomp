@@ -88,6 +88,17 @@ def write_report(failed=None):
     lines.append('gpu: ' + _cmd(['nvidia-smi', '--query-gpu=name,driver_version', '--format=csv,noheader']))
     vk = _cmd(['vulkaninfo', '--summary'])
     lines += ['vulkan: ' + l.strip() for l in vk.splitlines() if 'deviceName' in l or 'apiVersion' in l][:6]
+    try:
+        import doctor
+        facts = doctor.check()
+        lines.append('')
+        lines.append('--- doctor ---')
+        for d in facts['vulkan_devices']:
+            lines.append(f"vulkan device: {d.get('name')} ({d.get('type')}, api {d.get('api')}, {d.get('driver', '')})")
+        lines += [f'PROBLEM: {t}' for t in facts['problems']] + [f'warning: {t}' for t in facts['warnings']]
+        lines.append(f"session: {facts['session']}")
+    except Exception as error:  # noqa: BLE001 - the report must never fail because of the doctor
+        lines.append(f'doctor failed: {error}')
     lines.append('')
     lines.append('--- tools ---')
     for tool, arg in (('python3', '--version'), ('git', '--version'), ('cmake', '--version'), ('ninja', '--version'),
@@ -224,6 +235,18 @@ def check():
     say(f'   Memory: {mem:.0f} GB (+ {swap:.0f} GB {"page file" if plat.IS_WINDOWS else "swap"}) · Free space: {free:.0f} GB')
     if CI:
         return
+    try:  # early look at the GPU: better to learn now than after two hours of compiling
+        import doctor
+        facts = doctor.check()
+        for d in facts['vulkan_devices']:
+            say(f"   GPU: {d.get('name')} ({d.get('type')})")
+        for text in facts['problems'] + facts['warnings']:
+            if 'Vulkan' in text or 'GPU' in text or 'llvmpipe' in text:
+                say(f'{YELLOW}   ! {text}{RESET}')
+        for text in facts['notes'][:2]:
+            say(f'   · {text}')
+    except Exception:  # noqa: BLE001 - never block the install because of the GPU check
+        pass
     if plat.IS_WINDOWS and mem < 15:
         fail('Compiling the game needs at least 16 GB of RAM.')
     if not plat.IS_WINDOWS and mem + swap < 24:
@@ -369,6 +392,12 @@ def export():
     run([sys.executable, 'scripts/export-aot.py', '--backend', 'hybrid', '--unit-insns', str(unit)], 'export-aot.log')
 
 
+@step('Trim the generated code (makes the compile faster and the program smaller)')
+def slim():
+    export = current_export()
+    run([sys.executable, 'scripts/slim-export.py', export], 'slim-export.log')
+
+
 @step('Compile the recompiled game — the long part (about 1 to 2 hours)')
 def package():
     budget = int((ram_gb() - 3) * 1024)
@@ -380,6 +409,13 @@ def package():
 @step('Extract the game data (textures, sounds, text) — about 5 minutes')
 def install():
     run([sys.executable, 'scripts/install-native.py', '--force'], 'install-native.log')
+
+
+def current_export():
+    """The exefs folder of the export made by the export step with the current settings (older exports may be left over)."""
+    aot = json.loads((ROOT / f'adapters/{TARGET}/target.json').read_text())['aot']
+    suffix = f"-u{aot['unit_insns']}" if aot.get('unit_insns') else ''
+    return find_one('**/aot_cache/exefs', ROOT / 'local/aot' / f"export-{aot['backend']}{suffix}")
 
 
 def find_one(pattern, base):
@@ -394,7 +430,7 @@ def nxrt():
     if plat.IS_WINDOWS:
         say('   The native port is not available on Windows yet; skipping (the older build still works).')
         return
-    export = find_one('export-*/**/aot_cache/exefs', ROOT / 'local/aot')
+    export = current_export()
     recomp = UPSTREAM / 'build/suyu-static/src/suyu_cmd/recomp'
     boost = find_one('.cache/cpm/boost/boost-*', SUYU)
     if not (recomp / 'main').is_dir():
@@ -434,7 +470,8 @@ STAGE_INPUTS = {
     'backend': ('scripts/package-standalone.py', 'scripts/plat.py'),
     'dump': ('scripts/dump-exefs.py', 'scripts/lab.py', f'adapters/{TARGET}/target.json'),
     'export': ('scripts/export-aot.py', f'adapters/{TARGET}/target.json'),
-    'package': ('scripts/package-standalone.py', 'scripts/compile-meter.py', 'scripts/lab.py',
+    'slim': ('scripts/slim-export.py',),
+    'package': ('scripts/package-standalone.py', 'scripts/compile-meter.py', 'scripts/lab.py', 'scripts/slim-export.py',
                 f'adapters/{TARGET}/target.json'),
     'install': ('scripts/install-native.py', 'scripts/inventory-romfs.py', 'scripts/lab.py',
                 f'adapters/{TARGET}/target.json'),

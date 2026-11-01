@@ -1,19 +1,26 @@
 #!/bin/sh
 # Starts the unofficial native port (nxrt). Saves live in local/user-nxrt (your own folder, never overwritten).
 cd "$(dirname "$(readlink -f "$0")")/.." || exit 1
+for arg in "$@"; do
+  if [ "$arg" = "--diagnose" ]; then exec python3 scripts/doctor.py; fi
+done
 BIN=local/nxrt/bin/nxrt
 GAME=local/install/tomodachi
 if [ ! -x "$BIN" ] || [ ! -d "$GAME" ]; then
   echo "The native port is not installed yet. Run ./install.sh first."
   exit 1
 fi
-# Options: --fullscreen   --size 1920x1080   --language en-GB   (F11 toggles fullscreen in the game)
+# Options: --fullscreen   --size 1920x1080   --language en-GB   --safe   --diagnose   (F11 toggles fullscreen in the game)
+#   --safe      conservative graphics path for GPUs/drivers nobody has tested (slower, but fewer things can go wrong)
+#   --diagnose  checks this computer (GPU, Vulkan, memory, session) and exits
 while [ $# -gt 0 ]; do
   case "$1" in
     --fullscreen) export NXRT_FULLSCREEN=1 ;;
     --size) shift; export NXRT_WINDOW_SIZE="$1" ;;
     --language) shift; export NXRT_LANGUAGE="$1" ;;
-    *) echo "Unknown option: $1 (use --fullscreen, --size WxH or --language CODE)"; exit 2 ;;
+    --safe) export NXRT_SAFE_MODE=1 ;;
+    --diagnose) exec python3 scripts/doctor.py ;;
+    *) echo "Unknown option: $1 (use --fullscreen, --size WxH, --language CODE, --safe or --diagnose)"; exit 2 ;;
   esac
   shift
 done

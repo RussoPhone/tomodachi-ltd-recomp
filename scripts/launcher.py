@@ -31,7 +31,7 @@ LANGUAGES = [
     ('Español (Latinoamérica)', 'es-419'), ('Português (Brasil)', 'pt-BR'), ('Nederlands', 'nl'),
     ('Русский', 'ru'), ('한국어', 'ko'), ('简体中文', 'zh-Hans'), ('繁體中文', 'zh-Hant'),
 ]
-DEFAULTS = {'fullscreen': False, 'size': '1280x720', 'language': 'en-US'}
+DEFAULTS = {'fullscreen': False, 'size': '1280x720', 'language': 'en-US', 'safe': False}
 
 
 def load_settings():
@@ -54,6 +54,8 @@ def play_command(settings):
     cmd = [str(PLAY), '--language', settings['language'], '--size', settings['size']]
     if settings['fullscreen']:
         cmd.append('--fullscreen')
+    if settings.get('safe'):
+        cmd.append('--safe')
     return cmd
 
 
@@ -114,7 +116,7 @@ def main():
     settings = load_settings()
     root = tk.Tk()
     root.title('Tomodachi Life (unofficial native port, alpha)')
-    root.geometry('620x560')
+    root.geometry('660x600')
     root.minsize(560, 480)
     frame = ttk.Frame(root, padding=16)
     frame.pack(fill='both', expand=True)
@@ -131,10 +133,13 @@ def main():
     box = ttk.LabelFrame(frame, text='Settings', padding=10)
     box.pack(fill='x')
     fullscreen = tk.BooleanVar(value=settings['fullscreen'])
+    safe = tk.BooleanVar(value=settings.get('safe', False))
     size = tk.StringVar(value=settings['size'])
     language = tk.StringVar(value=next((n for n, c in LANGUAGES if c == settings['language']), LANGUAGES[0][0]))
     ttk.Checkbutton(box, text='Fullscreen (F11 also toggles it in the game)', variable=fullscreen).grid(
         row=0, column=0, columnspan=2, sticky='w')
+    ttk.Checkbutton(box, text='Safe mode (use it if the picture looks wrong: slower, but fewer things can go wrong)',
+                    variable=safe).grid(row=4, column=0, columnspan=2, sticky='w', pady=(6, 0))
     ttk.Label(box, text='Window size').grid(row=1, column=0, sticky='w', pady=(6, 0))
     ttk.Combobox(box, textvariable=size, values=SIZES, width=14).grid(row=1, column=1, sticky='w', pady=(6, 0))
     ttk.Label(box, text='Language').grid(row=2, column=0, sticky='w', pady=(6, 0))
@@ -158,7 +163,7 @@ def main():
         value = size.get().strip().lower()
         if 'x' not in value or not all(p.isdigit() for p in value.split('x', 1)):
             value = DEFAULTS['size']
-        return {'fullscreen': fullscreen.get(), 'size': value, 'language': code}
+        return {'fullscreen': fullscreen.get(), 'size': value, 'language': code, 'safe': safe.get()}
 
     def refresh_status():
         if installed():
@@ -204,6 +209,10 @@ def main():
             return
         log_var.set('Save restored.' + (f' Previous save kept in {safety.relative_to(ROOT)}.' if safety else ''))
 
+    def on_check():
+        result = subprocess.run([sys.executable, str(ROOT / 'scripts/doctor.py')], cwd=ROOT, capture_output=True, text=True)
+        messagebox.showinfo('Check my computer', (result.stdout or result.stderr).strip() or 'No output.')
+
     def on_report():
         log_var.set('Collecting logs…')
         root.update_idletasks()
@@ -215,10 +224,11 @@ def main():
     ttk.Button(saves, text='Back up now', command=on_backup).pack(side='left')
     ttk.Button(saves, text='Restore…', command=on_restore).pack(side='left', padx=6)
     ttk.Button(saves, text='Open save folder', command=lambda: open_folder(SAVE_DIR)).pack(side='left')
-    ttk.Button(help_box, text='Create bug report', command=on_report).pack(side='left')
-    ttk.Button(help_box, text='Open logs', command=lambda: open_folder(LOGS)).pack(side='left', padx=6)
-    ttk.Button(help_box, text='Testing guide', command=lambda: webbrowser.open(TESTING_URL)).pack(side='left')
-    ttk.Button(help_box, text='Report a problem', command=lambda: webbrowser.open(ISSUES_URL)).pack(side='left', padx=6)
+    ttk.Button(help_box, text='Check my computer', command=on_check).pack(side='left')
+    ttk.Button(help_box, text='Create bug report', command=on_report).pack(side='left', padx=6)
+    ttk.Button(help_box, text='Open logs', command=lambda: open_folder(LOGS)).pack(side='left')
+    ttk.Button(help_box, text='Testing guide', command=lambda: webbrowser.open(TESTING_URL)).pack(side='left', padx=6)
+    ttk.Button(help_box, text='Report a problem', command=lambda: webbrowser.open(ISSUES_URL)).pack(side='left')
 
     refresh_status()
     if '--smoke' in sys.argv:  # used by the tests: build the window, then close it

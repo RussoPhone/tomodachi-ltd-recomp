@@ -48,7 +48,8 @@ Abra uma [issue](https://github.com/RussoPhone/tomodachi-ltd-recomp/issues/new?t
 
 - **Problema na instalação:** rode `./install.sh --report` e anexe o zip. Ele tem logs e um resumo do sistema (distribuição, GPU, driver, versões das ferramentas). **Não** tem dados do jogo nem chaves, e as pastas pessoais viram `~`.
 - **Problema ao jogar:** anexe o `local/logs/play-nxrt-*.log` daquela execução, diga o que estava fazendo e, se a imagem estiver errada, uma captura de tela.
-- Informe a sua GPU e o driver, e se desligar as opções do passo 4 muda alguma coisa.
+- Informe a sua GPU e o driver (`./play.sh --nogui --diagnose` mostra), e se `./play.sh --nogui --safe` ou desligar as opções do passo 4 muda alguma coisa.
+- Veja também [COMPATIBILITY.pt-BR.md](COMPATIBILITY.pt-BR.md) e [TROUBLESHOOTING.pt-BR.md](TROUBLESHOOTING.pt-BR.md).
 
 Por favor, **não** publique chaves, firmware, o `.nsp` nem qualquer cópia do jogo.
 

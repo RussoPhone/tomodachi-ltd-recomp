@@ -28,6 +28,8 @@ class LauncherTests(unittest.TestCase):
     def test_play_command(self):
         cmd = launcher.play_command({'fullscreen': True, 'size': '1920x1080', 'language': 'en-GB'})
         self.assertEqual(cmd[1:], ['--language', 'en-GB', '--size', '1920x1080', '--fullscreen'])
+        safe = launcher.play_command({'fullscreen': False, 'size': '1280x720', 'language': 'en-US', 'safe': True})
+        self.assertIn('--safe', safe)
 
     def test_backup_and_restore_keep_a_safety_copy(self):
         self.assertIsNone(launcher.backup_save())

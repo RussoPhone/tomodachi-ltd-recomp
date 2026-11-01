@@ -12,6 +12,9 @@ This project **does not contain the game, firmware or keys**. You bring **your o
 > **Alpha status.** Tested so far on one NVIDIA laptop on Linux (Arch/EndeavourOS). AMD and Intel GPUs, other distributions and Windows are untested for the native port. Capped at 30 FPS; brief drops to ~23 FPS happen while a new scene loads. The first time you open the face-paint editor it takes about 40 seconds (it prepares a cache on your computer); later openings take a few seconds.
 
 > [!NOTE]
+> **Something wrong?** [docs/TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md) · **Tried it on your hardware?** [docs/COMPATIBILITY.md](docs/COMPATIBILITY.md) · [SUPPORT.md](SUPPORT.md)
+
+> [!NOTE]
 > **Where the project is going:** [docs/ROADMAP-RECOMPILER.md](docs/ROADMAP-RECOMPILER.md) (our own recompiler, step by step).
 
 > [!NOTE]
@@ -124,6 +127,8 @@ Open **Tomodachi Life** from your applications menu, or run:
 | Start the game directly | `./play.sh --nogui` |
 | Fullscreen / window size | `./play.sh --nogui --fullscreen`, `./play.sh --nogui --size 1920x1080` (F11 toggles fullscreen in the game) |
 | Game language | `./play.sh --nogui --language en-GB` (codes: `ja`, `en-US`, `en-GB`, `fr`, `fr-CA`, `de`, `it`, `es`, `es-419`, `pt-BR`, `nl`, `ru`, `ko`, `zh-Hans`, `zh-Hant`; default `en-US`) |
+| Check this computer | `./play.sh --nogui --diagnose` (GPU, Vulkan, memory, missing tools) |
+| Picture looks wrong | `./play.sh --nogui --safe` (conservative graphics path; tell us if it fixes it) |
 | Look for problems | each run writes `local/logs/play-nxrt-*.log`; attach it to bug reports |
 
 Your saves live in `local/user-nxrt` (inside the project folder). Back that folder up now and then (the launcher has a **Back up now** button).

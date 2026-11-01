@@ -48,7 +48,8 @@ Open an [issue](https://github.com/RussoPhone/tomodachi-ltd-recomp/issues/new?te
 
 - **Install problem:** run `./install.sh --report` and attach the zip. It contains logs and a system summary (distribution, GPU, driver, tool versions). It does **not** contain game data or keys, and personal folders are replaced by `~`.
 - **Play problem:** attach `local/logs/play-nxrt-*.log` of that run, say what you were doing, and add a screenshot if the image looks wrong.
-- Mention your GPU and driver, and whether turning off the options in step 4 changes anything.
+- Mention your GPU and driver (`./play.sh --nogui --diagnose` prints them), and whether `./play.sh --nogui --safe` or turning off the options in step 4 changes anything.
+- Also see [COMPATIBILITY.md](COMPATIBILITY.md) and [TROUBLESHOOTING.md](TROUBLESHOOTING.md).
 
 Please do **not** post keys, firmware, the `.nsp` or any copy of the game.
 
