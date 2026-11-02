@@ -261,6 +261,10 @@ if(CMAKE_CXX_COMPILER_FRONTEND_VARIANT STREQUAL "MSVC")
 else()
   target_compile_options(nxrt_core PRIVATE -Wall -Wextra -Wno-unused-parameter -mcx16)
 endif()
+if(WIN32)
+  # windows.h defines min/max macros that break std::min/std::max, and pulls in far more than needed.
+  target_compile_definitions(nxrt_core PUBLIC NOMINMAX WIN32_LEAN_AND_MEAN)
+endif()
 find_package(Threads REQUIRED)
 find_package(SDL2 REQUIRED)
 # Khronos Vulkan headers are vendored; the loader (libvulkan) comes from the system.

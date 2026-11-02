@@ -40,7 +40,7 @@ jobs:
             "-DNXRT_GAME_EXPORT=$env:RUNNER_TEMP\stub\exefs" "-DNXRT_GAME_LIBS=stub" "-DNXRT_BOOST_ROOT=$env:BOOST_ROOT_DIR"
       - name: Build nxrt_core
         shell: pwsh
-        run: cmake --build build --target nxrt_core -j 4 2>&1 | Tee-Object -FilePath build-log.txt
+        run: cmake --build build --target nxrt_core -j 4 -- -k 0 2>&1 | Tee-Object -FilePath build-log.txt
       - name: Upload the build log
         if: always()
         uses: actions/upload-artifact@v4

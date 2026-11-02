@@ -261,10 +261,11 @@ void Init() {
                              dsum / 1e9);
                 }
             }
-            // Where the guest threads run and what they cost: /proc/<pid>/task/*/stat.
+            // Where the guest threads run and what they cost: /proc/<pid>/task/*/stat (Linux only; a diagnostic).
             struct Row { std::string name; u64 ticks; int cpu; char state; };
             std::vector<Row> rows;
             u64 mask_seen = 0;
+#ifndef _WIN32
             if (FILE* d = popen(("cat /proc/" + std::to_string(getpid()) + "/task/*/stat 2>/dev/null").c_str(), "r")) {
                 char line[1024];
                 while (std::fgets(line, sizeof line, d)) {
@@ -291,6 +292,7 @@ void Init() {
                 }
                 pclose(d);
             }
+#endif
             static std::map<std::string, u64> prev;
             std::vector<std::pair<u64, std::string>> top;
             for (const Row& r : rows) {
@@ -427,7 +429,7 @@ DWORD WINAPI HostThreadEntry(LPVOID arg) {
 void StartThread(const std::shared_ptr<KThread>& thread) {
     thread->started = true;
     // The size is a reserve, not a commit, like the 64 MiB pthread stack.
-    HANDLE h = CreateThread(nullptr, kHostStackSize, HostThreadEntry, thread.get(),
+    HANDLE h = ::CreateThread(nullptr, kHostStackSize, HostThreadEntry, thread.get(),
                             STACK_SIZE_PARAM_IS_A_RESERVATION, nullptr);
     if (!h) {
         Fatal("could not start a host thread for guest thread %llu",
