@@ -8,7 +8,7 @@
 
 #include <array>
 
-#include "common.h"
+#include "../common.h"
 
 namespace nxrt::render {
 

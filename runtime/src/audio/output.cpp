@@ -9,7 +9,7 @@
 #include <mutex>
 #include <string>
 
-#include "common.h"
+#include "../common.h"
 #include "runtime.h"
 
 namespace nxrt::audio {

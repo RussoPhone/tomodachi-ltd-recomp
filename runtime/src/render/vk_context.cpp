@@ -272,7 +272,18 @@ void VulkanContext::Destroy(Buffer& b) {
 namespace {
 std::atomic<u64> g_image_bytes{0};  // device memory held by images made through CreateImage (diagnostic for allocation failures)
 std::atomic<u64> g_image_count{0};
+std::atomic<bool> g_allocation_failed{false};
 } // namespace
+
+u64 VulkanContext::ImageBytesHeld() { return g_image_bytes.load(); }
+bool VulkanContext::TakeAllocationFailure() { return g_allocation_failed.exchange(false); }
+u64 VulkanContext::DeviceLocalHeapBytes() const {
+    u64 best = 0;
+    for (u32 i = 0; i < memory_properties.memoryHeapCount; ++i) {
+        if (memory_properties.memoryHeaps[i].flags & VK_MEMORY_HEAP_DEVICE_LOCAL_BIT) best = std::max<u64>(best, memory_properties.memoryHeaps[i].size);
+    }
+    return best;
+}
 
 Image VulkanContext::CreateImage(const VkImageCreateInfo& info) {
     Image i;
@@ -291,6 +302,7 @@ Image VulkanContext::CreateImage(const VkImageCreateInfo& info) {
     // Binding an image to a null memory object crashes the NVIDIA driver, so an allocation that fails (device memory exhausted)
     // has to stop here instead of being ignored.
     if (const VkResult r = vkAllocateMemory(device, &mai, nullptr, &i.memory); r != VK_SUCCESS) {
+        g_allocation_failed.store(true);
         LOG_ERROR("vulkan: image memory allocation failed (%d): %llu KiB for format=%d %ux%u layers=%u; %llu images, %llu MiB held",
                   static_cast<int>(r), static_cast<unsigned long long>(req.size >> 10), static_cast<int>(info.format),
                   info.extent.width, info.extent.height, info.arrayLayers,

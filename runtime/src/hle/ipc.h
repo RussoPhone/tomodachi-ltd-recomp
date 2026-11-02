@@ -15,7 +15,7 @@
 #include <string>
 #include <vector>
 
-#include "common.h"
+#include "../common.h"
 #include "kernel/kernel.h"
 
 namespace nxrt::hle {

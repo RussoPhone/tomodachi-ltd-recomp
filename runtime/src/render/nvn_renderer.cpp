@@ -85,7 +85,7 @@
 #include "shader_recompiler/program_header.h"
 #include "shader_recompiler/runtime_info.h"
 
-#include "common.h" // after the vendored headers: our LOG_* macros win
+#include "../common.h" // after the vendored headers: our LOG_* macros win
 #include "memory.h"
 #include "nvn/nvn_layer.h"
 #include "nvn/recorder.h"
@@ -891,6 +891,7 @@ u32 EffectiveColorWriteMask(u32 masks, u32 slot) {
 
 struct HostImage {
     Image image;
+    u64 last_use_frame = 0;  // present count of the last draw that sampled it (cache eviction)
     VkImageView view = VK_NULL_HANDLE;
     VkFormat format = VK_FORMAT_UNDEFINED;
     VkImageViewType view_type = VK_IMAGE_VIEW_TYPE_2D;
@@ -1516,6 +1517,7 @@ private:
     u64 model_lock_yields_ = 0;
     const bool model_lock_yield_ = std::getenv("NXRT_MODEL_LOCK_YIELD") != nullptr;  // opt-in: ABBA showed no gain
     void MaybeYieldModelLock();
+    void EvictSampledTextures();
     u64 lock_wait_ns_seen_ = 0, lock_contended_seen_ = 0;
     // Feedback-loop copies of a render target, one per shape: alternating shapes used to destroy and recreate the single
     // snapshot image on every switch.
@@ -6248,6 +6250,7 @@ void NvnRenderer::Draw(const Command& c, u64 list_handle, int depth) {
                     win_input_index == 1 && sampler_id == 0x1b9;
                 std::optional<Tic> sampled_tic;
                 HostImage* img = SampledImage(texture_id, handle, trace_win_sample, win_input_index, &sampled_tic);
+                if (img) img->last_use_frame = present_count_;
                 if (img && trace_win_sample && std::getenv("NXRT_DUMP_DEPTH_SAMPLES") &&
                     (img->aspect & VK_IMAGE_ASPECT_DEPTH_BIT)) {
                     const VkImageLayout restore_layout = img->layout;
@@ -7843,6 +7846,7 @@ void NvnRenderer::Dispatch(const Command& c) {
             }
             std::optional<Tic> sampled_tic;
             HostImage* img = SampledImage(handle & 0xFFFFF, handle, false, ~u32{0}, &sampled_tic);
+            if (img) img->last_use_frame = present_count_;
             VkSampler sampler = SamplerFor((handle >> 20) & 0xFFF, std::nullopt, desc.is_depth, desc.is_integer,
                                            img && (img->aspect & VK_IMAGE_ASPECT_DEPTH_BIT));
             const bool invalid_guest_descriptor = texture_error_ == "invalid-descriptor" ||
@@ -8607,7 +8611,7 @@ void NvnRenderer::DumpImage(HostImage& img, u64 frame, const char* suffix) {
     static const u32 dump_layer = std::getenv("NXRT_DUMP_LAYER") ? std::atoi(std::getenv("NXRT_DUMP_LAYER")) : 0;
     const u32 layer = dump_layer < img.layers ? dump_layer : 0;
     const VkBufferImageCopy copy{0, 0, 0,
-                                 {depth_image ? VK_IMAGE_ASPECT_DEPTH_BIT : VK_IMAGE_ASPECT_COLOR_BIT, 0, layer, 1},
+                                 {static_cast<VkImageAspectFlags>(depth_image ? VK_IMAGE_ASPECT_DEPTH_BIT : VK_IMAGE_ASPECT_COLOR_BIT), 0, layer, 1},
                                  {0, 0, 0}, {img.width, img.height, 1}};
     vkCmdCopyImageToBuffer(Cmd(), img.image.image, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, buffer.buffer, 1, &copy);
     if (!Flush(FlushReason::DumpImage)) {
@@ -8933,6 +8937,55 @@ void NvnRenderer::ExecuteSubmission(const nvn::SubmissionSnapshot& submission) {
     ExecuteImpl(submission.list, submission.execution_model.get());
 }
 
+// Textures decoded from guest memory (sampled_) used to stay for the whole run, so a 6 GB card ran out of device memory after
+// ~20 minutes of play (every scene adds textures). Past half of the card's memory held by images, or after an allocation that
+// failed, the textures not sampled for a few seconds are dropped, oldest first; the next draw that needs one rebuilds it from
+// guest memory. They go through retired_images_, which is destroyed only where the GPU is known to be done with them.
+void NvnRenderer::EvictSampledTextures() {
+    const bool pressure = VulkanContext::TakeAllocationFailure();
+    const u64 heap = vk_.DeviceLocalHeapBytes();
+    if (!heap) return;
+    // The walk over every texture is not free: without an allocation failure look at most once every two seconds.
+    static u64 last_check = 0;
+    if (!pressure && present_count_ - last_check < 60 && last_check) return;
+    last_check = present_count_;
+    u64 held = VulkanContext::ImageBytesHeld();
+    // NXRT_IMAGE_BUDGET_MIB=<n> (test): evict as if the card's memory were 2n MiB.
+    static const u64 forced = [] {
+        const char* v = std::getenv("NXRT_IMAGE_BUDGET_MIB");
+        return v ? std::strtoull(v, nullptr, 10) << 20 : u64{0};
+    }();
+    const u64 budget = forced ? forced : heap / 2;
+    if (!pressure && held < budget) return;
+    const u64 target = pressure ? budget * 2 / 3 : budget * 4 / 5;
+    std::vector<std::pair<u64, u64>> candidates;  // (last use, key)
+    for (auto& [key, image] : sampled_) {
+        if (&image == glyph_image_ || !image.image.image) continue;
+        if (present_count_ - image.last_use_frame < 180) continue;  // used in the last ~6 seconds: keep
+        candidates.emplace_back(image.last_use_frame, key);
+    }
+    std::sort(candidates.begin(), candidates.end());
+    u64 freed = 0, count = 0;
+    for (const auto& [_, key] : candidates) {
+        if (held <= target) break;
+        auto it = sampled_.find(key);
+        if (it == sampled_.end()) continue;
+        const u64 bytes = it->second.image.allocation_size;
+        retired_images_.push_back(std::move(it->second));
+        sampled_.erase(it);
+        pitch_sources_.erase(key);
+        swizzled_sources_.erase(key);
+        held -= std::min(held, bytes);
+        freed += bytes;
+        ++count;
+    }
+    if (count) {
+        for (auto& memo : sampled_hit_memo_) memo = {};  // they point into the maps just erased from
+        LOG_INFO("renderer: device memory %s: dropped %llu unused textures (%llu MiB); %zu remain", pressure ? "ran out" : "is filling",
+                 static_cast<unsigned long long>(count), static_cast<unsigned long long>(freed >> 20), sampled_.size());
+    }
+}
+
 void NvnRenderer::ExecuteImpl(const CommandList& list, nvn::Model* metadata) {
     RendererScope renderer_scope;
     ExecuteLockScope locks(mutex_, model_.lock);
@@ -8945,6 +8998,7 @@ void NvnRenderer::ExecuteImpl(const CommandList& list, nvn::Model* metadata) {
     execute_locks_ = &locks;
     model_lock_taken_ = std::chrono::steady_clock::now();
     if (broken_) return;
+    EvictSampledTextures();
 #if defined(NXRT_ENABLE_GUEST_MEMORY_READ_OBSERVER)
     ComputeReadbackTrace::Instance().SetFrame(present_count_ + 1);
     ProgramTrace::Instance().SetFrame(present_count_);

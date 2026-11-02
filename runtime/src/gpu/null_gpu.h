@@ -5,7 +5,7 @@
 #include <span>
 #include <vector>
 
-#include "common.h"
+#include "../common.h"
 
 namespace nxrt::gpu {
 

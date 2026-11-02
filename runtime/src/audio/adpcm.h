@@ -7,7 +7,7 @@
 
 #include <algorithm>
 
-#include "common.h"
+#include "../common.h"
 
 namespace nxrt::audio {
 

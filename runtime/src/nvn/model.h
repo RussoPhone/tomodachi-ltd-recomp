@@ -13,7 +13,7 @@
 #include <unordered_map>
 #include <vector>
 
-#include "common.h"
+#include "../common.h"
 
 // Host-side model of the title's NVN objects.
 //

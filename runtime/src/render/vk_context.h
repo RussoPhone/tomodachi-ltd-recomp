@@ -7,7 +7,7 @@
 
 #include <vector>
 
-#include "common.h"
+#include "../common.h"
 
 struct SDL_Window;
 
@@ -51,6 +51,11 @@ public:
 
     Buffer CreateBuffer(VkDeviceSize size, VkBufferUsageFlags usage, bool host_visible, VkMemoryPropertyFlags extra = 0);
     void Destroy(Buffer& b);
+    // Device memory held by images made through CreateImage, and whether an allocation has failed since the last call (the
+    // renderer frees cached textures when it has).
+    static u64 ImageBytesHeld();
+    static bool TakeAllocationFailure();
+    u64 DeviceLocalHeapBytes() const;
     Image CreateImage(const VkImageCreateInfo& info);
     void Destroy(Image& i);
     bool FormatSupports(VkFormat format, VkFormatFeatureFlags features) const;

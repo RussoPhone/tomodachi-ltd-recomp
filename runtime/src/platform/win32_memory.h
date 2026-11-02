@@ -21,7 +21,7 @@
 #include <utility>
 #include <vector>
 
-#include "common.h"
+#include "../common.h"
 
 namespace nxrt::win32 {
 

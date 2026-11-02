@@ -9,7 +9,7 @@
 #include <mutex>
 #include <vector>
 
-#include "common.h"
+#include "../common.h"
 #include "audio/linear_resampler.h"
 
 namespace nxrt::audio {

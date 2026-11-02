@@ -12,7 +12,7 @@
 #include <functional>
 #include <string>
 
-#include "common.h"
+#include "../common.h"
 #include "guest_abi.h"
 
 namespace nxrt::hle {

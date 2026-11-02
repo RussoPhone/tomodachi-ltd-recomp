@@ -4,7 +4,7 @@
 #include <string>
 #include <vector>
 
-#include "common.h"
+#include "../common.h"
 #include "frontend/inline_keyboard_input.h"
 
 struct SDL_Window;
