@@ -1,0 +1,49 @@
+# Does the nxrt runtime (without any game) compile on Windows? Builds only nxrt_core with a stub game export: no game file, key or
+# firmware is ever used here, and nothing is run. It proves the code compiles and links on Windows; it does not prove the game runs.
+name: nxrt Windows compile check
+
+on:
+  push:
+    branches: [main]
+    paths: ['runtime/**', '.github/workflows/nxrt-windows.yml']
+  pull_request:
+    branches: [main]
+    paths: ['runtime/**', '.github/workflows/nxrt-windows.yml']
+  workflow_dispatch:
+
+jobs:
+  nxrt-core:
+    runs-on: windows-2022
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - name: Dependencies (fmt, SDL2 from vcpkg)
+        shell: pwsh
+        run: |
+          & "$env:VCPKG_INSTALLATION_ROOT\vcpkg.exe" install fmt sdl2 --triplet x64-windows
+      - name: Boost headers
+        shell: pwsh
+        run: |
+          curl.exe -L --fail -o boost.zip https://archives.boost.io/release/1.84.0/source/boost_1_84_0.zip
+          Expand-Archive boost.zip -DestinationPath "$env:RUNNER_TEMP\boost" -Force
+          "BOOST_ROOT_DIR=$env:RUNNER_TEMP\boost\boost_1_84_0" | Out-File -FilePath $env:GITHUB_ENV -Append
+      - name: Stub game export
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force "$env:RUNNER_TEMP\stub\exefs" | Out-Null
+          Set-Content -LiteralPath "$env:RUNNER_TEMP\stub\exefs\recomp_registration.c" -Value "/* stub: no game export */"
+      - name: Configure
+        shell: pwsh
+        run: |
+          cmake -S runtime -B build -G Ninja -DCMAKE_C_COMPILER=clang -DCMAKE_CXX_COMPILER=clang++ `
+            "-DCMAKE_TOOLCHAIN_FILE=$env:VCPKG_INSTALLATION_ROOT\scripts\buildsystems\vcpkg.cmake" -DVCPKG_TARGET_TRIPLET=x64-windows `
+            "-DNXRT_GAME_EXPORT=$env:RUNNER_TEMP\stub\exefs" "-DNXRT_GAME_LIBS=stub" "-DNXRT_BOOST_ROOT=$env:BOOST_ROOT_DIR"
+      - name: Build nxrt_core
+        shell: pwsh
+        run: cmake --build build --target nxrt_core -j 4 2>&1 | Tee-Object -FilePath build-log.txt
+      - name: Upload the build log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: nxrt-windows-build-log
+          path: build-log.txt
