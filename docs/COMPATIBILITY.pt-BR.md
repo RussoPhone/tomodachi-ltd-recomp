@@ -11,6 +11,12 @@ Adicione a sua com um [relato de compatibilidade](https://github.com/RussoPhone/
 |---|---|---|---|---|
 | ✅ Funciona | NVIDIA GeForce RTX 4050 Laptop, proprietário 615.x, Vulkan 1.4 | EndeavourOS (Arch), kernel 7.x, sessão Wayland via XWayland | Instalação completa; 30 FPS na ilha; quedas breves para ~23 FPS ao carregar cenas | mantenedor |
 
+## Windows: primeiro passo feito
+
+O runtime `nxrt` agora **compila e linka no Windows** (GitHub Actions, `windows-2022`, clang, contra substitutos do lado do jogo; veja
+`.github/workflows/nxrt-windows.yml`). Isso é tudo que isso prova: nada foi executado no Windows, a compilação do lado do jogo (o recompilador
+e o instalador) continua só para Linux, e não há instalador para Windows. O Windows **ainda não é suportado**.
+
 ## Ainda não testado (ajuda bem-vinda)
 
 | O quê | Por que importa |

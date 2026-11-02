@@ -11,6 +11,12 @@ Add yours with a [compatibility report](https://github.com/RussoPhone/tomodachi-
 |---|---|---|---|---|
 | ✅ Works | NVIDIA GeForce RTX 4050 Laptop, proprietary 615.x, Vulkan 1.4 | EndeavourOS (Arch), kernel 7.x, Wayland session via XWayland | Full install; 30 FPS on the island; brief dips to ~23 FPS while scenes load | maintainer |
 
+## Windows: first step done
+
+The `nxrt` runtime now **compiles and links on Windows** (GitHub Actions, `windows-2022`, clang, against stand-ins for the game side; see
+`.github/workflows/nxrt-windows.yml`). That is all it proves: nothing has been run on Windows, the game-side build (the recompiler and the
+installer) is still Linux-only, and there is no Windows installer. Windows is **not supported yet**.
+
 ## Not tested yet (help wanted)
 
 | What | Why it matters |
