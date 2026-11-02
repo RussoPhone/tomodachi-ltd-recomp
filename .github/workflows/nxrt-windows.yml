@@ -17,10 +17,10 @@ jobs:
     timeout-minutes: 60
     steps:
       - uses: actions/checkout@v4
-      - name: Dependencies (fmt, SDL2 from vcpkg)
+      - name: Dependencies (fmt, SDL2, Vulkan loader from vcpkg)
         shell: pwsh
         run: |
-          & "$env:VCPKG_INSTALLATION_ROOT\vcpkg.exe" install fmt sdl2 --triplet x64-windows
+          & "$env:VCPKG_INSTALLATION_ROOT\vcpkg.exe" install fmt sdl2 vulkan vulkan-loader --triplet x64-windows
       - name: Boost headers
         shell: pwsh
         run: |
