@@ -1,6 +1,8 @@
 # Changelog
 
-## Unreleased
+## Alpha 1.7.3 — 2026-11-02
+- **Fixed:** long sessions no longer exhaust video memory. Textures that were not used recently are released (least recently used first) once
+  images hold too much device memory, which avoids the driver crash after many scenes. Tested in a session of more than 20 minutes.
 - The launcher now backs the save up automatically before every play session (newest 10 kept in `local/backups/auto-*.zip`).
 
 ## Alpha 1.7.2 — 2026-11-01
