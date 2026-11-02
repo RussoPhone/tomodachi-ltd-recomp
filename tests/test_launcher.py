@@ -31,6 +31,13 @@ class LauncherTests(unittest.TestCase):
         safe = launcher.play_command({'fullscreen': False, 'size': '1280x720', 'language': 'en-US', 'safe': True})
         self.assertIn('--safe', safe)
 
+    def test_auto_backup_keeps_only_the_newest_copies(self):
+        (launcher.SAVE_DIR).mkdir(parents=True, exist_ok=True)
+        (launcher.SAVE_DIR / 'a.sav').write_bytes(b'x')
+        for _ in range(launcher.KEEP_AUTO + 3):
+            launcher.auto_backup()
+        self.assertEqual(len(list(launcher.BACKUPS.glob('auto-*.zip'))), launcher.KEEP_AUTO)
+
     def test_backup_and_restore_keep_a_safety_copy(self):
         self.assertIsNone(launcher.backup_save())
         launcher.SAVE_DIR.mkdir()

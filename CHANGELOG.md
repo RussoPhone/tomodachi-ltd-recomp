@@ -1,5 +1,8 @@
 # Changelog
 
+## Unreleased
+- The launcher now backs the save up automatically before every play session (newest 10 kept in `local/backups/auto-*.zip`).
+
 ## Alpha 1.7.2 — 2026-11-01
 - **Experimental mouse support** (awkward in some menus; it will be improved over time): edge scrolling and middle-button drag to move the island
   camera, the wheel zooms, right click is B, **F8** captures the mouse as an analog stick (hand follows it where the game shows its hand;

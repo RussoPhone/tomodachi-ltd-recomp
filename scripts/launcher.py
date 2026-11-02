@@ -63,21 +63,35 @@ def installed():
     return (ROOT / 'local/nxrt/bin/nxrt').exists() and (ROOT / 'local/install/tomodachi').is_dir()
 
 
-def backup_save():
-    """Zip local/user-nxrt into local/backups/save-<time>.zip and return the path (None if there is no save yet)."""
+KEEP_AUTO = 10
+
+
+def backup_save(prefix='save'):
+    """Zip local/user-nxrt into local/backups/<prefix>-<time>.zip and return the path (None if there is no save yet)."""
     if not SAVE_DIR.is_dir() or not any(SAVE_DIR.iterdir()):
         return None
     BACKUPS.mkdir(parents=True, exist_ok=True)
     stamp = time.strftime('%Y%m%d-%H%M%S')
-    out, n = BACKUPS / f'save-{stamp}.zip', 1
+    out, n = BACKUPS / f'{prefix}-{stamp}.zip', 1
     while out.exists():  # never overwrite an earlier backup (two in the same second)
         n += 1
-        out = BACKUPS / f'save-{stamp}-{n}.zip'
+        out = BACKUPS / f'{prefix}-{stamp}-{n}.zip'
     with zipfile.ZipFile(out, 'w', zipfile.ZIP_DEFLATED) as z:
         for path in sorted(SAVE_DIR.rglob('*')):
             if path.is_file():
                 z.write(path, path.relative_to(SAVE_DIR).as_posix())
     return out
+
+
+def auto_backup():
+    """Back the save up before each play session and keep only the newest KEEP_AUTO automatic copies (manual ones are never pruned)."""
+    try:
+        out = backup_save('auto')
+        for old in sorted(BACKUPS.glob('auto-*.zip'))[:-KEEP_AUTO]:
+            old.unlink()
+        return out
+    except OSError:
+        return None  # a full disk must not stop the game from starting
 
 
 def restore_save(archive):
@@ -176,6 +190,7 @@ def main():
     def on_play():
         current = current_settings()
         save_settings(current)
+        auto_backup()
         play.state(['disabled'])
         status.set('Playing… close the game window to come back.')
         root.iconify()
