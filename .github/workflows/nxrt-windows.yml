@@ -31,16 +31,26 @@ jobs:
         shell: pwsh
         run: |
           New-Item -ItemType Directory -Force "$env:RUNNER_TEMP\stub\exefs" | Out-Null
-          Set-Content -LiteralPath "$env:RUNNER_TEMP\stub\exefs\recomp_registration.c" -Value "/* stub: no game export */"
+          # Stand-ins for what the recompiled game provides, only so that nxrt.exe links; there is no game code behind them.
+          $stub = @'
+          /* stub: no game export */
+          const void* suyu_recomp_static_modules_v4(unsigned* count) { if (count) *count = 0; return 0; }
+          int suyu_recomp_static_guard_v2(unsigned v) { (void)v; return 0; }
+          unsigned suyu_recomp_static_guard_gen_v1(unsigned a, void* b, unsigned c) { (void)a; (void)b; (void)c; return 0; }
+          int suyu_recomp_static_fastmem_v1(void) { return 0; }
+          int suyu_recomp_static_fpx_v1(void) { return 0; }
+          int suyu_recomp_static_features_v1(void) { return 0; }
+          '@
+          Set-Content -LiteralPath "$env:RUNNER_TEMP\stub\exefs\recomp_registration.c" -Value $stub
       - name: Configure
         shell: pwsh
         run: |
           cmake -S runtime -B build -G Ninja -DCMAKE_C_COMPILER=clang -DCMAKE_CXX_COMPILER=clang++ `
             "-DCMAKE_TOOLCHAIN_FILE=$env:VCPKG_INSTALLATION_ROOT\scripts\buildsystems\vcpkg.cmake" -DVCPKG_TARGET_TRIPLET=x64-windows `
-            "-DNXRT_GAME_EXPORT=$env:RUNNER_TEMP\stub\exefs" "-DNXRT_GAME_LIBS=stub" "-DNXRT_BOOST_ROOT=$env:BOOST_ROOT_DIR"
-      - name: Build nxrt_core
+            "-DNXRT_GAME_EXPORT=$env:RUNNER_TEMP\stub\exefs" "-DNXRT_GAME_LIBS=kernel32" "-DNXRT_BOOST_ROOT=$env:BOOST_ROOT_DIR"
+      - name: Build nxrt_core and link nxrt.exe (with the stand-ins)
         shell: pwsh
-        run: cmake --build build --target nxrt_core -j 4 -- -k 0 2>&1 | Tee-Object -FilePath build-log.txt
+        run: cmake --build build --target nxrt -j 4 -- -k 0 2>&1 | Tee-Object -FilePath build-log.txt
       - name: Upload the build log
         if: always()
         uses: actions/upload-artifact@v4
