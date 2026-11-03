@@ -4,6 +4,7 @@
 #include "guest_clock.h"
 
 #include <chrono>
+#include <cstdlib>
 #include <ctime>
 #include <vector>
 
@@ -179,6 +180,9 @@ u32 ExclStorePair(void* user, u64 va, u32 size, u64 lo, u64 hi) {
 // The Switch's physical counter runs at 19.2 MHz.
 u64 CntpctBaseTicks() {
     static const u64 base = [] {
+        // NXRT_NO_CNTPCT_BASE=1 (diagnostic): start the counter at zero. The game's clock is then wrong (it adds the offset to the
+        // uptime) but anything that misbehaves with a large counter shows up.
+        if (const char* e = std::getenv("NXRT_NO_CNTPCT_BASE"); e && e[0] == '1') return 0ull;
         const s64 wall = static_cast<s64>(::time(nullptr));
         return wall > kUserClockOffset ? static_cast<u64>(wall - kUserClockOffset) * 19'200'000ull : 0ull;
     }();

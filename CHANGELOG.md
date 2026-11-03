@@ -1,13 +1,13 @@
 # Changelog
 
-## Unreleased
+## Alpha 1.7.4 — 2026-11-03
 - **Fixed: the game's clock showed the wrong time.** Since 1.7.1 the game read "2026-10-28 plus the time you had played" instead of the real date and hour (it
   derives its time from the system counter, and only the clock offset had been fixed). The counter now starts at the difference to the host
   clock, as on a console that has been on for days, so the date and hour match the computer and the "system time has changed" message stays away.
   A save last played on 1.7.1 to 1.7.3 holds the wrong date, so the first start can see several days pass at once.
 - **Fixed: running out of video memory when other programs use the GPU.** Texture eviction now follows what the driver says is left for this
   process (VK_EXT_memory_budget), not half of the card, so a browser or compositor holding 2 GB of a 6 GB card no longer makes allocations fail.
-- Diagnostics: `NXRT_NVN_TIME=1` (time spent in the NVN layer per call), `NXRT_NO_PACE=1` (no vsync sleep).
+- Diagnostics: `NXRT_NO_CNTPCT_BASE=1` (counter from zero; the game's clock is then wrong), `NXRT_NVN_TIME=1` (time spent in the NVN layer per call), `NXRT_NO_PACE=1` (no vsync sleep).
 
 ## Alpha 1.7.3 — 2026-11-02
 - **Fixed:** long sessions no longer exhaust video memory. Textures that were not used recently are released (least recently used first) once
