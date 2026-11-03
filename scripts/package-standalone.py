@@ -231,6 +231,12 @@ def main():
         if not exefs.is_dir():
             sys.exit(f'incomplete AOT export at {export.relative_to(ROOT)}: missing exefs directory')
         mods = ordered([m['name'] for m in manifest['modules']])
+        missing = [m for m in mods if not (exefs / m / 'recomp_runtime.h').exists()]
+        if missing:
+            have = sorted(p.name for p in (exefs / missing[0]).iterdir())[:20] if (exefs / missing[0]).is_dir() else 'the folder does not exist'
+            sys.exit(f'the game export is incomplete: module(s) {", ".join(missing)} have no recomp_runtime.h '
+                     f'(in {exefs.relative_to(ROOT)}/{missing[0]}: {have}). Run ./install.sh --report and attach it; '
+                     'the export step (7) probably failed without saying so.')
         features = manifest['image_features']
         (exefs / 'recomp_registration.c').write_text(registration(mods, features))
         write_markers(exefs, features)

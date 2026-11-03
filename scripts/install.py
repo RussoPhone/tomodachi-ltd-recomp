@@ -115,6 +115,20 @@ def write_report(failed=None):
         if log and log.exists():
             lines += ['', f'--- last 60 lines of {log_name} ---']
             lines += log.read_text(errors='replace').splitlines()[-60:]
+    # What the game export left on disk: a module without its runtime header fails much later, in the compile step.
+    try:
+        for cache in sorted((ROOT / 'local/aot').rglob('aot_cache'))[:2]:
+            if not (cache / 'aot_manifest.json').exists():
+                continue
+            lines += ['', f'--- export folder {cache.relative_to(ROOT)} ---']
+            for module in sorted((cache / 'exefs').iterdir())[:12] if (cache / 'exefs').is_dir() else []:
+                entries = sorted(e.name for e in module.iterdir())[:14] if module.is_dir() else []
+                lines.append(f'{module.name}/ ({len(list(module.iterdir())) if module.is_dir() else 0} files): ' + ', '.join(entries))
+        status = ROOT / 'artifacts/aot-export-status.json'
+        if status.exists():
+            lines += ['', '--- artifacts/aot-export-status.json ---', status.read_text(errors='replace')[:1500]]
+    except OSError:
+        pass
     # Tools such as cmake/ninja write their own logs under artifacts/; the step log only says "see that file".
     recent = [f for f in sorted((ROOT / 'artifacts').glob('*.log')) if time.time() - f.stat().st_mtime < 6 * 3600] if (ROOT / 'artifacts').is_dir() else []
     for extra in recent[-4:]:

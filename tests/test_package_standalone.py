@@ -20,7 +20,7 @@ def load_packager():
 
 
 class StandalonePackageTests(unittest.TestCase):
-    def run_fixture(self, *args, build_rc=0, create_executable=False):
+    def run_fixture(self, *args, build_rc=0, create_executable=False, runtime_header=True):
         packager = load_packager()
         with tempfile.TemporaryDirectory(prefix="standalone-package-") as tmp:
             root = pathlib.Path(tmp)
@@ -36,7 +36,9 @@ class StandalonePackageTests(unittest.TestCase):
                 "image_features": 0,
                 "image_abi": 4,
             }))
-            (export / "exefs").mkdir()
+            (export / "exefs" / "main").mkdir(parents=True)
+            if runtime_header:
+                (export / "exefs" / "main" / "recomp_runtime.h").write_text("/* fixture */\n")
             (root / "upstream/mk8-recomp/third_party/suyu").mkdir(parents=True)
             fake_cmake = root / "fake-cmake"
             fake_cmake.write_text(
@@ -92,6 +94,12 @@ class StandalonePackageTests(unittest.TestCase):
 
         self.assertEqual(result, 0, stdout + stderr)
         self.assertIn("configured upstream/mk8-recomp/build/suyu-static", stdout)
+
+    def test_export_without_runtime_header_is_reported_early(self):
+        result, stdout, stderr = self.run_fixture("--configure-only", runtime_header=False)
+
+        self.assertIn("no recomp_runtime.h", str(result))
+        self.assertIn("main", str(result))
 
     def test_negative_resource_limits_are_rejected(self):
         invalid_options = (
