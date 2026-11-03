@@ -101,6 +101,21 @@ class StandalonePackageTests(unittest.TestCase):
         self.assertIn("no recomp_runtime.h", str(result))
         self.assertIn("main", str(result))
 
+    def test_missing_runtime_files_are_copied_from_a_sibling_module(self):
+        packager = load_packager()
+        with tempfile.TemporaryDirectory(prefix="standalone-heal-") as tmp:
+            exefs = pathlib.Path(tmp)
+            for module in ("rtld", "main", "sdk"):
+                (exefs / module).mkdir()
+            for name in packager.RUNTIME_FILES:
+                (exefs / "rtld" / name).write_text("same")
+                (exefs / "sdk" / name).write_text("same")
+            repaired = packager.heal_runtime_files(exefs, ["rtld", "main", "sdk"])
+            self.assertEqual(repaired, ["main"])
+            for name in packager.RUNTIME_FILES:
+                self.assertEqual((exefs / "main" / name).read_text(), "same")
+            self.assertEqual(packager.heal_runtime_files(exefs, ["rtld", "main", "sdk"]), [])
+
     def test_negative_resource_limits_are_rejected(self):
         invalid_options = (
             (("--jobs", "-1"), "--jobs must be at least 1"),

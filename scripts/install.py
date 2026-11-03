@@ -571,6 +571,17 @@ def main():
     if plat.IS_WINDOWS and not CI:
         fail('The native port is Linux-only for now; there is no Windows installer yet.')
     STATE.mkdir(parents=True, exist_ok=True)
+    if '--redo' in sys.argv:
+        # ./install.sh --redo 7: forget that step 7 and every later step was done, so they run again.
+        try:
+            first = int(sys.argv[sys.argv.index('--redo') + 1])
+            assert 1 <= first <= len(STEPS)
+        except (IndexError, ValueError, AssertionError):
+            fail(f'--redo needs a step number from 1 to {len(STEPS)}, for example: {RERUN} --redo 7')
+        for index, (key, _, _) in enumerate(STEPS[first - 1:], first):
+            for f in stage_paths(index, key):
+                f.unlink(missing_ok=True)
+        say(f'{YELLOW}Steps {first} to {len(STEPS)} will run again.{RESET}')
     refresh_after_update()
     say(f'{BOLD}Tomodachi Life: Living the Dream — unofficial native PC port (nxrt), installer{RESET}')
     say('Educational, experimental project. Use only with your own copy of the game.\n')

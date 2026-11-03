@@ -1,5 +1,10 @@
 # Changelog
 
+## Unreleased
+- Installer: `./install.sh --redo 7` runs step 7 and every later step again (needed after deleting `local/aot`).
+- Installer: when the game export leaves a module without `recomp_runtime.h/.c` (seen once, on `main` only), the files are copied from another
+  module, since they are identical in all of them. If no module has them, the install stops at step 9 with a clear message.
+
 ## Alpha 1.7.4 — 2026-11-03
 - **Fixed: the game's clock showed the wrong time.** Since 1.7.1 the game read "2026-10-28 plus the time you had played" instead of the real date and hour (it
   derives its time from the system counter, and only the clock offset had been fixed). The counter now starts at the difference to the host
