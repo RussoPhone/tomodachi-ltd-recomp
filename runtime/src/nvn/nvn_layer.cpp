@@ -6,13 +6,18 @@
 // driver; the renderer replaces the forwarding one function family at a time.
 #include "nvn/nvn_layer.h"
 
+#include <algorithm>
 #include <atomic>
+#include <chrono>
 #include <cstring>
 #include <map>
 #include <memory>
 #include <mutex>
 #include <set>
 #include <string>
+#include <thread>
+#include <tuple>
+#include <vector>
 
 #include "cpu.h"
 #include "hle/hooks.h"
@@ -33,6 +38,7 @@ struct Proc {
     const Handler* handler = nullptr;
     bool cmdbuf = false; // nvnCommandBuffer*: x0 is the command buffer
     std::atomic<u64> calls{0};
+    std::atomic<u64> host_ns{0}; // NXRT_NVN_TIME=1: time spent in our hooks and handlers (including waiting for the model lock)
 };
 
 std::function<void(u64, const std::string&)> g_cb_before;
@@ -43,7 +49,26 @@ std::map<std::string, Handler>& Handlers() {
     return h;
 }
 
+// NXRT_NVN_TIME=1 (diagnostic): per NVN function, the wall time our side spends before handing the call to the driver; the top
+// of the table is logged every 5 s as "nvntime".
+struct ForwardTimer {
+    Proc* p;
+    std::chrono::steady_clock::time_point start = std::chrono::steady_clock::now();
+    ~ForwardTimer() {
+        p->host_ns.fetch_add(static_cast<u64>(std::chrono::duration_cast<std::chrono::nanoseconds>(
+                                                  std::chrono::steady_clock::now() - start).count()),
+                             std::memory_order_relaxed);
+    }
+};
+void ForwardImpl(Proc* p, GuestContext& c);
 void Forward(Proc* p, GuestContext& c) {
+    static const bool timed = std::getenv("NXRT_NVN_TIME") != nullptr;
+    if (!timed) return ForwardImpl(p, c);
+    ForwardTimer timer{p};
+    ForwardImpl(p, c);
+}
+
+void ForwardImpl(Proc* p, GuestContext& c) {
     p->calls.fetch_add(1, std::memory_order_relaxed);
     static const u64 trace_cmd = std::getenv("NXRT_TRACE_CMD") ? std::strtoull(std::getenv("NXRT_TRACE_CMD"), nullptr, 16) : 0;
     static const bool trace_draws = std::getenv("NXRT_TRACE_DRAWS") != nullptr;
@@ -146,6 +171,38 @@ u64 g_driver_base = 0;
 
 u64 Wrap(const std::string& name, u64 real);
 
+void StartTimeReporter() {
+    static const bool timed = std::getenv("NXRT_NVN_TIME") != nullptr;
+    static std::once_flag once;
+    if (!timed) return;
+    std::call_once(once, [] {
+        std::thread([] {
+            std::map<const Proc*, std::pair<u64, u64>> last;  // calls, ns at the previous report
+            for (;;) {
+                std::this_thread::sleep_for(std::chrono::seconds(5));
+                std::vector<std::tuple<u64, u64, std::string>> rows;  // ns, calls (this window), name
+                u64 total = 0;
+                {
+                    std::lock_guard lock(g_mutex);
+                    for (const auto& [real, p] : g_by_real) {
+                        auto& prev = last[p.get()];
+                        const u64 calls = p->calls.load(), ns = p->host_ns.load();
+                        if (ns > prev.second) rows.emplace_back(ns - prev.second, calls - prev.first, p->name);
+                        total += ns - prev.second;
+                        prev = {calls, ns};
+                    }
+                }
+                std::sort(rows.begin(), rows.end(), [](const auto& a, const auto& b) { return std::get<0>(a) > std::get<0>(b); });
+                LOG_INFO("nvntime: our side of the NVN calls took %.1f ms/s in total", total / 5e6);
+                for (size_t i = 0; i < rows.size() && i < 12; ++i)
+                    LOG_INFO("nvntime: %7.1f ms/s %8.0f calls/s %6.2f us/call  %s", std::get<0>(rows[i]) / 5e6,
+                             std::get<1>(rows[i]) / 5.0, std::get<0>(rows[i]) / 1e3 / std::max<u64>(1, std::get<1>(rows[i])),
+                             std::get<2>(rows[i]).c_str());
+            }
+        }).detach();
+    });
+}
+
 void GetProcAddressHook(GuestContext& c) {
     const u64 device = c.x[0], name_ptr = c.x[1];
     const std::string name = g_memory.ReadString(name_ptr, 128);
@@ -166,6 +223,7 @@ u64 Wrap(const std::string& name, u64 real) {
     }
     slot = std::make_unique<Proc>();
     Proc* p = slot.get();
+    StartTimeReporter();
     p->name = name;
     p->real = real;
     if (name == "nvnDeviceGetProcAddress") {

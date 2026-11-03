@@ -10,6 +10,8 @@
 #include <unistd.h>
 #endif
 
+#include <atomic>
+#include "guest_clock.h"
 #include <chrono>
 #include <cstdio>
 #include <cstring>
@@ -91,7 +93,6 @@ s64 UptimeNs() {
 // counting across power-offs. Rebuilding both from this run's uptime made every launch look like "your system time has changed since
 // the last time you played". So the context offset is a constant (the value the existing saves already hold) and the steady clock is
 // the wall clock minus that offset, which is stable from one run to the next.
-constexpr s64 kUserClockOffset = 1793199229;
 s64 g_steady_base_ns = 0; // set once by TimeState; steady ns = this + uptime
 
 // Nanoseconds on the guest's steady clock.
@@ -201,12 +202,13 @@ struct TimeState {
         location = HostLocation();
         const s64 wall = static_cast<s64>(::time(nullptr));
         // A host clock set before the constant (not expected) falls back to the old per-run offset.
-        const s64 offset = wall >= kUserClockOffset ? kUserClockOffset : wall - UptimeNs() / 1'000'000'000;
-        g_steady_base_ns = (wall - offset) * 1'000'000'000 - UptimeNs();
+        // The guest counter already includes (wall - kUserClockOffset) (see CntpctBaseTicks), so offset + steady = host time.
+        const s64 offset = CntpctBaseTicks() > 0 ? kUserClockOffset : wall - UptimeNs() / 1'000'000'000;
+        g_steady_base_ns = 0;
         user_context.offset = offset;
         user_context.steady = {0, kClockId};
         LOG_INFO("time: user clock offset=%lld steady=%lld s (location %s)", static_cast<long long>(offset),
-                 static_cast<long long>(wall - offset), location.c_str());
+                 static_cast<long long>(SteadyNs() / 1'000'000'000), location.c_str());
 
         shm = std::make_shared<KSharedMemory>("time", 0x1000);
         u8* p = shm->HostPointer();
@@ -340,6 +342,11 @@ bool ToCalendar(s64 posix, bool local, CalendarTime& out, CalendarAdditionalInfo
     info.ut_offset = static_cast<s32>(tm.tm_gmtoff);
 #endif
     info.is_dst = tm.tm_isdst > 0;
+    static std::atomic<unsigned> traced{0};
+    if (const unsigned n = traced.fetch_add(1); n < 24 || n % 2000 == 0) {
+        LOG_INFO("time: calendar #%u local=%d posix=%lld -> %04d-%02d-%02d %02d:%02d:%02d offset=%d", n, local ? 1 : 0,
+                 static_cast<long long>(posix), out.year, out.month, out.day, out.hour, out.minute, out.second, info.ut_offset);
+    }
     return true;
 }
 

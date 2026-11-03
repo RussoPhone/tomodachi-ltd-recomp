@@ -56,6 +56,8 @@ public:
     static u64 ImageBytesHeld();
     static bool TakeAllocationFailure();
     u64 DeviceLocalHeapBytes() const;
+    u64 DeviceLocalBudgetLeft() const;
+    bool has_memory_budget = false;
     Image CreateImage(const VkImageCreateInfo& info);
     void Destroy(Image& i);
     bool FormatSupports(VkFormat format, VkFormatFeatureFlags features) const;

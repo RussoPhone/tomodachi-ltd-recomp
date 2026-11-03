@@ -1,8 +1,10 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include <atomic>
 #include "memory.h"
+#include "guest_clock.h"
 
 #include <chrono>
+#include <ctime>
 #include <vector>
 
 #ifdef _WIN32
@@ -175,12 +177,20 @@ u32 ExclStorePair(void* user, u64 va, u32 size, u64 lo, u64 hi) {
 } // namespace
 
 // The Switch's physical counter runs at 19.2 MHz.
+u64 CntpctBaseTicks() {
+    static const u64 base = [] {
+        const s64 wall = static_cast<s64>(::time(nullptr));
+        return wall > kUserClockOffset ? static_cast<u64>(wall - kUserClockOffset) * 19'200'000ull : 0ull;
+    }();
+    return base;
+}
+
 u64 ReadCntpct() {
     using namespace std::chrono;
     static const auto start = steady_clock::now();
     const u64 ns = duration_cast<nanoseconds>(steady_clock::now() - start).count();
     // ns * 19.2e6 / 1e9 = ns * 12 / 625, split to avoid overflow.
-    return (ns / 625) * 12 + (ns % 625) * 12 / 625;
+    return CntpctBaseTicks() + (ns / 625) * 12 + (ns % 625) * 12 / 625;
 }
 
 namespace {

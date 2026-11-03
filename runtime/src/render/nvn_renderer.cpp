@@ -8955,7 +8955,23 @@ void NvnRenderer::EvictSampledTextures() {
         const char* v = std::getenv("NXRT_IMAGE_BUDGET_MIB");
         return v ? std::strtoull(v, nullptr, 10) << 20 : u64{0};
     }();
-    const u64 budget = forced ? forced : heap / 2;
+    u64 budget = forced ? forced : heap / 2;
+    if (!forced) {
+        // Other programs hold device memory too (a browser and the compositor took 2.4 GB of this 6 GB card): keep the images inside
+        // what the driver says is left for this process, less a reserve for buffers, render targets and the swapchain.
+        if (const u64 left = vk_.DeviceLocalBudgetLeft()) {
+            const u64 reserve = u64{768} << 20;
+            const u64 fit = held + (left > reserve ? left - reserve : 0);
+            budget = std::min<u64>(budget, std::max<u64>(fit, u64{512} << 20));
+            static bool logged = false;
+            if (!logged) {
+                logged = true;
+                LOG_INFO("renderer: device memory: %llu MiB card, %llu MiB left for this process, image budget %llu MiB",
+                         static_cast<unsigned long long>(heap >> 20), static_cast<unsigned long long>(left >> 20),
+                         static_cast<unsigned long long>(budget >> 20));
+            }
+        }
+    }
     if (!pressure && held < budget) return;
     const u64 target = pressure ? budget * 2 / 3 : budget * 4 / 5;
     std::vector<std::pair<u64, u64>> candidates;  // (last use, key)

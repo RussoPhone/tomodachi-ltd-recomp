@@ -259,7 +259,12 @@ private:
         const auto pace_start = clock::now();
         const auto plan = PlanVsyncPacing(pace_start, next_vsync_, period);
         next_vsync_ = plan.next_vsync;
-        if (plan.should_sleep) std::this_thread::sleep_until(next_vsync_);
+        // NXRT_NO_PACE=1 (diagnostic): never sleep, so the present interval is the real time the frame took.
+        static const bool no_pace = [] {
+            const char* e = std::getenv("NXRT_NO_PACE");
+            return e && e[0] == '1';
+        }();
+        if (plan.should_sleep && !no_pace) std::this_thread::sleep_until(next_vsync_);
         if (CounterTrace::Enabled()) {
             const auto end = clock::now();
             const auto ms = [](auto d) { return std::chrono::duration<double, std::milli>(d).count(); };

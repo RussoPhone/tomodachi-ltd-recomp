@@ -104,6 +104,8 @@ bool VulkanContext::Init(SDL_Window* window) {
     const char* push_descriptor_env = std::getenv("NXRT_PUSH_DESCRIPTORS");
     const bool request_push_descriptors = push_descriptor_env && std::strcmp(push_descriptor_env, "1") == 0;
     if (surface_) extensions.push_back(VK_KHR_SWAPCHAIN_EXTENSION_NAME);
+    has_memory_budget = HasExtension(available, VK_EXT_MEMORY_BUDGET_EXTENSION_NAME);
+    if (has_memory_budget) extensions.push_back(VK_EXT_MEMORY_BUDGET_EXTENSION_NAME);
     has_index_uint8 = HasExtension(available, VK_EXT_INDEX_TYPE_UINT8_EXTENSION_NAME);
     has_depth_clip_control = HasExtension(available, VK_EXT_DEPTH_CLIP_CONTROL_EXTENSION_NAME);
     has_push_descriptors = request_push_descriptors && properties.apiVersion >= VK_API_VERSION_1_1 &&
@@ -283,6 +285,25 @@ u64 VulkanContext::DeviceLocalHeapBytes() const {
         if (memory_properties.memoryHeaps[i].flags & VK_MEMORY_HEAP_DEVICE_LOCAL_BIT) best = std::max<u64>(best, memory_properties.memoryHeaps[i].size);
     }
     return best;
+}
+
+// What the driver says this process may still allocate from the biggest device-local heap, counting what other programs (browser,
+// compositor) already hold. 0 when the driver cannot tell (no VK_EXT_memory_budget).
+u64 VulkanContext::DeviceLocalBudgetLeft() const {
+    if (!has_memory_budget) return 0;
+    VkPhysicalDeviceMemoryBudgetPropertiesEXT budget{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MEMORY_BUDGET_PROPERTIES_EXT};
+    VkPhysicalDeviceMemoryProperties2 props{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MEMORY_PROPERTIES_2, &budget};
+    vkGetPhysicalDeviceMemoryProperties2(physical, &props);
+    u32 best_heap = 0;
+    u64 best_size = 0;
+    for (u32 i = 0; i < props.memoryProperties.memoryHeapCount; ++i) {
+        const auto& heap = props.memoryProperties.memoryHeaps[i];
+        if ((heap.flags & VK_MEMORY_HEAP_DEVICE_LOCAL_BIT) && heap.size > best_size) {
+            best_size = heap.size;
+            best_heap = i;
+        }
+    }
+    return budget.heapBudget[best_heap] > budget.heapUsage[best_heap] ? budget.heapBudget[best_heap] - budget.heapUsage[best_heap] : 0;
 }
 
 Image VulkanContext::CreateImage(const VkImageCreateInfo& info) {

@@ -22,6 +22,10 @@
 #include "nvn/execution_model_snapshot.h"
 #include "nvn/texture_copy.h"
 
+// Handlers run hundreds of thousands of times a second: read an environment switch once, not on every call.
+#define ENV_SET(name) ([] { static const bool set = std::getenv(name) != nullptr; return set; }())
+
+
 namespace nxrt::nvn {
 
 namespace {
@@ -577,7 +581,7 @@ void RegisterObjects() {
         const u64 serial = ++m.serial;
         m.textures[a.X(0)] = Texture{desc, serial};
         JournalSet(&Model::textures, a.X(0), m.textures[a.X(0)]);
-        if (std::getenv("NXRT_TRACE_DRAWS") && desc.format == 0x25 &&
+        if (ENV_SET("NXRT_TRACE_DRAWS") && desc.format == 0x25 &&
             (desc.offset == 0 || desc.offset == 0x7fb0000)) {
             static u32 shown = 0;
             if (shown++ < 64) {
@@ -648,7 +652,7 @@ void RegisterObjects() {
             m.Touch();
             JournalTextureRegistration(a.X(0), id, registered, new_view);
         }
-        if (std::getenv("NXRT_TRACE_DRAWS") && (id == 0x2a8 || id == 0x2b7)) {
+        if (ENV_SET("NXRT_TRACE_DRAWS") && (id == 0x2a8 || id == 0x2b7)) {
             if (auto texture = m.textures.find(a.X(2)); texture != m.textures.end()) {
                 const auto& d = texture->second.desc;
                 LOG_INFO("trace: register texture-pool=%llx id=%x texture=%llx view=%llx storage=%llx+%llx "
@@ -751,7 +755,7 @@ void RegisterObjects() {
         JournalSet(&Model::windows, a.X(0), m.windows[a.X(0)]);
     });
     On("nvnWindowAcquireTexture", {}, [&m](Call& a) {
-        if (!std::getenv("NXRT_TRACE_WINDOW")) return;
+        if (!ENV_SET("NXRT_TRACE_WINDOW")) return;
         const s32 index = g_memory.IsMapped(a.X(2), sizeof(s32)) ? g_memory.Read<s32>(a.X(2)) : -1;
         std::lock_guard lock(m.lock);
         if (m.frames >= 16 && (m.frames + 1) % 120 != 0) return;
@@ -779,7 +783,7 @@ void RegisterCommands() {
         auto rec = m.recording.find(a.X(0));
         auto list = rec != m.recording.end() ? rec->second : std::make_shared<CommandList>();
         if (rec != m.recording.end()) m.recording.erase(rec);
-        if (std::getenv("NXRT_TRACE_WINDOW")) {
+        if (ENV_SET("NXRT_TRACE_WINDOW")) {
             // Does this list draw into a window texture?
             for (const Command& c : list->commands) {
                 if (c.op != Op::SetRenderTargets) continue;
@@ -952,13 +956,13 @@ void RegisterCommands() {
         Command c{Op::SetViewport};
         c.a[4] = 1; // floating range API; integer SetViewport keeps this flag zero
         g_memory.ReadBlock(address, c.f.data(), sizeof(float) * 4);
-        if (std::getenv("NXRT_TRACE_VIEWPORT_RANGES")) {
+        if (ENV_SET("NXRT_TRACE_VIEWPORT_RANGES")) {
             LOG_INFO("viewport-ranges cmd=%llx first=%llu count=%llu xywh=%g,%g,%g,%g legacy=%d",
                      static_cast<unsigned long long>(a.X(0)), static_cast<unsigned long long>(first),
                      static_cast<unsigned long long>(count), c.f[0], c.f[1], c.f[2], c.f[3],
-                     std::getenv("NXRT_LEGACY_IGNORE_VIEWPORT_RANGES") != nullptr);
+                     ENV_SET("NXRT_LEGACY_IGNORE_VIEWPORT_RANGES"));
         }
-        if (!std::getenv("NXRT_LEGACY_IGNORE_VIEWPORT_RANGES")) Record(a.X(0), std::move(c));
+        if (!ENV_SET("NXRT_LEGACY_IGNORE_VIEWPORT_RANGES")) Record(a.X(0), std::move(c));
     });
     ints("nvnCommandBufferSetScissor", Op::SetScissor, 4);
     On("nvnCommandBufferSetScissors", [](Call& a) {
@@ -968,13 +972,13 @@ void RegisterCommands() {
         if (first != 0 || !count || count > 16 || !g_memory.IsMapped(address, sizeof(u32) * 4)) return;
         Command c{Op::SetScissor};
         for (int i = 0; i < 4; ++i) c.a[i] = R32(address + 4 * i);
-        if (std::getenv("NXRT_TRACE_SCISSOR_RANGES")) {
+        if (ENV_SET("NXRT_TRACE_SCISSOR_RANGES")) {
             LOG_INFO("scissor-ranges cmd=%llx count=%llu xywh=%llu,%llu,%llu,%llu", static_cast<unsigned long long>(a.X(0)),
                      static_cast<unsigned long long>(count), static_cast<unsigned long long>(c.a[0]),
                      static_cast<unsigned long long>(c.a[1]), static_cast<unsigned long long>(c.a[2]),
                      static_cast<unsigned long long>(c.a[3]));
         }
-        if (!std::getenv("NXRT_LEGACY_IGNORE_SCISSOR_RANGES")) Record(a.X(0), std::move(c));
+        if (!ENV_SET("NXRT_LEGACY_IGNORE_SCISSOR_RANGES")) Record(a.X(0), std::move(c));
     });
     On("nvnCommandBufferClearTexture", [](Call& a) {
         // (cmd, const NVNtexture*, const NVNtextureView*, const NVNcopyRegion* region, const float* color, int mask)
@@ -990,7 +994,7 @@ void RegisterCommands() {
             c.words.push_back(view.base_level);
             c.words.push_back(view.min_layer);
         }
-        if (std::getenv("NXRT_TRACE_CLEAR_TEXTURE")) {
+        if (ENV_SET("NXRT_TRACE_CLEAR_TEXTURE")) {
             LOG_INFO("clear-texture cmd=%llx tex=%llx level=%u layer=%u mask=%llx region=%d xyz=%d,%d,%d whd=%u,%u,%u "
                      "color=%g,%g,%g,%g",
                      static_cast<unsigned long long>(a.X(0)), static_cast<unsigned long long>(c.a[0]), c.words[6],
@@ -998,7 +1002,7 @@ void RegisterCommands() {
                      static_cast<int>(c.words[0]), static_cast<int>(c.words[1]), static_cast<int>(c.words[2]), c.words[3],
                      c.words[4], c.words[5], c.f[0], c.f[1], c.f[2], c.f[3]);
         }
-        if (!std::getenv("NXRT_LEGACY_IGNORE_CLEAR_TEXTURE")) Record(a.X(0), std::move(c));
+        if (!ENV_SET("NXRT_LEGACY_IGNORE_CLEAR_TEXTURE")) Record(a.X(0), std::move(c));
     });
     ints("nvnCommandBufferSetTexturePool", Op::SetTexturePool, 1);
     ints("nvnCommandBufferSetSamplerPool", Op::SetSamplerPool, 1);
@@ -1136,7 +1140,7 @@ void RegisterCommands() {
         Record(a.X(0), std::move(c));
     });
     On("nvnCommandBufferCallCommands", [](Call& a) {
-        if (std::getenv("NXRT_TRACE_WINDOW")) {
+        if (ENV_SET("NXRT_TRACE_WINDOW")) {
             static int shown = 0;
             if (shown++ < 12) LOG_INFO("trace: cmd %llx calls %llu lists, first %llx", (unsigned long long)a.X(0),
                                        (unsigned long long)a.X(1), (unsigned long long)R64(a.X(2)));
@@ -1159,7 +1163,7 @@ void RegisterCommands() {
             for (u64 i = 0; i < a.X(1); ++i) {
                 const u64 handle = R64(a.X(2) + 8 * i);
                 const bool sample_submit = m.frames == 0 ? trace_submits < 2 : m.frames <= 8 || m.frames % 120 == 0;
-                if (std::getenv("NXRT_TRACE_WINDOW") && sample_submit && trace_submits < 64) {
+                if (ENV_SET("NXRT_TRACE_WINDOW") && sample_submit && trace_submits < 64) {
                     ++trace_submits;
                     std::string ops;
                     if (auto it = m.finished.find(handle); it != m.finished.end()) {
@@ -1172,7 +1176,7 @@ void RegisterCommands() {
                              static_cast<unsigned long long>(m.frames), static_cast<unsigned long long>(a.X(0)),
                              static_cast<unsigned long long>(handle), ops.substr(0, 320).c_str());
                 }
-                if (std::getenv("NXRT_TRACE_WINDOW") && m.frames >= 300 && m.frames < 302) {
+                if (ENV_SET("NXRT_TRACE_WINDOW") && m.frames >= 300 && m.frames < 302) {
                     auto it = m.finished.find(handle);
                     std::string ops;
                     if (it != m.finished.end()) {
@@ -1307,12 +1311,12 @@ void RegisterCommands() {
             if (auto w = m.windows.find(a.X(1)); w != m.windows.end() && a.X(2) < w->second.textures.size()) {
                 texture = w->second.textures[a.X(2)];
             }
-            if (std::getenv("NXRT_TRACE_WINDOW") && (m.frames <= 16 || m.frames % 120 == 0)) {
+            if (ENV_SET("NXRT_TRACE_WINDOW") && (m.frames <= 16 || m.frames % 120 == 0)) {
                 LOG_INFO("trace: present frame=%llu window=%llx index=%llu texture=%llx",
                          static_cast<unsigned long long>(m.frames), static_cast<unsigned long long>(a.X(1)),
                          static_cast<unsigned long long>(a.X(2)), static_cast<unsigned long long>(texture));
             }
-            if (std::getenv("NXRT_NVN_FRAMES") && m.frames % 120 == 0) {
+            if (ENV_SET("NXRT_NVN_FRAMES") && m.frames % 120 == 0) {
                 LOG_INFO("nvn frame %llu: %llu submits, %llu commands, %llu draws, %llu clears, %llu unknown handles; "
                          "%zu textures, %zu programs, %zu finished lists",
                          (unsigned long long)m.frames, (unsigned long long)stats.submits,

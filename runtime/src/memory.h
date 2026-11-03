@@ -251,5 +251,8 @@ extern void (*g_fault_hook)();
 
 // The guest's 19.2 MHz physical counter (CNTPCT_EL0).
 u64 ReadCntpct();
+// Ticks the counter already had when the process started. A console that has been on for days has a large counter, and the
+// game derives its clock from it (user clock context offset + steady clock), so it starts at (host time - the saved offset).
+u64 CntpctBaseTicks();
 
 } // namespace nxrt
