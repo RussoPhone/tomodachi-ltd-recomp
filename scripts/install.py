@@ -118,8 +118,19 @@ def write_report(failed=None):
     # Tools such as cmake/ninja write their own logs under artifacts/; the step log only says "see that file".
     recent = [f for f in sorted((ROOT / 'artifacts').glob('*.log')) if time.time() - f.stat().st_mtime < 6 * 3600] if (ROOT / 'artifacts').is_dir() else []
     for extra in recent[-4:]:
+        body = extra.read_text(errors='replace').splitlines()
+        # The last lines of a long build are usually warnings; the real error is where ninja prints "FAILED:".
+        hits = [i for i, l in enumerate(body) if l.startswith('FAILED:') or ': error:' in l or 'fatal error' in l]
+        if hits:
+            lines += ['', f'--- first errors in artifacts/{extra.name} ---']
+            shown = 0
+            for i in hits:
+                if shown >= 3:
+                    break
+                lines += body[max(0, i - 1):i + 14] + ['...']
+                shown += 1
         lines += ['', f'--- last 40 lines of artifacts/{extra.name} ---']
-        lines += extra.read_text(errors='replace').splitlines()[-40:]
+        lines += body[-40:]
     path.write_text(scrub('\n'.join(lines)) + '\n')
     return path
 
