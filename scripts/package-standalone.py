@@ -266,6 +266,8 @@ def main():
                  '-DENABLE_QT_TRANSLATION=OFF', '-DUSE_DISCORD_PRESENCE=OFF', '-Dfmt_FORCE_BUNDLED=ON',
                  # System Vulkan headers without the matching utility libraries make CPMUtil refuse a half-system setup (issue #17).
                  '-DVulkanHeaders_FORCE_BUNDLED=ON', '-DVulkanUtilityLibraries_FORCE_BUNDLED=ON',
+                 # The system's VulkanMemoryAllocator package does not provide the target suyu links ("cannot find -lVulkanMemoryAllocator", issue #17).
+                 '-DVulkanMemoryAllocator_FORCE_BUNDLED=ON',
                  f'-DSUYU_NO_JIT={"OFF" if args.hybrid else "ON"}',
                  f'-DSUYU_RECOMP_HYBRID={"ON" if args.hybrid else "OFF"}',
                  # Added later in the same tree: adding the game's modules only adds targets, the C++ is reused.
