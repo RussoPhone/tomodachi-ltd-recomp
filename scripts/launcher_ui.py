@@ -480,7 +480,7 @@ class Window:
             cv.create_polygon(blob(bx, hh * 0.40 - bh2 / 2, bx + bw, hh * 0.40 + bh2 / 2, bh2 / 2), smooth=True,
                               fill=C["cream_l"], outline="", tags="label")
             cv.create_text(bx + bw / 2, hh * 0.40, text=self.version, fill=C["ink"], font=f, tags="label")
-        cv.create_text(pad + 2, hh * 0.76, text="Tomodachi Life · unofficial native port · runs from your own copy of the game",
+        cv.create_text(pad + 2, hh * 0.76, text="Unofficial PC Port · Bring your own copy!",
                        anchor="w", fill=C["cream_l"], font=self.font(14 * u), tags="label")
         self._draw_status()
 
