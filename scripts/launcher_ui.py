@@ -121,6 +121,8 @@ def stadium_span(x, x0, y0, x1, y1):
 def wave_bands(x0, y0, x1, y1):
     """Wavy horizontal stripes clipped to a pill (the primary button pattern)."""
     h = y1 - y0
+    if h < 4:
+        return []
     period, amp, length, thick = h * 0.3, h * 0.035, h * 0.62, h * 0.085
     inset = h * 0.04
     out, y = [], y0 + period * 0.55
@@ -223,8 +225,9 @@ class Pill(Widget):
             self.draw()
 
     def set_label(self, label):
-        self.label = label
-        self.draw()
+        if label != self.label:
+            self.label = label
+            self.draw()
 
     def draw(self):
         cv = self.cv
@@ -446,9 +449,10 @@ class Window:
 
     # --- layout ---------------------------------------------------------------------
     def _schedule(self):
+        """Redraw in the same turn as the resize events (coalesced), so no stale frame shows while dragging."""
         if self._job:
             self.root.after_cancel(self._job)
-        self._job = self.root.after(30, self.relayout)
+        self._job = self.root.after_idle(self.relayout)
 
     def relayout(self):
         self._job = None
@@ -456,7 +460,12 @@ class Window:
         W, H = cv.winfo_width(), cv.winfo_height()
         if W < 50:
             return
-        u = self.u = max(0.78, min(1.5, min(W / BASE_W, H / BASE_H)))
+        raw = max(0.78, min(1.6, min(W / BASE_W, H / BASE_H)))
+        u = self.u = round(raw * 25) / 25  # steps of 0.04 keep the font cache small while dragging
+        design_h = 650 * u  # height the content needs at this scale
+        slack = max(0.0, H - design_h)
+        vg = min(slack / 6, 34 * u)  # extra space between the rows; the rest goes below the header
+        top_extra = min((slack - 3 * vg) / 2, 60 * u) if slack > 3 * vg else 0.0
         cv.delete("bg", "card", "label", "status", "note")
         self._doodles(W, H, u)
         pad, gap = 26 * u, 22 * u
@@ -482,10 +491,9 @@ class Window:
             cv.create_text(bx + bw / 2, hh * 0.40, text=self.version, fill=C["ink"], font=f, tags="label")
         cv.create_text(pad + 2, hh * 0.76, text="Unofficial PC Port · Bring your own copy!",
                        anchor="w", fill=C["cream_l"], font=self.font(14 * u), tags="label")
-        self._draw_status()
 
         # row 1: play | settings
-        top = hh + 32 * u
+        top = hh + 32 * u + top_extra
         mid = W * 0.47
         h1 = 236 * u
         self._card(pad, top, mid - gap / 2, top + h1, "Play")
@@ -513,7 +521,7 @@ class Window:
                             C["paper"])
 
         # row 2: save data | help
-        top2 = top + h1 + gap + 8 * u
+        top2 = top + h1 + gap + 8 * u + vg
         h2 = 168 * u
         split = W * 0.36
         self._card(pad, top2, split - gap / 2, top2 + h2, "Save data")
@@ -535,7 +543,8 @@ class Window:
             b.place(x, y, x + hw, y + hb)
 
         # note balloon
-        self.note_box = (pad, top2 + h2 + gap + 10 * u, W - pad, min(H - 16 * u, top2 + h2 + gap + 64 * u))
+        ny = top2 + h2 + gap + 10 * u + vg
+        self.note_box = (pad, ny, W - pad, min(H - 16 * u, ny + 54 * u))
         self._draw_note()
         for t in ("play", "fullscreen", "safe", "size", "language", "bk", "rs", "of", "hc", "hk", "hr", "hl", "ht", "hp"):
             cv.tag_raise(t)
