@@ -1,0 +1,771 @@
+"""Window for scripts/launcher.py, drawn in the Island UI Kit style (https://russophone.github.io/island-ui-kit/).
+
+Soft pills with a darker side and a soft shadow, cream surfaces with doodles, red primary buttons with wavy
+stripes, cloud dialogs, and the game's motion: focus in 2 frames (scale 1.08), confirm as squash-and-pop
+(1.1 -> 1.05 -> 1.2 -> rest over 12 frames), switches and tabs settle with a small overshoot.
+Everything is drawn on one Tk Canvas; the logic (settings, play, backups, report) stays in launcher.py.
+"""
+import math
+import os
+import random
+import subprocess
+import sys
+import tempfile
+import threading
+import tkinter as tk
+import tkinter.font as tkfont
+import webbrowser
+import zipfile
+from pathlib import Path
+from tkinter import filedialog
+
+C = {
+    "ink": "#00040D", "paper": "#FFFFFF", "edge": "#C8C8C8",
+    "cream": "#FFD97F", "cream_l": "#FFE49B", "cream_p": "#FFEFD7",
+    "red": "#FF2400", "red_stripe": "#FF0700", "red_side": "#CD2B00", "red_alt": "#FF3700",
+    "focus": "#FFC700", "orange": "#FF8800", "orange_side": "#E06A00", "tab": "#FFB330", "pict": "#FA7407",
+    "off_face": "#E6E6E6", "off_fg": "#A7A7A7", "dim": "#3B2A0A", "note": "#7A6A55", "soft_side": "#E9D2A6",
+}
+FONT_FAMILIES = ("M PLUS Rounded 1c", "Nunito", "Zen Maru Gothic", "Varela Round", "Quicksand",
+                 "Noto Sans", "DejaVu Sans")
+FRAME_MS = 16                                       # one layout-animation frame at 60/s
+DECIDE = ((0, 1.1), (3, 1.05), (6, 1.2), (12, 1.0))  # confirm: frame -> scale (last value = rest)
+HOVER = 1.08
+BASE_W, BASE_H = 940, 700
+
+CONTROLS = (
+    "KEYBOARD\n"
+    "  Left stick: I K J L      Right stick: Q / E      D-pad: arrow keys\n"
+    "  A: X   B: Z   X: S   Y: A   L: W   R: R   ZL: 1   ZR: 3\n"
+    "  +: Enter   -: Backspace   HOME (close the game): Home   Fullscreen: F11\n\n"
+    "MOUSE (experimental, awkward in some menus)\n"
+    "  Island: push the mouse to a window edge, or middle-button drag, to move the camera; wheel = zoom\n"
+    "  Left click: touch screen / A   Right click: B   F8: capture the mouse as an analog stick (F6/F7 = sensitivity)\n\n"
+    "CONTROLLER (Nintendo layout)\n"
+    "  Right face button = A, bottom = B, top = X, left = Y   Guide = close the game\n\n"
+    "Full table: docs/CONTROLS.md")
+
+
+def build_version(root):
+    """The newest released build, from the first "## Alpha x.y.z" heading of CHANGELOG.md ("" if unknown)."""
+    try:
+        for line in (root / "CHANGELOG.md").read_text(encoding="utf-8").splitlines():
+            if line.startswith("## ") and line[3:].lower().startswith(("alpha", "beta", "v")):
+                return line[3:].split(" — ")[0].split(" - ")[0].strip()
+    except OSError:
+        pass
+    return ""
+
+
+def register_bundled_fonts(root):
+    """Let fontconfig see assets/fonts (an optional OFL font) for this process only; call before Tk starts."""
+    fonts = root / "assets" / "fonts"
+    if not fonts.is_dir() or sys.platform.startswith("win") or "FONTCONFIG_FILE" in os.environ:
+        return
+    conf = Path(tempfile.gettempdir()) / f"tomodachi-launcher-fonts-{os.getuid()}.conf"
+    try:
+        conf.write_text('<?xml version="1.0"?><!DOCTYPE fontconfig SYSTEM "fonts.dtd"><fontconfig>'
+                        '<include ignore_missing="yes">/etc/fonts/fonts.conf</include>'
+                        f"<dir>{fonts}</dir></fontconfig>")
+        os.environ["FONTCONFIG_FILE"] = str(conf)
+    except OSError:
+        pass
+
+
+# --- drawing helpers ------------------------------------------------------------------
+def mix(a, b, t):
+    a, b = a.lstrip("#"), b.lstrip("#")
+    pa = [int(a[i:i + 2], 16) for i in (0, 2, 4)]
+    pb = [int(b[i:i + 2], 16) for i in (0, 2, 4)]
+    return "#%02x%02x%02x" % tuple(round(x + (y - x) * t) for x, y in zip(pa, pb))
+
+
+def shadow_on(bg):
+    return mix(bg, "#000000", 0.196)  # the game's #00000032 shadow, pre-mixed (Tk has no alpha)
+
+
+def blob(x0, y0, x1, y1, r, wobble=0.0, seed=0, n=8):
+    """Rounded-rect outline points for a smooth polygon; wobble gives the hand-drawn edge."""
+    r = max(1.0, min(r, (x1 - x0) / 2, (y1 - y0) / 2))
+    cx, cy = (x0 + x1) / 2, (y0 + y1) / 2
+    pts, k = [], 0
+    for ccx, ccy, a0 in ((x1 - r, y0 + r, -90), (x1 - r, y1 - r, 0), (x0 + r, y1 - r, 90), (x0 + r, y0 + r, 180)):
+        for i in range(n + 1):
+            a = math.radians(a0 + 90 * i / n)
+            px, py = ccx + r * math.cos(a), ccy + r * math.sin(a)
+            if wobble:
+                d = wobble * math.sin(seed * 1.7 + k * 0.9) * (0.6 + 0.4 * math.sin(seed + k * 0.37))
+                nx, ny = px - cx, py - cy
+                ln = math.hypot(nx, ny) or 1
+                px, py = px + nx / ln * d, py + ny / ln * d
+            pts += (px, py)
+            k += 1
+    return pts
+
+
+def stadium_span(x, x0, y0, x1, y1):
+    r = (y1 - y0) / 2
+    cy = (y0 + y1) / 2
+    if x < x0 + r:
+        dx = x0 + r - x
+    elif x > x1 - r:
+        dx = x - (x1 - r)
+    else:
+        return y0, y1
+    if dx >= r:
+        return None
+    dy = math.sqrt(r * r - dx * dx)
+    return cy - dy, cy + dy
+
+
+def wave_bands(x0, y0, x1, y1):
+    """Wavy horizontal stripes clipped to a pill (the primary button pattern)."""
+    h = y1 - y0
+    period, amp, length, thick = h * 0.3, h * 0.035, h * 0.62, h * 0.085
+    inset = h * 0.04
+    out, y = [], y0 + period * 0.55
+    while y < y1:
+        tops, bots, x = [], [], x0
+        while x <= x1:
+            span = stadium_span(x, x0 + inset, y0 + inset, x1 - inset, y1 - inset)
+            w = y + amp * math.sin(2 * math.pi * x / length)
+            if span:
+                t, b = max(w, span[0]), min(w + thick, span[1])
+                if t < b:
+                    tops.append((x, t))
+                    bots.append((x, b))
+                elif tops:
+                    break
+            x += 3
+        if len(tops) > 1:
+            out.append([c for p in tops for c in p] + [c for p in reversed(bots) for c in p])
+        y += period
+    return out
+
+
+def ease_back(t):
+    s, t = 1.9, t - 1
+    return t * t * ((s + 1) * t + s) + 1
+
+
+# --- widgets --------------------------------------------------------------------------
+class Widget:
+    """A group of canvas items under one tag, redrawn on state change; hover shows a hand cursor."""
+
+    def __init__(self, ui, key):
+        self.ui, self.cv, self.tag = ui, ui.cv, key
+        self.box, self.under, self.anim = (0, 0, 0, 0), C["paper"], None
+        self.cv.tag_bind(key, "<Enter>", lambda e: self._enter())
+        self.cv.tag_bind(key, "<Leave>", lambda e: self._leave())
+
+    def blocked(self):
+        return self.ui.modal_blocks(self)
+
+    def interactive(self):
+        return not self.blocked()
+
+    def _enter(self):
+        if self.interactive():
+            self.cv.config(cursor="hand2")
+        self.enter()
+
+    def _leave(self):
+        self.cv.config(cursor="")
+        self.leave()
+
+    def enter(self):
+        pass
+
+    def leave(self):
+        pass
+
+    def place(self, x0, y0, x1, y1, under=None):
+        self.box = (x0, y0, x1, y1)
+        if under:
+            self.under = under
+        self.draw()
+
+    def run(self, steps, frame_fn, done=None):
+        if self.anim:
+            self.cv.after_cancel(self.anim)
+
+        def tick(i=0):
+            frame_fn(i / steps if steps else 1.0)
+            if i < steps:
+                self.anim = self.cv.after(FRAME_MS, tick, i + 1)
+            else:
+                self.anim = None
+                if done:
+                    done()
+        tick()
+
+
+class Pill(Widget):
+    STYLES = {"primary": ("red", "red_side", "paper", True), "neutral": ("paper", "edge", "ink", False),
+              "soft": ("cream_p", "soft_side", "ink", False),  # neutral button on a white card
+              "orange": ("orange", "orange_side", "paper", False)}
+
+    def __init__(self, ui, key, label, style="primary", command=None):
+        super().__init__(ui, key)
+        self.label, self.style, self.command = label, style, command
+        self.enabled, self.hover, self.scale, self.lift = True, False, 1.0, 0.0
+        self.cv.tag_bind(key, "<ButtonPress-1>", lambda e: self.press())
+        self.cv.tag_bind(key, "<ButtonRelease-1>", self.release)
+
+    def interactive(self):
+        return self.enabled and not self.blocked()
+
+    def set_enabled(self, on):
+        if on != self.enabled:
+            self.enabled = on
+            if not on:
+                self.scale, self.lift = 1.0, 0.0
+            self.draw()
+
+    def set_label(self, label):
+        self.label = label
+        self.draw()
+
+    def draw(self):
+        cv = self.cv
+        cv.delete(self.tag)
+        x0, y0, x1, y1 = self.box
+        if x1 <= x0:
+            return
+        s = self.scale
+        cx, cy = (x0 + x1) / 2, (y0 + y1) / 2 - self.lift
+        w, h = (x1 - x0) * s, (y1 - y0) * s
+        bx0, by0, bx1, by1 = cx - w / 2, cy - h / 2, cx + w / 2, cy + h / 2
+        face, side, fg, stripes = self.STYLES[self.style]
+        face, side, fg = C[face], C[side], C[fg]
+        if not self.enabled:
+            face, side, fg, stripes = C["off_face"], C["edge"], C["off_fg"], False
+        seed = sum(map(ord, self.tag))
+        for dy, col in ((h * 0.18, shadow_on(self.under)), (h * 0.09, side), (0, face)):
+            cv.create_polygon(blob(bx0, by0 + dy, bx1, by1 + dy, h / 2, wobble=h * 0.025, seed=seed),
+                              smooth=True, fill=col, outline="", tags=self.tag)
+        if stripes:
+            for poly in wave_bands(bx0, by0, bx1, by1):
+                cv.create_polygon(poly, fill=C["red_stripe"], outline="", tags=self.tag)
+        cv.create_text(cx, cy, text=self.label, fill=fg, font=self.ui.fit_font(self.label, h * 0.36, w - h * 0.6),
+                       tags=self.tag)
+
+    def animate_to(self, scale, lift, frames=2):
+        s0, l0 = self.scale, self.lift
+
+        def f(t):
+            self.scale, self.lift = s0 + (scale - s0) * t, l0 + (lift - l0) * t
+            self.draw()
+        self.run(frames, f)
+
+    def enter(self):
+        self.hover = True
+        if self.interactive():
+            self.animate_to(HOVER, 2)
+
+    def leave(self):
+        self.hover = False
+        if self.enabled:
+            self.animate_to(1.0, 0)
+
+    def press(self):
+        if self.interactive():
+            self.animate_to(1.04, 0, frames=1)
+
+    def release(self, e):
+        if not self.interactive():
+            return
+        x0, y0, x1, y1 = self.box
+        if x0 <= e.x <= x1 and y0 - 8 <= e.y <= y1 + 8:
+            self.decide()
+            if self.command:
+                self.cv.after(FRAME_MS * 4, self.command)
+
+    def decide(self):
+        keys = list(DECIDE[:-1]) + [(DECIDE[-1][0], HOVER if self.hover else 1.0)]
+        end = keys[-1][0]
+
+        def f(t):
+            fr = t * end
+            for (fa, sa), (fb, sb) in zip(keys, keys[1:]):
+                if fa <= fr <= fb:
+                    self.scale = sa + (sb - sa) * ((fr - fa) / (fb - fa) if fb > fa else 1)
+                    break
+            self.draw()
+        self.run(end, f)
+
+
+class Dropdown(Pill):
+    """Neutral pill showing the current value; opens a cream menu of choices."""
+
+    def __init__(self, ui, key, choices, value, on_change):
+        self.choices, self.value, self.on_change = choices, value, on_change
+        super().__init__(ui, key, self._text(value), "soft", self.open)
+
+    def _text(self, value):
+        return f"{value}  ▾"
+
+    def open(self):
+        m = tk.Menu(self.cv, tearoff=0, bg=C["paper"], fg=C["ink"], activebackground=C["focus"],
+                    activeforeground=C["ink"], bd=0, relief="flat", font=self.ui.font(15 * self.ui.u, "bold"))
+        for choice in self.choices:
+            m.add_command(label=("✓  " if choice == self.value else "    ") + choice,
+                          command=lambda c=choice: self.pick(c))
+        x0, y0, x1, y1 = self.box
+        try:
+            m.tk_popup(int(self.cv.winfo_rootx() + x0), int(self.cv.winfo_rooty() + y1 + 6))
+        finally:
+            m.grab_release()
+
+    def pick(self, choice):
+        self.value = choice
+        self.set_label(self._text(choice))
+        self.on_change(choice)
+
+
+class Switch(Widget):
+    def __init__(self, ui, key, value, on_change):
+        super().__init__(ui, key)
+        self.value, self.on_change, self.pos = value, on_change, 1.0 if value else 0.0
+        self.cv.tag_bind(key, "<ButtonRelease-1>", lambda e: self.toggle())
+
+    def draw(self):
+        cv = self.cv
+        cv.delete(self.tag)
+        x0, y0, x1, y1 = self.box
+        h = y1 - y0
+        track = mix(C["edge"], C["red"], max(0.0, min(1.0, self.pos)))
+        cv.create_polygon(blob(x0, y0, x1, y1, h / 2), smooth=True, fill=track, outline="", tags=self.tag)
+        pad = h * 0.11
+        d = h - 2 * pad
+        kx = x0 + pad + (x1 - x0 - 2 * pad - d) * self.pos
+        cv.create_oval(kx, y0 + pad + h * 0.07, kx + d, y0 + pad + d + h * 0.07, fill=shadow_on(track),
+                       outline="", tags=self.tag)
+        cv.create_oval(kx, y0 + pad, kx + d, y0 + pad + d, fill=C["paper"], outline="", tags=self.tag)
+
+    def toggle(self):
+        if self.blocked():
+            return
+        self.value = not self.value
+        p0, p1 = self.pos, 1.0 if self.value else 0.0
+
+        def f(t):
+            self.pos = p0 + (p1 - p0) * ease_back(t)
+            self.draw()
+        self.run(10, f)
+        self.on_change(self.value)
+
+
+# --- window ---------------------------------------------------------------------------
+class Window:
+    def __init__(self, L):
+        self.L = L  # the launcher module (settings, play_command, backups, report)
+        register_bundled_fonts(L.ROOT)
+        self.root = root = tk.Tk()
+        self.version = build_version(L.ROOT)
+        root.title("Tomodachi-LTD-Recomp" + (f" · {self.version}" if self.version else ""))
+        root.geometry(f"{BASE_W}x{BASE_H}")
+        root.minsize(760, 600)
+        self.settings = L.load_settings()
+        self.playing = False
+        self.dialog = None
+        self.note = ""
+        self._fonts = {}
+        self.u = 1.0
+        fams = set(tkfont.families(root))
+        self.family = next((f for f in FONT_FAMILIES if f in fams), "TkDefaultFont")
+        self.cv = tk.Canvas(root, highlightthickness=0, bd=0, bg=C["cream"])
+        self.cv.pack(fill="both", expand=True)
+
+        s = self.settings
+        lang_name = next((n for n, c in L.LANGUAGES if c == s["language"]), L.LANGUAGES[0][0])
+        sizes = list(L.SIZES) if s["size"] in L.SIZES else list(L.SIZES) + [s["size"]]
+        self.play_btn = Pill(self, "play", "Play", "primary", self.on_play)
+        self.fullscreen = Switch(self, "fullscreen", s["fullscreen"], lambda v: self._set(fullscreen=v))
+        self.safe = Switch(self, "safe", s.get("safe", False), lambda v: self._set(safe=v))
+        self.size = Dropdown(self, "size", sizes, s["size"], lambda v: self._set(size=v))
+        self.language = Dropdown(self, "language", [n for n, _ in L.LANGUAGES], lang_name,
+                                 lambda v: self._set(language=next(c for n, c in L.LANGUAGES if n == v)))
+        self.save_btns = [Pill(self, "bk", "Back up now", "soft", self.on_backup),
+                          Pill(self, "rs", "Restore…", "soft", self.on_restore),
+                          Pill(self, "of", "Open folder", "soft", lambda: L.open_folder(L.SAVE_DIR))]
+        self.help_btns = [Pill(self, "hc", "Controls", "soft", self.on_controls),
+                          Pill(self, "hk", "Check my computer", "soft", self.on_check),
+                          Pill(self, "hr", "Bug report", "soft", self.on_report),
+                          Pill(self, "hl", "Open logs", "soft", lambda: L.open_folder(L.LOGS)),
+                          Pill(self, "ht", "Testing guide", "soft", lambda: webbrowser.open(L.TESTING_URL)),
+                          Pill(self, "hp", "Report a problem", "orange", lambda: webbrowser.open(L.ISSUES_URL))]
+        self._job = None
+        self.cv.bind("<Configure>", lambda e: self._schedule())
+        root.bind("<Return>", lambda e: self._on_return())
+        root.bind("<Escape>", lambda e: self.close_dialog())
+        self.set_note("Your save is backed up automatically before each play session.")
+
+    # --- fonts ----------------------------------------------------------------------
+    def font(self, px, weight="bold"):
+        key = (max(8, round(px)), weight)
+        if key not in self._fonts:
+            self._fonts[key] = tkfont.Font(self.root, family=self.family, size=-key[0], weight=weight)
+        return self._fonts[key]
+
+    def fit_font(self, text, px, width, weight="bold"):
+        f = self.font(px, weight)
+        while px > 9 and f.measure(text) > width:
+            px -= 1
+            f = self.font(px, weight)
+        return f
+
+    # --- settings and state ---------------------------------------------------------
+    def _set(self, **kw):
+        self.settings.update(kw)
+        try:
+            self.L.save_settings(self.settings)
+        except OSError:
+            pass
+
+    def set_note(self, text):
+        self.note = text
+        self.cv.delete("note")
+        if hasattr(self, "note_box"):
+            self._draw_note()
+
+    def status(self):
+        if not self.L.installed():
+            return "Not installed", C["red_alt"], C["paper"], C["paper"]
+        if self.playing:
+            return "Playing", C["focus"], C["ink"], C["red"]
+        return "Ready", C["paper"], C["ink"], C["pict"]
+
+    def refresh(self):
+        self.play_btn.set_enabled(self.L.installed() and not self.playing)
+        self.play_btn.set_label("Playing…" if self.playing else "Play")
+        self.cv.delete("status")
+        self._draw_status()
+        if not self.L.installed():
+            self.set_note("The native port is not installed yet. Run ./install.sh first.")
+
+    # --- layout ---------------------------------------------------------------------
+    def _schedule(self):
+        if self._job:
+            self.root.after_cancel(self._job)
+        self._job = self.root.after(30, self.relayout)
+
+    def relayout(self):
+        self._job = None
+        cv = self.cv
+        W, H = cv.winfo_width(), cv.winfo_height()
+        if W < 50:
+            return
+        u = self.u = max(0.78, min(1.5, min(W / BASE_W, H / BASE_H)))
+        cv.delete("bg", "card", "label", "status", "note")
+        self._doodles(W, H, u)
+        pad, gap = 26 * u, 22 * u
+
+        # header
+        self.hh = hh = 92 * u
+        for dy, col in ((7 * u, C["orange_side"]), (0, C["orange"])):
+            pts, x = [0, 0, W, 0], W
+            while x >= -10:
+                pts += (x, hh + dy + 6 * u * math.sin(x / (64 * u)))
+                x -= 12
+            cv.create_polygon(pts, fill=col, outline="", smooth=True, tags="bg")
+        t = cv.create_text(pad, hh * 0.40, text="Tomodachi-LTD-Recomp", anchor="w", fill=C["paper"],
+                           font=self.font(32 * u), tags="label")
+        if self.version:  # build chip next to the title
+            bx = cv.bbox(t)[2] + 14 * u
+            f = self.font(14 * u)
+            bw, bh2 = f.measure(self.version) + 24 * u, 28 * u
+            cv.create_polygon(blob(bx, hh * 0.40 - bh2 / 2 + 4 * u, bx + bw, hh * 0.40 + bh2 / 2 + 4 * u, bh2 / 2),
+                              smooth=True, fill=C["orange_side"], outline="", tags="label")
+            cv.create_polygon(blob(bx, hh * 0.40 - bh2 / 2, bx + bw, hh * 0.40 + bh2 / 2, bh2 / 2), smooth=True,
+                              fill=C["cream_l"], outline="", tags="label")
+            cv.create_text(bx + bw / 2, hh * 0.40, text=self.version, fill=C["ink"], font=f, tags="label")
+        cv.create_text(pad + 2, hh * 0.76, text="Tomodachi Life · unofficial native port · runs from your own copy of the game",
+                       anchor="w", fill=C["cream_l"], font=self.font(14 * u), tags="label")
+        self._draw_status()
+
+        # row 1: play | settings
+        top = hh + 32 * u
+        mid = W * 0.47
+        h1 = 236 * u
+        self._card(pad, top, mid - gap / 2, top + h1, "Play")
+        self._card(mid + gap / 2, top, W - pad, top + h1, "Settings")
+        ix0, ix1 = pad + 26 * u, mid - gap / 2 - 26 * u
+        self.play_btn.place(ix0, top + 62 * u, ix1, top + 150 * u, C["paper"])
+        self._hint(ix0, top + 190 * u, "↵", "Play", u)
+        cv.create_text(ix0, top + 214 * u, text="First face-paint opening takes ~40 s (it builds a cache).",
+                       anchor="w", fill=C["note"], font=self.fit_font("x" * 52, 12.5 * u, ix1 - ix0, "normal"),
+                       tags="label")
+
+        sx0, sx1 = mid + gap / 2 + 26 * u, W - pad - 26 * u
+        rows = [top + 74 * u + i * 44 * u for i in range(4)]
+        lab = self.font(17 * u)
+        for y, text in zip(rows, ("Fullscreen", "Safe mode", "Window size", "Language")):
+            cv.create_text(sx0, y, text=text, anchor="w", fill=C["ink"], font=lab, tags="label")
+        cv.create_text(sx0 + lab.measure("Safe mode") + 10 * u, rows[1], text="if the picture looks wrong",
+                       anchor="w", fill=C["note"], font=self.font(12.5 * u, "normal"), tags="label")
+        sw_w, sw_h = 66 * u, 36 * u
+        self.fullscreen.place(sx1 - sw_w, rows[0] - sw_h / 2, sx1, rows[0] + sw_h / 2, C["paper"])
+        self.safe.place(sx1 - sw_w, rows[1] - sw_h / 2, sx1, rows[1] + sw_h / 2, C["paper"])
+        dd_h = 38 * u
+        self.size.place(sx1 - 170 * u, rows[2] - dd_h / 2, sx1, rows[2] + dd_h / 2, C["paper"])
+        self.language.place(sx1 - min(250 * u, sx1 - sx0 - 130 * u), rows[3] - dd_h / 2, sx1, rows[3] + dd_h / 2,
+                            C["paper"])
+
+        # row 2: save data | help
+        top2 = top + h1 + gap + 8 * u
+        h2 = 168 * u
+        split = W * 0.36
+        self._card(pad, top2, split - gap / 2, top2 + h2, "Save data")
+        self._card(split + gap / 2, top2, W - pad, top2 + h2, "Help")
+        bx0, bx1 = pad + 22 * u, split - gap / 2 - 22 * u
+        bh, by = 46 * u, top2 + 58 * u
+        bw = (bx1 - bx0 - 10 * u) / 2
+        self.save_btns[0].place(bx0, by, bx0 + bw, by + bh)
+        self.save_btns[1].place(bx0 + bw + 10 * u, by, bx1, by + bh)
+        self.save_btns[2].place(bx0, by + bh + 16 * u, bx1, by + 2 * bh + 16 * u)
+        hx0, hx1 = split + gap / 2 + 22 * u, W - pad - 22 * u
+        cols = 3 if hx1 - hx0 > 480 * u else 2
+        hb = bh if cols == 3 else bh * 0.78
+        hw = (hx1 - hx0 - (cols - 1) * 10 * u) / cols
+        for i, b in enumerate(self.help_btns):
+            cx, ry = i % cols, i // cols
+            x = hx0 + cx * (hw + 10 * u)
+            y = by - (6 * u if cols == 2 else 0) + ry * (hb + (16 if cols == 3 else 9) * u)
+            b.place(x, y, x + hw, y + hb)
+
+        # note balloon
+        self.note_box = (pad, top2 + h2 + gap + 10 * u, W - pad, min(H - 16 * u, top2 + h2 + gap + 64 * u))
+        self._draw_note()
+        for t in ("play", "fullscreen", "safe", "size", "language", "bk", "rs", "of", "hc", "hk", "hr", "hl", "ht", "hp"):
+            cv.tag_raise(t)
+        self.refresh()
+        if self.dialog:
+            self._draw_dialog(1.0)
+
+    def _doodles(self, W, H, u):
+        rnd = random.Random(7)
+        col, w, step = C["cream_l"], max(4, 8 * u), 150 * u
+        y = 0
+        while y < H + step:
+            x = (y // step % 2) * step / 2
+            while x < W + step:
+                px, py, k = x + rnd.uniform(-30, 30) * u, y + rnd.uniform(-30, 30) * u, rnd.randrange(5)
+                s = 22 * u
+                if k == 0:
+                    self.cv.create_line(px - s, py, px - s / 2, py - s / 2, px, py, px + s / 2, py + s / 2, px + s, py,
+                                        smooth=True, width=w, fill=col, capstyle="round", tags="bg")
+                elif k == 1:
+                    self.cv.create_oval(px - s * 0.6, py - s * 0.6, px + s * 0.6, py + s * 0.6, width=w, outline=col,
+                                        tags="bg")
+                elif k == 2:
+                    self.cv.create_polygon(px - s * 0.7, py + s * 0.5, px + s * 0.1, py - s * 0.7, px + s * 0.7,
+                                           py + s * 0.6, fill="", outline=col, width=w, joinstyle="round", tags="bg")
+                elif k == 3:
+                    self.cv.create_line(px - s, py + s * 0.3, px, py - s * 0.4, px + s * 0.6, py + s * 0.6,
+                                        smooth=True, width=w, fill=col, capstyle="round", tags="bg")
+                else:
+                    self.cv.create_line(px - s * 0.4, py, px + s * 0.4, py, width=w * 1.6, fill=col, capstyle="round",
+                                        tags="bg")
+                x += step
+            y += step
+
+    def _card(self, x0, y0, x1, y1, title):
+        u = self.u
+        for dy, col in ((14 * u, shadow_on(C["cream"])), (7 * u, C["edge"]), (0, C["paper"])):
+            self.cv.create_polygon(blob(x0, y0 + dy, x1, y1 + dy, 32 * u, wobble=2.2 * u, seed=int(x0 + y0)),
+                                   smooth=True, fill=col, outline="", tags="card")
+        self.cv.create_oval(x0 + 24 * u, y0 + 22 * u, x0 + 36 * u, y0 + 34 * u, fill=C["pict"], outline="", tags="card")
+        self.cv.create_text(x0 + 44 * u, y0 + 28 * u, text=title, anchor="w", fill=C["pict"], font=self.font(17 * u),
+                            tags="card")
+
+    def _hint(self, x, y, glyph, label, u):
+        f = self.font(12 * u)
+        gw = max(28 * u, f.measure(glyph) + 14 * u)
+        self.cv.create_polygon(blob(x, y - 14 * u, x + gw, y + 14 * u, 14 * u), smooth=True, fill=C["ink"], outline="",
+                               tags="label")
+        self.cv.create_text(x + gw / 2, y, text=glyph, fill=C["paper"], font=f, tags="label")
+        self.cv.create_text(x + gw + 8 * u, y, text=label, anchor="w", fill=C["ink"], font=self.font(15 * u), tags="label")
+
+    def _draw_status(self):
+        u, W = self.u, self.cv.winfo_width()
+        label, face, fg, dot = self.status()
+        f = self.font(16 * u)
+        right, cy, h = W - 26 * u, 92 * u * 0.5, 38 * u
+        x0 = right - f.measure(label) - 42 * u
+        for dy, col in ((5 * u, C["orange_side"]), (0, face)):
+            self.cv.create_polygon(blob(x0, cy - h / 2 + dy, right, cy + h / 2 + dy, h / 2), smooth=True, fill=col,
+                                   outline="", tags="status")
+        self.cv.create_oval(x0 + 14 * u, cy - 5 * u, x0 + 24 * u, cy + 5 * u, fill=dot, outline="", tags="status")
+        self.cv.create_text(x0 + 31 * u, cy, text=label, anchor="w", fill=fg, font=f, tags="status")
+
+    def _draw_note(self):
+        """The message line, as a speech balloon at the bottom."""
+        u = self.u
+        x0, y0, x1, y1 = self.note_box
+        if y1 - y0 < 24:
+            return
+        self.cv.create_polygon(blob(x0, y0 + 6 * u, x1, y1 + 6 * u, (y1 - y0) / 2), smooth=True,
+                               fill=shadow_on(C["cream"]), outline="", tags="note")
+        self.cv.create_polygon(blob(x0, y0, x1, y1, (y1 - y0) / 2, wobble=1.5 * u, seed=11), smooth=True,
+                               fill=C["cream_p"], outline="", tags="note")
+        cy = (y0 + y1) / 2
+        r = 13 * u
+        self.cv.create_oval(x0 + 18 * u, cy - r, x0 + 18 * u + 2 * r, cy + r, fill=C["pict"], outline="", tags="note")
+        self.cv.create_text(x0 + 18 * u + r, cy, text="i", fill=C["paper"], font=self.font(15 * u), tags="note")
+        self.cv.create_text(x0 + 30 * u + 2 * r, cy, text=self.note, anchor="w", fill=C["ink"],
+                            width=x1 - x0 - 60 * u - 2 * r, font=self.font(14.5 * u), tags="note")
+
+    # --- dialogs (cloud) --------------------------------------------------------------
+    def modal_blocks(self, widget):
+        return self.dialog is not None and widget not in self.dialog["buttons"]
+
+    def show_dialog(self, message, buttons, body=None):
+        """buttons: [(label, style, callback or None)]; the last one answers Return."""
+        if self.dialog:
+            self.close_dialog()
+        pills = []
+        for i, (label, style, cb) in enumerate(buttons):
+            def act(cb=cb):
+                self.close_dialog()
+                if cb:
+                    cb()
+            pills.append(Pill(self, f"dlg_b{i}", label, style, act))
+        text = None
+        if body:
+            text = tk.Text(self.cv, wrap="none", bd=0, highlightthickness=0, bg=C["cream_p"], fg=C["ink"],
+                           padx=12, pady=10, cursor="arrow", font=self.font(13 * self.u, "normal"))
+            text.insert("1.0", body)
+            text.config(state="disabled")
+        self.dialog = {"message": message, "buttons": pills, "body": text}
+        pills[0].run(6, lambda t: self._draw_dialog(0.6 + 0.4 * ease_back(t)))  # dialog in: 6 frames
+
+    def _draw_dialog(self, s):
+        cv, u, d = self.cv, self.u, self.dialog
+        cv.delete("dlg")
+        W, H = cv.winfo_width(), cv.winfo_height()
+        cv.create_rectangle(0, 0, W, H, fill=C["dim"], stipple="gray50", outline="", tags="dlg")
+        big = d["body"] is not None
+        cw = min((820 if big else 620) * u, W - 40) * s
+        ch = min((520 if big else 340) * u, H - 40) * s
+        cx, cy = W / 2, H / 2
+        x0, y0, x1, y1 = cx - cw / 2, cy - ch / 2, cx + cw / 2, cy + ch / 2
+        r = ch * (0.22 if big else 0.45)
+        wob = ch * (0.015 if big else 0.03)
+        cv.create_polygon(blob(x0, y0 + 16 * u, x1, y1 + 16 * u, r, wobble=wob, seed=3), smooth=True,
+                          fill=mix(C["dim"], "#000000", 0.35), outline="", tags="dlg")
+        cv.create_polygon(blob(x0, y0, x1, y1, r, wobble=wob, seed=3), smooth=True, fill=C["cream"],
+                          outline="", tags="dlg")
+        ty = y0 + ch * (0.12 if big else 0.36)
+        cv.create_text(cx, ty, text=d["message"], width=cw * 0.78, justify="center", fill=C["ink"],
+                       font=self.font((22 if big else 24) * u * s), tags="dlg")
+        bh = 60 * u * s
+        n = len(d["buttons"])
+        bw = min(200 * u * s, (cw * 0.8 - (n - 1) * 16 * u) / n)
+        total = n * bw + (n - 1) * 16 * u
+        by = y1 - ch * (0.12 if big else 0.2) - bh
+        for i, b in enumerate(d["buttons"]):
+            bx = cx - total / 2 + i * (bw + 16 * u)
+            b.place(bx, by, bx + bw, by + bh, C["cream"])
+            cv.tag_raise(b.tag)
+        if big and s >= 0.99:
+            tx0, ty0 = x0 + cw * 0.07, ty + 30 * u
+            cv.create_window(tx0, ty0, anchor="nw", window=d["body"], width=cw * 0.86,
+                             height=max(60, by - ty0 - 24 * u), tags="dlg")
+
+    def close_dialog(self):
+        if not self.dialog:
+            return
+        for b in self.dialog["buttons"]:
+            self.cv.delete(b.tag)
+        if self.dialog["body"] is not None:
+            self.dialog["body"].destroy()
+        self.cv.delete("dlg")
+        self.cv.config(cursor="")
+        self.dialog = None
+
+    def _on_return(self):
+        if self.dialog:
+            self.dialog["buttons"][-1].command()
+        elif self.play_btn.enabled:
+            self.play_btn.decide()
+            self.on_play()
+
+    def info(self, title, text):
+        self.show_dialog(title, [("OK", "primary", None)], body=text)
+
+    # --- actions (logic lives in launcher.py) ---------------------------------------
+    def on_play(self):
+        L = self.L
+        if self.playing or not L.installed():
+            return
+        current = dict(self.settings)
+        L.save_settings(current)
+        L.auto_backup()
+        self.playing = True
+        self.refresh()
+        self.set_note("Playing… close the game window to come back.")
+        self.root.iconify()
+
+        def run():
+            try:
+                code = subprocess.run(L.play_command(current), cwd=L.ROOT).returncode
+                note = ("Have a nice day on the island!" if code == 0
+                        else f"The game ended with code {code}. See local/logs/play-nxrt-*.log.")
+            except OSError as error:
+                note = f"Could not start the game: {error}"
+            self.root.after(0, lambda: self._played(note))
+        threading.Thread(target=run, daemon=True).start()
+
+    def _played(self, note):
+        self.playing = False
+        self.root.deiconify()
+        self.refresh()
+        self.set_note(note)
+
+    def on_backup(self):
+        out = self.L.backup_save()
+        self.set_note(f"Backup saved: {out.relative_to(self.L.ROOT)}" if out else "There is no save to back up yet.")
+
+    def on_restore(self):
+        L = self.L
+        archive = filedialog.askopenfilename(title="Choose a save backup (.zip)",
+                                             initialdir=L.BACKUPS if L.BACKUPS.exists() else L.ROOT,
+                                             filetypes=[("Backups", "*.zip")])
+        if not archive:
+            return
+
+        def go():
+            try:
+                safety = L.restore_save(archive)
+            except (OSError, ValueError, zipfile.BadZipFile) as error:
+                self.show_dialog(f"Restore failed.\n{error}", [("OK", "primary", None)])
+                return
+            self.set_note("Save restored." + (f" Previous save kept in {safety.relative_to(L.ROOT)}." if safety else ""))
+        self.show_dialog("This replaces your current save with the backup.\nThe current save is backed up first.",
+                         [("Cancel", "neutral", None), ("Restore", "primary", go)])
+
+    def on_controls(self):
+        self.info("Controls", CONTROLS)
+
+    def on_check(self):
+        L = self.L
+        result = subprocess.run([sys.executable, str(L.ROOT / "scripts/doctor.py")], cwd=L.ROOT,
+                                capture_output=True, text=True)
+        self.info("Check my computer", (result.stdout or result.stderr).strip() or "No output.")
+
+    def on_report(self):
+        self.set_note("Collecting logs…")
+        self.root.update_idletasks()
+        out = self.L.make_report()
+        self.set_note(f"Bug report saved: {out.name} (no game data or keys inside). Attach it to a GitHub issue."
+                      if out else "Could not create the report. Run ./install.sh --report in a terminal.")
+
+    def mainloop(self, smoke=False):
+        if smoke:  # used by the tests: build the window, then close it
+            self.root.after(400, self.root.destroy)
+        self.root.mainloop()
+
+
+def run(L, smoke=False):
+    Window(L).mainloop(smoke)

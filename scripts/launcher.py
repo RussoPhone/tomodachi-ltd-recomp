@@ -2,17 +2,15 @@
 """Launcher for the unofficial native port of Tomodachi Life: Living the Dream (nxrt).
 
 One window with PLAY, the settings that matter (fullscreen, window size, language), save backup/restore and a bug-report button.
+The window itself lives in scripts/launcher_ui.py (Island UI Kit style).
 Settings are kept in local/launcher.json and handed to scripts/play-nxrt.sh as options. Needs only Python's built-in Tk.
 """
 import json
-import os
 from pathlib import Path
 import shutil
 import subprocess
 import sys
-import threading
 import time
-import webbrowser
 import zipfile
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -124,145 +122,10 @@ def make_report():
 
 
 def main():
-    import tkinter as tk
-    from tkinter import filedialog, messagebox, ttk
-
-    settings = load_settings()
-    root = tk.Tk()
-    root.title('Tomodachi Life (unofficial native port, alpha)')
-    root.geometry('760x620')
-    root.minsize(560, 480)
-    frame = ttk.Frame(root, padding=16)
-    frame.pack(fill='both', expand=True)
-
-    ttk.Label(frame, text='Tomodachi Life: Living the Dream', font=('TkDefaultFont', 15, 'bold')).pack(anchor='w')
-    ttk.Label(frame, text='Unofficial native PC port · alpha · runs from your own copy of the game').pack(anchor='w')
-
-    status = tk.StringVar()
-    ttk.Label(frame, textvariable=status, foreground='#555').pack(anchor='w', pady=(8, 0))
-
-    play = ttk.Button(frame, text='PLAY')
-    play.pack(fill='x', pady=10, ipady=8)
-
-    box = ttk.LabelFrame(frame, text='Settings', padding=10)
-    box.pack(fill='x')
-    fullscreen = tk.BooleanVar(value=settings['fullscreen'])
-    safe = tk.BooleanVar(value=settings.get('safe', False))
-    size = tk.StringVar(value=settings['size'])
-    language = tk.StringVar(value=next((n for n, c in LANGUAGES if c == settings['language']), LANGUAGES[0][0]))
-    ttk.Checkbutton(box, text='Fullscreen (F11 also toggles it in the game)', variable=fullscreen).grid(
-        row=0, column=0, columnspan=2, sticky='w')
-    ttk.Checkbutton(box, text='Safe mode (use it if the picture looks wrong: slower, but fewer things can go wrong)',
-                    variable=safe).grid(row=4, column=0, columnspan=2, sticky='w', pady=(6, 0))
-    ttk.Label(box, text='Window size').grid(row=1, column=0, sticky='w', pady=(6, 0))
-    ttk.Combobox(box, textvariable=size, values=SIZES, width=14).grid(row=1, column=1, sticky='w', pady=(6, 0))
-    ttk.Label(box, text='Language').grid(row=2, column=0, sticky='w', pady=(6, 0))
-    ttk.Combobox(box, textvariable=language, values=[n for n, _ in LANGUAGES], width=28, state='readonly').grid(
-        row=2, column=1, sticky='w', pady=(6, 0))
-    ttk.Label(box, text='These options are new and only lightly tested. The first time you open the face-paint editor it takes\n'
-                        'about 40 seconds (it builds a cache); after that it opens in seconds.', foreground='#555').grid(
-        row=3, column=0, columnspan=2, sticky='w', pady=(8, 0))
-
-    saves = ttk.LabelFrame(frame, text='Save data', padding=10)
-    saves.pack(fill='x', pady=10)
-
-    help_box = ttk.LabelFrame(frame, text='Help', padding=10)
-    help_box.pack(fill='x')
-
-    log_var = tk.StringVar(value='')
-    ttk.Label(frame, textvariable=log_var, foreground='#555', wraplength=580, justify='left').pack(anchor='w', pady=(10, 0))
-
-    def current_settings():
-        code = next((c for n, c in LANGUAGES if n == language.get()), 'en-US')
-        value = size.get().strip().lower()
-        if 'x' not in value or not all(p.isdigit() for p in value.split('x', 1)):
-            value = DEFAULTS['size']
-        return {'fullscreen': fullscreen.get(), 'size': value, 'language': code, 'safe': safe.get()}
-
-    def refresh_status():
-        if installed():
-            status.set('Ready to play.')
-            play.state(['!disabled'])
-        else:
-            status.set('The native port is not installed yet. Run ./install.sh first.')
-            play.state(['disabled'])
-
-    def on_play():
-        current = current_settings()
-        save_settings(current)
-        auto_backup()
-        play.state(['disabled'])
-        status.set('Playing… close the game window to come back.')
-        root.iconify()
-
-        def run():
-            try:
-                code = subprocess.run(play_command(current), cwd=ROOT).returncode
-                note = '' if code == 0 else f'The game ended with code {code}. See local/logs/play-nxrt-*.log.'
-            except OSError as error:
-                note = f'Could not start the game: {error}'
-            root.after(0, lambda: (root.deiconify(), refresh_status(), log_var.set(note)))
-
-        threading.Thread(target=run, daemon=True).start()
-
-    def on_backup():
-        out = backup_save()
-        log_var.set(f'Backup saved: {out.relative_to(ROOT)}' if out else 'There is no save to back up yet.')
-
-    def on_restore():
-        archive = filedialog.askopenfilename(title='Choose a save backup (.zip)', initialdir=BACKUPS if BACKUPS.exists() else ROOT,
-                                             filetypes=[('Backups', '*.zip')])
-        if not archive:
-            return
-        if not messagebox.askyesno('Restore save', 'This replaces your current save with the backup.\n'
-                                   'The current save is backed up first. Continue?'):
-            return
-        try:
-            safety = restore_save(archive)
-        except (OSError, ValueError, zipfile.BadZipFile) as error:
-            messagebox.showerror('Restore failed', str(error))
-            return
-        log_var.set('Save restored.' + (f' Previous save kept in {safety.relative_to(ROOT)}.' if safety else ''))
-
-    def on_controls():
-        messagebox.showinfo('Controls', (
-            'KEYBOARD\n'
-            '  Left stick: I K J L      Right stick: Q / E      D-pad: arrow keys\n'
-            '  A: X   B: Z   X: S   Y: A   L: W   R: R   ZL: 1   ZR: 3\n'
-            '  +: Enter   -: Backspace   HOME (close the game): Home   Fullscreen: F11\n\n'
-            'MOUSE (experimental, awkward in some menus)\n'
-            '  Island: push the mouse to a window edge, or middle-button drag, to move the camera; wheel = zoom\n'
-            '  Left click: touch screen / A   Right click: B   F8: capture the mouse as an analog stick (F6/F7 = sensitivity)\n\n'
-            'CONTROLLER (Nintendo layout)\n'
-            '  Right face button = A, bottom = B, top = X, left = Y   Guide = close the game\n\n'
-            'Full table: docs/CONTROLS.md'))
-
-    def on_check():
-        result = subprocess.run([sys.executable, str(ROOT / 'scripts/doctor.py')], cwd=ROOT, capture_output=True, text=True)
-        messagebox.showinfo('Check my computer', (result.stdout or result.stderr).strip() or 'No output.')
-
-    def on_report():
-        log_var.set('Collecting logs…')
-        root.update_idletasks()
-        out = make_report()
-        log_var.set(f'Bug report saved: {out.name} (no game data or keys inside). Attach it to a GitHub issue.' if out
-                    else 'Could not create the report. Run ./install.sh --report in a terminal.')
-
-    play.configure(command=on_play)
-    ttk.Button(saves, text='Back up now', command=on_backup).pack(side='left')
-    ttk.Button(saves, text='Restore…', command=on_restore).pack(side='left', padx=6)
-    ttk.Button(saves, text='Open save folder', command=lambda: open_folder(SAVE_DIR)).pack(side='left')
-    ttk.Button(help_box, text='Controls', command=on_controls).pack(side='left')
-    ttk.Button(help_box, text='Check my computer', command=on_check).pack(side='left', padx=6)
-    ttk.Button(help_box, text='Create bug report', command=on_report).pack(side='left')
-    ttk.Button(help_box, text='Open logs', command=lambda: open_folder(LOGS)).pack(side='left', padx=6)
-    ttk.Button(help_box, text='Testing guide', command=lambda: webbrowser.open(TESTING_URL)).pack(side='left')
-    ttk.Button(help_box, text='Report a problem', command=lambda: webbrowser.open(ISSUES_URL)).pack(side='left', padx=6)
-
-    refresh_status()
-    if '--smoke' in sys.argv:  # used by the tests: build the window, then close it
-        root.after(200, root.destroy)
-    root.mainloop()
+    """Open the window (scripts/launcher_ui.py, drawn in the Island UI Kit style); the logic stays in this file."""
+    sys.path.insert(0, str(Path(__file__).resolve().parent))
+    import launcher_ui
+    launcher_ui.run(sys.modules[__name__], smoke='--smoke' in sys.argv)
 
 
 if __name__ == '__main__':
