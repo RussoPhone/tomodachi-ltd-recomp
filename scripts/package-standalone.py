@@ -17,6 +17,7 @@ import argparse
 import json
 import os
 from pathlib import Path
+import re
 import shutil
 import subprocess
 import sys
@@ -38,6 +39,7 @@ def ordered(modules):
     return out + [m for m in modules if m not in out]
 
 
+RERUN = './install.sh'
 RUNTIME_FILES = ('recomp_runtime.h', 'recomp_runtime.c')
 
 
@@ -55,6 +57,19 @@ def heal_runtime_files(exefs, mods):
                 shutil.copyfile(donor / f, folder / f)
         repaired.append(m)
     return repaired
+
+
+def missing_export_sources(exefs, mods):
+    """Sources that a module's CMakeLists.txt lists but the export did not write (the export was cut short; issue #17)."""
+    missing = []
+    for m in mods:
+        cmake = exefs / m / 'CMakeLists.txt'
+        if not cmake.is_file():
+            continue
+        for name in sorted(set(re.findall(r'\bsrc/[A-Za-z0-9_]+\.c\b', cmake.read_text(errors='replace')))):
+            if not (exefs / m / name).is_file():
+                missing.append(f'{m}/{name}')
+    return missing
 
 
 def registration(mods, features):
@@ -253,6 +268,10 @@ def main():
         repaired = heal_runtime_files(exefs, mods)
         if repaired:
             print(f'note: {", ".join(repaired)} had no recomp_runtime.h/.c in the export; copied them from another module')
+        lacking = missing_export_sources(exefs, mods)
+        if lacking:
+            sys.exit(f'the game export is incomplete: {len(lacking)} source file(s) it lists are missing, for example '
+                     f'{", ".join(lacking[:3])}. Delete local/aot and run {RERUN} --redo 7 (use ./install.sh if not on Linux).')
         missing = [m for m in mods if not (exefs / m / 'recomp_runtime.h').exists()]
         if missing:
             have = sorted(p.name for p in (exefs / missing[0]).iterdir())[:20] if (exefs / missing[0]).is_dir() else 'the folder does not exist'

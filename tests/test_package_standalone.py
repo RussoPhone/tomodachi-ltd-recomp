@@ -116,6 +116,15 @@ class StandalonePackageTests(unittest.TestCase):
                 self.assertEqual((exefs / "main" / name).read_text(), "same")
             self.assertEqual(packager.heal_runtime_files(exefs, ["rtld", "main", "sdk"]), [])
 
+    def test_export_sources_missing_from_disk_are_found(self):
+        packager = load_packager()
+        with tempfile.TemporaryDirectory(prefix="standalone-src-") as tmp:
+            exefs = pathlib.Path(tmp)
+            (exefs / "main" / "src").mkdir(parents=True)
+            (exefs / "main" / "CMakeLists.txt").write_text("add_library(a src/recompiled_main_1.c src/recompiled_main_2.c)")
+            (exefs / "main" / "src" / "recompiled_main_1.c").write_text("x")
+            self.assertEqual(packager.missing_export_sources(exefs, ["main"]), ["main/src/recompiled_main_2.c"])
+
     def test_negative_resource_limits_are_rejected(self):
         invalid_options = (
             (("--jobs", "-1"), "--jobs must be at least 1"),

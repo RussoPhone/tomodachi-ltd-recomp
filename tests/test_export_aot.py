@@ -33,7 +33,30 @@ def load_exporter(rpc):
         spec = importlib.util.spec_from_file_location("export_aot", SCRIPT)
         module = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(module)
+    # These tests fake the clock and the sleeps; the real file-settling wait has its own tests below.
+    module.wait_until_settled = lambda *a, **k: 0.0
+    module.missing_sources = lambda *a, **k: []
     return module
+
+
+class ExportOutputChecks(unittest.TestCase):
+    def test_sources_listed_but_missing_are_reported_and_settling_returns(self):
+        mcp = types.ModuleType("mcp")
+        mcp.rpc = None
+        with mock.patch.dict(sys.modules, {"mcp": mcp}):
+            spec = importlib.util.spec_from_file_location("export_aot_real", SCRIPT)
+            module = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(module)
+        with tempfile.TemporaryDirectory(prefix="export-aot-out-") as tmp:
+            root = pathlib.Path(tmp)
+            (root / "main" / "src").mkdir(parents=True)
+            (root / "main" / "recomp_export.c").write_text("x")
+            (root / "main" / "CMakeLists.txt").write_text("add_library(a src/recompiled_main_1.c src/recompiled_main_2.c)")
+            (root / "main" / "src" / "recompiled_main_1.c").write_text("x")
+            self.assertEqual(module.missing_sources(root), ["main/src/recompiled_main_2.c"])
+            (root / "main" / "src" / "recompiled_main_2.c").write_text("x")
+            self.assertEqual(module.missing_sources(root), [])
+            self.assertLess(module.wait_until_settled(root, quiet_s=0.5, max_s=10, poll_s=0.1), 5)
 
 
 class ExportAotTests(unittest.TestCase):

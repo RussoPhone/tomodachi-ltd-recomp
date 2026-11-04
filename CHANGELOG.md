@@ -1,6 +1,9 @@
 # Changelog
 
 ## Unreleased
+- Installer: the game export (step 7) is now closed only after its files stopped changing, and it checks that every source listed by a module
+  exists. Before, suyu was stopped as soon as it said "done" while the biggest module was still being written, which left `main` without
+  `recomp_runtime.h/.c` and some `src/recompiled_main_*.c` on a fast machine (issue #17). Step 9 also stops early, with the fix, if a source is missing.
 - Installer: `./install.sh --redo 7` runs step 7 and every later step again (needed after deleting `local/aot`).
 - Installer: when the game export leaves a module without `recomp_runtime.h/.c` (seen once, on `main` only), the files are copied from another
   module, since they are identical in all of them. If no module has them, the install stops at step 9 with a clear message.

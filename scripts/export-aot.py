@@ -11,6 +11,7 @@ neither the desktop suyu profile nor ~/.config is touched.
 import argparse
 import json
 import os
+import re
 from pathlib import Path
 import socket
 import subprocess
@@ -43,6 +44,46 @@ def call(name, args=None, timeout=30.0):
             except json.JSONDecodeError:
                 return {'_text': block['text']}
     return out
+
+
+def tree_state(root):
+    """(file count, total bytes) of everything under `root`; used to see when the export has stopped writing."""
+    count = size = 0
+    for path in Path(root).rglob('*'):
+        try:
+            if path.is_file():
+                count += 1
+                size += path.stat().st_size
+        except OSError:
+            pass
+    return count, size
+
+
+def wait_until_settled(root, quiet_s=10, max_s=300, poll_s=2):
+    """The status says "done" while the biggest module is still being written (a user's `main` came out without src/recompiled_main_972.c
+    and recomp_runtime.h, issue #17). Wait until the output has not changed for `quiet_s` seconds. Returns the seconds waited."""
+    start = last_change = time.time()
+    state = tree_state(root)
+    while time.time() - start < max_s:
+        time.sleep(poll_s)
+        now = tree_state(root)
+        if now != state:
+            state, last_change = now, time.time()
+        elif time.time() - last_change >= quiet_s:
+            break
+    return time.time() - start
+
+
+def missing_sources(root):
+    """Files that a module's CMakeLists.txt lists as sources but that are not on disk (an export that stopped half way)."""
+    missing = []
+    for cmake in Path(root).rglob('CMakeLists.txt'):
+        if cmake.parent.name == 'aot_cache' or not (cmake.parent / 'recomp_export.c').exists():
+            continue
+        for name in sorted(set(re.findall(r'\bsrc/[A-Za-z0-9_]+\.c\b', cmake.read_text(errors='replace')))):
+            if not (cmake.parent / name).is_file():
+                missing.append(f'{cmake.parent.name}/{name}')
+    return missing
 
 
 def main():
@@ -117,6 +158,13 @@ def main():
                 break
             time.sleep(min(15, remaining))
         record['result'] = 'succeeded' if record['last_status'].get('success') else 'failed'
+        if record['result'] == 'succeeded':
+            waited = wait_until_settled(out_dir)
+            print(f'{time.strftime("%H:%M:%S")} export written; waited {waited:.0f} s for the files to settle', flush=True)
+            lacking = missing_sources(out_dir)
+            if lacking:
+                record['result'] = 'failed'
+                record['error'] = f'{len(lacking)} source file(s) listed by the export are missing, for example {", ".join(lacking[:3])}'
     except Exception as error:  # record every terminal state, not only success
         record['result'] = 'error'
         record['error'] = str(error)
