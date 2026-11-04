@@ -311,7 +311,11 @@ def main():
     with log.open('w') as out:
         rc = subprocess.run([str(c) for c in configure], cwd=ROOT, env=env, stdout=out, stderr=subprocess.STDOUT).returncode
     if rc:
-        sys.exit(f'configure failed (see {log.relative_to(ROOT)})')
+        text = log.read_text(errors='replace').splitlines()
+        # cmake prints its real complaint as "CMake Error ..."; rc < 0 means the process was killed by a signal (out of memory, a crash).
+        starts = [i for i, l in enumerate(text) if l.startswith('CMake Error')][:2]
+        detail = '\n'.join(l for i in starts for l in text[i:i + 8]) or '\n'.join(text[-8:])
+        sys.exit(f'configure failed (exit code {rc}; see {log.relative_to(ROOT)})\n{detail}')
     if args.configure_only:
         print(f'configured {build.relative_to(ROOT)}')
         return 0

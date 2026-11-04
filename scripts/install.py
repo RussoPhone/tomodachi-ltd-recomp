@@ -134,7 +134,7 @@ def write_report(failed=None):
     for extra in recent[-4:]:
         body = extra.read_text(errors='replace').splitlines()
         # The last lines of a long build are usually warnings; the real error is where ninja prints "FAILED:".
-        hits = [i for i, l in enumerate(body) if l.startswith('FAILED:') or ': error:' in l or 'fatal error' in l]
+        hits = [i for i, l in enumerate(body) if l.startswith('FAILED:') or l.startswith('CMake Error') or ': error:' in l or 'fatal error' in l]
         if hits:
             lines += ['', f'--- first errors in artifacts/{extra.name} ---']
             shown = 0
