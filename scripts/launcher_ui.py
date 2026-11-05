@@ -718,7 +718,10 @@ class Window:
 
         def run():
             try:
-                code = subprocess.run(L.play_command(current), cwd=L.ROOT).returncode
+                env = dict(os.environ)
+                if env.get("FONTCONFIG_FILE", "").endswith(f"tomodachi-launcher-fonts-{os.getuid()}.conf"):
+                    env.pop("FONTCONFIG_FILE")  # the bundled-font config is for the launcher window only
+                code = subprocess.run(L.play_command(current), cwd=L.ROOT, env=env).returncode
                 note = ("Have a nice day on the island!" if code == 0
                         else f"The game ended with code {code}. See local/logs/play-nxrt-*.log.")
             except OSError as error:
