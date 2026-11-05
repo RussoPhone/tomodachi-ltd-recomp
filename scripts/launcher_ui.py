@@ -33,17 +33,24 @@ DECIDE = ((0, 1.1), (3, 1.05), (6, 1.2), (12, 1.0))  # confirm: frame -> scale (
 HOVER = 1.08
 BASE_W, BASE_H = 940, 700
 
-CONTROLS = (
-    "KEYBOARD\n"
-    "  Left stick: I K J L      Right stick: Q / E      D-pad: arrow keys\n"
-    "  A: X   B: Z   X: S   Y: A   L: W   R: R   ZL: 1   ZR: 3\n"
-    "  +: Enter   -: Backspace   HOME (close the game): Home   Fullscreen: F11\n\n"
-    "MOUSE (experimental, awkward in some menus)\n"
-    "  Island: push the mouse to a window edge, or middle-button drag, to move the camera; wheel = zoom\n"
-    "  Left click: touch screen / A   Right click: B   F8: capture the mouse as an analog stick (F6/F7 = sensitivity)\n\n"
-    "CONTROLLER (Nintendo layout)\n"
-    "  Right face button = A, bottom = B, top = X, left = Y   Guide = close the game\n\n"
-    "Full table: docs/CONTROLS.md")
+CONTROLS = (  # (tab, columns, rows, note); a row is (what, [key caps])
+    ("Keyboard", 2, (
+        ("Left stick", ["I", "K", "J", "L"]), ("Right stick", ["Q", "E"]), ("D-pad", ["Arrow keys"]),
+        ("A", ["X"]), ("B", ["Z"]), ("X", ["S"]), ("Y", ["A"]),
+        ("L / R", ["W", "R"]), ("ZL / ZR", ["1", "3"]),
+        ("+", ["Enter"]), ("\u2212", ["Backspace"]), ("Close the game", ["Home"]), ("Fullscreen", ["F11"])),
+     "Left stick: I up, K down, J left, L right. Remapping is not available yet."),
+    ("Mouse", 1, (
+        ("Move the island camera", ["Window edge", "Middle drag"]), ("Zoom", ["Wheel"]),
+        ("Touch screen / A", ["Left click"]), ("B", ["Right click"]),
+        ("Mouse as analog stick", ["F8"]), ("Sensitivity", ["F6", "F7"])),
+     "Experimental: great on the island, awkward in some menus."),
+    ("Controller", 1, (
+        ("A  B  X  Y", ["Right", "Bottom", "Top", "Left"]), ("L / R, ZL / ZR", ["Bumpers", "Triggers"]),
+        ("+ / \u2212", ["Start", "Back"]), ("Sticks and D-pad", ["Same on the pad"]),
+        ("Close the game", ["Guide"])),
+     "Nintendo layout: the right face button is A. Full table: docs/CONTROLS.md"),
+)
 
 
 def register_bundled_fonts(root):
@@ -214,7 +221,8 @@ class Pill(Widget):
     STYLES = {"primary": ("red", "red_side", "paper", True), "neutral": ("paper", "edge", "ink", False),
               "soft": ("cream_p", "soft_side", "ink", False),  # neutral button on a white card
               "orange": ("orange", "orange_side", "paper", False),
-              "focus": ("focus", "orange_side", "ink", False)}  # the yellow "new build" chip
+              "focus": ("focus", "orange_side", "ink", False),
+              "tab_on": ("tab", "orange_side", "ink", False), "tab_off": ("cream_l", "soft_side", "ink", False)}  # the yellow "new build" chip
 
     def __init__(self, ui, key, label, style="primary", command=None):
         super().__init__(ui, key)
@@ -487,7 +495,7 @@ class Window:
     # --- pointer routing (hit-test on boxes, so redrawing items cannot re-trigger hover) --------
     def _widgets(self):
         if self.dialog:
-            return list(self.dialog["buttons"])
+            return list(self.dialog["buttons"]) + self.dialog["tabs"]
         return [self.fullscreen, self.safe, self.updates, self.size, self.language, self.play_btn, self.update_btn] \
             + self.save_btns + self.help_btns
 
@@ -876,9 +884,9 @@ class Window:
 
     # --- dialogs (cloud) --------------------------------------------------------------
     def modal_blocks(self, widget):
-        return self.dialog is not None and widget not in self.dialog["buttons"]
+        return self.dialog is not None and widget not in self.dialog["buttons"] + self.dialog["tabs"]
 
-    def show_dialog(self, message, buttons, body=None):
+    def show_dialog(self, message, buttons, body=None, tabs=None):
         """buttons: [(label, style, callback or None)]; the last one answers Return."""
         self.close_popup()
         if self.dialog:
@@ -897,7 +905,13 @@ class Window:
             text.insert("1.0", body)
             text.config(state="disabled")
         self._set_hover(None)
-        self.dialog = {"message": message, "buttons": pills, "body": text, "anim": None}
+        self.dialog = {"message": message, "buttons": pills, "body": text, "anim": None, "tabs": [], "tab": 0}
+        if tabs:  # the controls sheet: one tab per CONTROLS entry
+            def pick(i):
+                self.dialog["tab"] = i
+                self._draw_dialog(1.0)
+            self.dialog["tabs"] = [Pill(self, f"dlg_t{i}", name, "tab_off", lambda i=i: pick(i))
+                                   for i, name in enumerate(tabs)]
         self._pop_dialog(6)  # dialog in: 6 frames
 
     def _pop_dialog(self, steps):
@@ -915,18 +929,19 @@ class Window:
         cv.delete("dlg")
         W, H = cv.winfo_width(), cv.winfo_height()
         cv.create_rectangle(0, 0, W, H, fill=C["dim"], stipple="gray50", outline="", tags="dlg")
-        big = d["body"] is not None
+        sheet = bool(d["tabs"])
+        big = d["body"] is not None or sheet
         cw = min((820 if big else 620) * u, W - 40) * s
-        ch = min((520 if big else 340) * u, H - 40) * s
+        ch = min((640 if sheet else 520 if big else 340) * u, H - 40) * s
         cx, cy = W / 2, H / 2
         x0, y0, x1, y1 = cx - cw / 2, cy - ch / 2, cx + cw / 2, cy + ch / 2
-        r = ch * (0.22 if big else 0.45)
+        r = ch * (0.12 if sheet else 0.22 if big else 0.45)
         wob = ch * (0.015 if big else 0.03)
         cv.create_polygon(blob(x0, y0 + 16 * u, x1, y1 + 16 * u, r, wobble=wob, seed=3), smooth=True,
                           fill=mix(C["dim"], "#000000", 0.35), outline="", tags="dlg")
         cv.create_polygon(blob(x0, y0, x1, y1, r, wobble=wob, seed=3), smooth=True, fill=C["cream"],
                           outline="", tags="dlg")
-        ty = y0 + ch * (0.12 if big else 0.36)
+        ty = y0 + (ch * 0.075 if sheet else ch * (0.12 if big else 0.36))
         cv.create_text(cx, ty, text=d["message"], width=cw * 0.78, justify="center", fill=C["ink"],
                        font=self.font((22 if big else 24) * u * s), tags="dlg")
         bh = 60 * u * s
@@ -938,17 +953,69 @@ class Window:
             bx = cx - total / 2 + i * (bw + 16 * u)
             b.place(bx, by, bx + bw, by + bh, C["cream"])
             cv.tag_raise(b.tag)
-        if big and s >= 0.99:
+        if sheet:
+            self._draw_sheet(x0, y0, x1, y1, cw, by, s)
+        elif big and s >= 0.99:
             tx0, ty0 = x0 + cw * 0.07, ty + 30 * u
             cv.create_window(tx0, ty0, anchor="nw", window=d["body"], width=cw * 0.86,
                              height=max(60, by - ty0 - 24 * u), tags="dlg")
+
+    def _draw_sheet(self, x0, y0, x1, y1, cw, by, s):
+        """Controls sheet: tab pills, cream rows with white key caps (Island UI Kit rows and chips)."""
+        cv, u, d = self.cv, self.u, self.dialog
+        n = len(d["tabs"])
+        tw, th, gap = min(190 * u * s, cw * 0.27), 44 * u * s, 10 * u * s
+        tx = (x0 + x1) / 2 - (n * tw + (n - 1) * gap) / 2
+        ty = y0 + 84 * u * s
+        for i, t in enumerate(d["tabs"]):
+            t.style = "tab_on" if i == d["tab"] else "tab_off"
+            t.place(tx + i * (tw + gap), ty, tx + i * (tw + gap) + tw, ty + th, C["cream"])
+            cv.tag_raise(t.tag)
+        if s < 0.99:
+            return
+        _, cols, rows, note = CONTROLS[d["tab"]]
+        top = ty + th + 22 * u
+        left, right = x0 + cw * 0.06, x1 - cw * 0.06
+        cgap = 14 * u
+        colw = (right - left - (cols - 1) * cgap) / cols
+        per = -(-len(rows) // cols)
+        avail = by - 36 * u - top - (26 * u if note else 0)
+        rh = min(46 * u, (avail + 6 * u) / per - 6 * u)
+        for k, (what, keys) in enumerate(rows):
+            c, r = divmod(k, per)
+            rx0 = left + c * (colw + cgap)
+            ry0 = top + r * (rh + 6 * u)
+            cv.create_polygon(blob(rx0, ry0 + rh * 0.12, rx0 + colw, ry0 + rh * 1.12, rh / 2),
+                              smooth=True, fill=shadow_on(C["cream"]), outline="", tags="dlg")
+            cv.create_polygon(blob(rx0, ry0, rx0 + colw, ry0 + rh, rh / 2), smooth=True,
+                              fill=C["cream_p"], outline="", tags="dlg")
+            ch_ = rh * 0.68
+            widths = [max(ch_, self.font(ch_ * 0.5).measure(kc) + ch_ * 0.7) for kc in keys]
+            kx = rx0 + colw - rh * 0.3 - sum(widths) - (len(keys) - 1) * 6 * u
+            for kc, kw in zip(keys, widths):
+                ky = ry0 + (rh - ch_) / 2 - 1
+                cv.create_polygon(blob(kx, ky + ch_ * 0.14, kx + kw, ky + ch_ * 1.14, ch_ * 0.32), smooth=True,
+                                  fill=C["edge"], outline="", tags="dlg")
+                cv.create_polygon(blob(kx, ky, kx + kw, ky + ch_, ch_ * 0.32), smooth=True,
+                                  fill=C["paper"], outline="", tags="dlg")
+                cv.create_text(kx + kw / 2, ky + ch_ / 2, text=kc, fill=C["ink"],
+                               font=self.font(ch_ * 0.5), tags="dlg")
+                kx += kw + 6 * u
+            avail_w = colw - (rh * 0.3 * 2 + sum(widths) + len(keys) * 6 * u)
+            cv.create_text(rx0 + rh * 0.4, ry0 + rh / 2, text=what, anchor="w", fill=C["ink"],
+                           font=self.fit_font(what, rh * 0.38, max(40, avail_w)), tags="dlg")
+        if note:
+            cv.create_text((x0 + x1) / 2, by - 22 * u, text=note, fill=C["note"],
+                           font=self.fit_font(note, 14 * u, cw * 0.84, "normal"), tags="dlg")
+        for b in d["buttons"] + d["tabs"]:
+            cv.tag_raise(b.tag)
 
     def close_dialog(self):
         if not self.dialog:
             return
         if self.dialog.get("anim"):
             self.root.after_cancel(self.dialog["anim"])
-        for b in self.dialog["buttons"]:
+        for b in self.dialog["buttons"] + self.dialog["tabs"]:
             b.dispose()
         if self.dialog["body"] is not None:
             self.dialog["body"].destroy()
@@ -1026,7 +1093,7 @@ class Window:
                          [("Cancel", "neutral", None), ("Restore", "primary", go)])
 
     def on_controls(self):
-        self.info("Controls", CONTROLS)
+        self.show_dialog("Controls", [("OK", "primary", None)], tabs=[t[0] for t in CONTROLS])
 
     def on_check(self):
         L = self.L
