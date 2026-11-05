@@ -6,6 +6,7 @@ The window itself lives in scripts/launcher_ui.py (Island UI Kit style).
 Settings are kept in local/launcher.json and handed to scripts/play-nxrt.sh as options. Needs only Python's built-in Tk.
 """
 import json
+import os
 from pathlib import Path
 import shutil
 import subprocess
@@ -121,8 +122,77 @@ def make_report():
     return zips[-1] if zips and result.returncode == 0 else None
 
 
+APP_NAME = 'Tomodachi-LTD-Recomp'
+DESKTOP_FILE = 'tomodachi-ltd-recomp.desktop'
+OLD_DESKTOP_FILE = 'tomodachi-nxrt.desktop'  # written by earlier installers
+
+
+def applications_dir():
+    return Path(os.environ.get('XDG_DATA_HOME') or Path.home() / '.local/share') / 'applications'
+
+
+def _exec_quote(path):
+    """Quote a path for the Exec= key of a .desktop file (spaces and the characters the spec escapes)."""
+    text = str(path).replace('\\', '\\\\').replace('"', '\\"').replace('`', '\\`').replace('$', '\\$')
+    return f'"{text}"'
+
+
+def desktop_entry():
+    """Menu entry: searching "Tomodachi LTD Recomp" finds it, and it opens the launcher (play.sh falls back to the game)."""
+    icon = ROOT / 'assets/icon.svg'
+    lines = [
+        '[Desktop Entry]', 'Type=Application', 'Version=1.0', f'Name={APP_NAME}',
+        'GenericName=Tomodachi Life (unofficial PC port)',
+        'Comment=Launcher for the unofficial PC port of Tomodachi Life: Living the Dream. Bring your own copy!',
+        'Keywords=Tomodachi;Tomodachi Life;Tomodachi LTD Recomp;LTD;Recomp;Mii;Living the Dream;',
+        f'Exec={_exec_quote(ROOT / "play.sh")}', f'Path={ROOT}', 'Terminal=false', 'Categories=Game;',
+    ]
+    if icon.exists():
+        lines.append(f'Icon={icon}')
+    return '\n'.join(lines) + '\n'
+
+
+def install_shortcut(apps=None):
+    """Write the menu entry (replacing the old one that pointed at this folder). Returns the file written."""
+    apps = Path(apps) if apps else applications_dir()
+    apps.mkdir(parents=True, exist_ok=True)
+    out = apps / DESKTOP_FILE
+    out.write_text(desktop_entry())
+    old = apps / OLD_DESKTOP_FILE
+    try:
+        if old.exists() and str(ROOT) in old.read_text():
+            old.unlink()  # same game folder: one entry is enough
+    except OSError:
+        pass
+    updater = shutil.which('update-desktop-database')
+    if updater:
+        subprocess.run([updater, str(apps)], capture_output=True)
+    return out
+
+
+def remove_shortcut(apps=None):
+    apps = Path(apps) if apps else applications_dir()
+    removed = []
+    for name in (DESKTOP_FILE, OLD_DESKTOP_FILE):
+        path = apps / name
+        try:
+            if path.exists() and (name == DESKTOP_FILE or str(ROOT) in path.read_text()):
+                path.unlink()
+                removed.append(path)
+        except OSError:
+            pass
+    return removed
+
+
 def main():
     """Open the window (scripts/launcher_ui.py, drawn in the Island UI Kit style); the logic stays in this file."""
+    if '--install-shortcut' in sys.argv:
+        print(f'Menu entry written: {install_shortcut()}\nSearch for "Tomodachi LTD Recomp" in your applications menu.')
+        return
+    if '--remove-shortcut' in sys.argv:
+        gone = remove_shortcut()
+        print('Removed: ' + ', '.join(map(str, gone)) if gone else 'There was no menu entry to remove.')
+        return
     sys.path.insert(0, str(Path(__file__).resolve().parent))
     import launcher_ui
     launcher_ui.run(sys.modules[__name__], smoke='--smoke' in sys.argv)

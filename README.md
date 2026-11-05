@@ -107,13 +107,13 @@ During step 7 a window of the extraction tool opens and closes by itself. It is 
 
 If a step fails, the installer saves a **report** (`local/logs/report-*.txt`, no game data or keys inside) and tells you where it is. Run `./install.sh --report` to bundle every log into one zip and attach it to an [issue](https://github.com/RussoPhone/tomodachi-ltd-recomp/issues).
 
-At the end it offers a **shortcut in your applications menu**. Answer `Y`.
+At the end it offers a **shortcut in your applications menu**. Answer `Y`. (You can add it later with `./play.sh --shortcut`.)
 
 ---
 
 ## Step 4 — Play 🎉
 
-Open **Tomodachi Life** from your applications menu, or run:
+Search for **Tomodachi LTD Recomp** in your applications menu (it opens the launcher), or run:
 
 ```bash
 ./play.sh
@@ -177,7 +177,7 @@ KDE's file indexer (Baloo) tries to read the gigabytes of generated code and can
 <details>
 <summary><b>How do I uninstall it?</b></summary>
 
-Delete the `tomodachi-ltd-recomp` folder and the shortcut at `~/.local/share/applications/tomodachi-nxrt.desktop`. Your saves are inside the folder, so back them up first.
+Delete the `tomodachi-ltd-recomp` folder and the shortcut (`./play.sh --remove-shortcut` removes it, or delete `~/.local/share/applications/tomodachi-ltd-recomp.desktop`). Your saves are inside the folder, so back them up first.
 </details>
 
 <details>

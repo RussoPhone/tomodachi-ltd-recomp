@@ -60,5 +60,41 @@ class LauncherTests(unittest.TestCase):
         self.assertTrue((launcher.SAVE_DIR / 'keep.sav').exists())
 
 
+    def test_desktop_entry_is_found_by_search_and_quotes_paths(self):
+        launcher.ROOT = self.tmp / 'my games' / 'tomodachi ltd recomp'
+        (launcher.ROOT / 'assets').mkdir(parents=True)
+        (launcher.ROOT / 'assets/icon.svg').write_text('<svg/>')
+        entry = launcher.desktop_entry()
+        self.assertIn('Name=Tomodachi-LTD-Recomp', entry)
+        self.assertIn('Tomodachi LTD Recomp', next(l for l in entry.splitlines() if l.startswith('Keywords=')))
+        self.assertIn(f'Exec="{launcher.ROOT}/play.sh"', entry)  # quoted: the folder has spaces
+        self.assertIn(f'Path={launcher.ROOT}', entry)
+        self.assertIn('Terminal=false', entry)
+        self.assertIn(f'Icon={launcher.ROOT}/assets/icon.svg', entry)
+
+    def test_install_and_remove_shortcut_replace_the_old_entry(self):
+        apps = self.tmp / 'apps'
+        apps.mkdir()
+        (apps / launcher.OLD_DESKTOP_FILE).write_text(f'[Desktop Entry]\nExec={launcher.ROOT}/play.sh\n')
+        other = apps / 'other.desktop'
+        other.write_text('x')
+        out = launcher.install_shortcut(apps)
+        self.assertEqual(out, apps / launcher.DESKTOP_FILE)
+        self.assertTrue(out.exists())
+        self.assertFalse((apps / launcher.OLD_DESKTOP_FILE).exists())  # same folder: replaced, not duplicated
+        self.assertTrue(other.exists())
+        self.assertEqual(launcher.remove_shortcut(apps), [out])
+        self.assertFalse(out.exists())
+        self.assertTrue(other.exists())
+
+    def test_install_shortcut_keeps_the_old_entry_of_another_folder(self):
+        apps = self.tmp / 'apps'
+        apps.mkdir()
+        old = apps / launcher.OLD_DESKTOP_FILE
+        old.write_text('[Desktop Entry]\nExec=/somewhere/else/play.sh\n')
+        launcher.install_shortcut(apps)
+        self.assertTrue(old.exists())
+
+
 if __name__ == '__main__':
     unittest.main()

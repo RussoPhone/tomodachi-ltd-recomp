@@ -477,15 +477,12 @@ def nxrt():
 def shortcut():
     if plat.IS_WINDOWS or not sys.stdin.isatty():
         return
-    answer = input('   Add Tomodachi Life to your applications menu? [Y/n] ').strip().lower()
+    answer = input('   Add Tomodachi-LTD-Recomp to your applications menu? [Y/n] ').strip().lower()
     if answer not in ('', 'y', 'yes', 's', 'sim'):
         return
-    apps = Path.home() / '.local/share/applications'
-    apps.mkdir(parents=True, exist_ok=True)
-    entry = ('[Desktop Entry]\nType=Application\nName=Tomodachi Life (unofficial native port)\n'
-             f'Exec={ROOT / "play.sh"}\nPath={ROOT}\nTerminal=false\nCategories=Game;\n')
-    (apps / 'tomodachi-nxrt.desktop').write_text(entry)
-    say('   Shortcut added: look for "Tomodachi" in your applications menu.')
+    import launcher  # the launcher owns the menu entry, so ./play.sh --shortcut writes the very same one
+    launcher.install_shortcut()
+    say('   Shortcut added: search for "Tomodachi LTD Recomp" in your applications menu (it opens the launcher).')
 
 
 CI = '--ci' in sys.argv  # build check without a game: steps 1, 3, 4 and 5 only
