@@ -213,7 +213,8 @@ class Widget:
 class Pill(Widget):
     STYLES = {"primary": ("red", "red_side", "paper", True), "neutral": ("paper", "edge", "ink", False),
               "soft": ("cream_p", "soft_side", "ink", False),  # neutral button on a white card
-              "orange": ("orange", "orange_side", "paper", False)}
+              "orange": ("orange", "orange_side", "paper", False),
+              "focus": ("focus", "orange_side", "ink", False)}  # the yellow "new build" chip
 
     def __init__(self, ui, key, label, style="primary", command=None):
         super().__init__(ui, key)
@@ -383,6 +384,9 @@ class Window:
         self.play_btn = Pill(self, "play", "Play", "primary", self.on_play)
         self.fullscreen = Switch(self, "fullscreen", s["fullscreen"], lambda v: self._set(fullscreen=v))
         self.safe = Switch(self, "safe", s.get("safe", False), lambda v: self._set(safe=v))
+        self.updates = Switch(self, "updates", s.get("check_updates", True), self._toggle_updates)
+        self.update_btn = Pill(self, "upd", "", "focus", self.on_update)
+        self.update_info = None  # the release that is newer than the installed build, when there is one
         self.size = Dropdown(self, "size", sizes, s["size"], lambda v: self._set(size=v))
         self.language = Dropdown(self, "language", [n for n, _ in L.LANGUAGES], lang_name,
                                  lambda v: self._set(language=next(c for n, c in L.LANGUAGES if n == v)))
@@ -415,12 +419,77 @@ class Window:
             self.set_note(f'The game has no "{L.LANGUAGE_RESET}" text, so the language is back to English (US).')
         else:
             self.set_note("Your save is backed up automatically before each play session.")
+        self._start_update_check()
+
+    # --- new-build notice ------------------------------------------------------------
+    def _toggle_updates(self, on):
+        self._set(check_updates=on)
+        if on:
+            self._start_update_check()
+        else:
+            had = self.update_info is not None
+            self.update_info = None
+            if had:
+                self.set_note("The check for new builds is off.")
+            self._schedule()
+
+    def _start_update_check(self):
+        """Show what is cached at once; look at GitHub off the UI thread when the cache is stale."""
+        if not self.settings.get("check_updates", True) or not self.version:
+            return
+        cached, fresh = self.L.cached_release()
+        if cached:
+            self._got_release(cached)
+        if fresh:
+            return
+        box = {}
+
+        def look():
+            box["release"] = self.L.check_for_update()
+        thread = threading.Thread(target=look, daemon=True)
+        thread.start()
+
+        def poll():
+            if thread.is_alive():
+                self.root.after(300, poll)
+            elif box.get("release"):
+                self._got_release(box["release"])
+        self.root.after(300, poll)
+
+    def _got_release(self, release):
+        if not self.settings.get("check_updates", True) or not self.L.newer_release(self.version, release):
+            if self.update_info:
+                self.update_info = None
+                self._schedule()
+            return
+        first = self.update_info is None or self.update_info.get("version") != release.get("version")
+        self.update_info = release
+        if first:
+            self.set_note(f'A newer build is available: {release["version"]} (this one is {self.version}). '
+                          'Click the yellow chip to see how to update.')
+        self._schedule()
+
+    def on_update(self):
+        info = self.update_info
+        if not info:
+            return
+        text = (f'Installed:  {self.version}\nAvailable:  {info["version"]}\n'
+                + (f'\nWhat is new:  {info["title"]}\n' if info.get("title") else '')
+                + '\nTo update: open a terminal in this folder, run  git pull  and then  ./install.sh  again.\n'
+                  'It redoes only the steps that changed, but updating can still mean a long rebuild.\n'
+                  'Your saves stay where they are (and a backup is made each time you press Play).\n\n'
+                  'The launcher never updates anything by itself.')
+        buttons = [('Later', 'neutral', None)]
+        if info.get("url"):
+            buttons.append(('Release notes', 'primary', lambda: webbrowser.open(info["url"])))
+        self.show_dialog('A newer build is available', buttons, body=text)
 
     # --- pointer routing (hit-test on boxes, so redrawing items cannot re-trigger hover) --------
     def _widgets(self):
         if self.dialog:
             return list(self.dialog["buttons"])
-        return [self.fullscreen, self.safe, self.size, self.language, self.play_btn] + self.save_btns + self.help_btns
+        return [self.fullscreen, self.safe, self.updates, self.size, self.language, self.play_btn, self.update_btn] \
+            + self.save_btns + self.help_btns
 
     def _pick(self, x, y):
         if self.popup:
@@ -629,7 +698,7 @@ class Window:
         self.close_popup()
         raw = max(0.78, min(1.6, min(W / BASE_W, H / BASE_H)))
         u = self.u = round(raw * 25) / 25  # steps of 0.04 keep the font cache small while dragging
-        design_h = 650 * u  # height the content needs at this scale
+        design_h = 696 * u  # height the content needs at this scale
         slack = max(0.0, H - design_h)
         vg = min(slack / 6, 34 * u)  # extra space between the rows; the rest goes below the header
         top_extra = min((slack - 3 * vg) / 2, 60 * u) if slack > 3 * vg else 0.0
@@ -656,26 +725,38 @@ class Window:
             cv.create_polygon(blob(bx, hh * 0.40 - bh2 / 2, bx + bw, hh * 0.40 + bh2 / 2, bh2 / 2), smooth=True,
                               fill=C["cream_l"], outline="", tags="label")
             cv.create_text(bx + bw / 2, hh * 0.40, text=self.version, fill=C["ink"], font=f, tags="label")
+            if self.update_info:  # a newer published build: yellow chip, click for how to update
+                label = f'{self.update_info["version"]} available'
+                uw = f.measure(label) + 40 * u
+                ux = bx + bw + 10 * u
+                self.update_btn.set_label(label)
+                self.update_btn.place(ux, hh * 0.40 - 18 * u, ux + uw, hh * 0.40 + 18 * u, C["orange"])
+            else:
+                self.update_btn.box = (0, 0, 0, 0)
+                cv.delete(self.update_btn.tag)
+        else:
+            self.update_btn.box = (0, 0, 0, 0)
+            cv.delete(self.update_btn.tag)
         cv.create_text(pad + 2, hh * 0.76, text="Unofficial PC Port · Bring your own copy!",
                        anchor="w", fill=C["cream_l"], font=self.font(14 * u), tags="label")
 
         # row 1: play | settings
         top = hh + 32 * u + top_extra
         mid = W * 0.47
-        h1 = 236 * u
+        h1 = 284 * u
         self._card(pad, top, mid - gap / 2, top + h1, "Play")
         self._card(mid + gap / 2, top, W - pad, top + h1, "Settings")
         ix0, ix1 = pad + 26 * u, mid - gap / 2 - 26 * u
-        self.play_btn.place(ix0, top + 62 * u, ix1, top + 150 * u, C["paper"])
-        self._hint(ix0, top + 190 * u, "↵", "Play", u)
-        cv.create_text(ix0, top + 214 * u, text="First face-paint opening takes ~40 s (it builds a cache).",
+        self.play_btn.place(ix0, top + 66 * u, ix1, top + 170 * u, C["paper"])
+        self._hint(ix0, top + 226 * u, "↵", "Play", u)
+        cv.create_text(ix0, top + 256 * u, text="First face-paint opening takes ~40 s (it builds a cache).",
                        anchor="w", fill=C["note"], font=self.fit_font("x" * 52, 12.5 * u, ix1 - ix0, "normal"),
                        tags="label")
 
         sx0, sx1 = mid + gap / 2 + 26 * u, W - pad - 26 * u
-        rows = [top + 74 * u + i * 44 * u for i in range(4)]
+        rows = [top + 70 * u + i * 42 * u for i in range(5)]
         lab = self.font(17 * u)
-        for y, text in zip(rows, ("Fullscreen", "Safe mode", "Window size", "Language")):
+        for y, text in zip(rows, ("Fullscreen", "Safe mode", "Window size", "Language", "Check for new builds")):
             cv.create_text(sx0, y, text=text, anchor="w", fill=C["ink"], font=lab, tags="label")
         cv.create_text(sx0 + lab.measure("Safe mode") + 10 * u, rows[1], text="if the picture looks wrong",
                        anchor="w", fill=C["note"], font=self.font(12.5 * u, "normal"), tags="label")
@@ -686,6 +767,7 @@ class Window:
         self.size.place(sx1 - 170 * u, rows[2] - dd_h / 2, sx1, rows[2] + dd_h / 2, C["paper"])
         self.language.place(sx1 - min(250 * u, sx1 - sx0 - 130 * u), rows[3] - dd_h / 2, sx1, rows[3] + dd_h / 2,
                             C["paper"])
+        self.updates.place(sx1 - sw_w, rows[4] - sw_h / 2, sx1, rows[4] + sw_h / 2, C["paper"])
 
         # row 2: save data | help
         top2 = top + h1 + gap + 8 * u + vg
@@ -713,7 +795,7 @@ class Window:
         ny = top2 + h2 + gap + 10 * u + vg
         self.note_box = (pad, ny, W - pad, min(H - 16 * u, ny + 54 * u))
         self._draw_note()
-        for t in ("play", "fullscreen", "safe", "size", "language", "bk", "rs", "of", "hc", "hk", "hr", "hl", "ht", "hp"):
+        for t in ("play", "upd", "fullscreen", "safe", "updates", "size", "language", "bk", "rs", "of", "hc", "hk", "hr", "hl", "ht", "hp"):
             cv.tag_raise(t)
         self.refresh()
         if self.dialog:

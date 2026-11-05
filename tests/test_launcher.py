@@ -1,4 +1,7 @@
 import importlib.util
+import io
+import json
+import time
 from pathlib import Path
 import tempfile
 import unittest
@@ -17,6 +20,9 @@ class LauncherTests(unittest.TestCase):
         launcher.SAVE_DIR = self.tmp / 'user-nxrt'
         launcher.BACKUPS = self.tmp / 'backups'
         launcher.ROOT = self.tmp
+        self._urlopen = launcher.urllib.request.urlopen
+        launcher.UPDATE_CACHE = self.tmp / 'update-check.json'
+        self.addCleanup(lambda: setattr(launcher.urllib.request, 'urlopen', self._urlopen))
 
     def test_settings_roundtrip_and_defaults(self):
         self.assertEqual(launcher.load_settings(), launcher.DEFAULTS)
@@ -134,6 +140,62 @@ class LauncherTests(unittest.TestCase):
         self.assertEqual(launcher.build_version(), '')
         (self.tmp / 'CHANGELOG.md').write_text('## Alpha 9.9.9 - 2030-01-01\n')  # the source's version must not leak in
         self.assertEqual(launcher.build_version(), '')
+
+    def _github(self, releases):
+        class Response(io.BytesIO):
+            __enter__ = lambda self: self
+            __exit__ = lambda self, *a: None
+        launcher.urllib.request.urlopen = lambda request, timeout=None: Response(json.dumps(releases).encode())
+
+    def test_version_key_reads_the_numbers_whatever_the_wrapping(self):
+        self.assertEqual(launcher.version_key('Alpha 1.7.4'), (1, 7, 4))
+        self.assertEqual(launcher.version_key('v1.7.4'), (1, 7, 4))
+        self.assertEqual(launcher.version_key('1.10.0-rc1'), (1, 10, 0))
+        self.assertGreater(launcher.version_key('Alpha 1.10.0'), launcher.version_key('Alpha 1.9.9'))  # not a string compare
+        self.assertEqual(launcher.version_key('nothing'), ())
+
+    def test_latest_release_is_the_highest_version_not_the_first_listed(self):
+        self._github([
+            {'tag_name': 'v1.7.2', 'name': 'Alpha 1.7.2: mouse', 'html_url': 'u2', 'prerelease': True},
+            {'tag_name': 'v1.7.4', 'name': 'Alpha 1.7.4: the clock is right again', 'html_url': 'u4', 'prerelease': True},
+            {'tag_name': 'v1.8.0', 'name': 'Alpha 1.8.0: draft', 'html_url': 'u8', 'draft': True},  # drafts do not count
+            {'tag_name': 'v1.7.3', 'name': 'Alpha 1.7.3', 'html_url': 'u3'}])
+        latest = launcher.fetch_latest_release()
+        self.assertEqual((latest['version'], latest['url'], latest['title']),
+                         ('Alpha 1.7.4', 'u4', 'the clock is right again'))
+
+    def test_a_failed_or_odd_answer_is_no_release_not_an_error(self):
+        def boom(request, timeout=None):
+            raise OSError('offline')
+        launcher.urllib.request.urlopen = boom
+        self.assertIsNone(launcher.fetch_latest_release())
+        self._github({'message': 'API rate limit exceeded'})
+        self.assertIsNone(launcher.fetch_latest_release())
+        self._github([])
+        self.assertIsNone(launcher.fetch_latest_release())
+
+    def test_update_check_uses_the_cache_and_survives_being_offline(self):
+        launcher.UPDATE_CACHE = self.tmp / 'update-check.json'
+        calls = []
+        self._github([{'tag_name': 'v1.7.4', 'name': 'Alpha 1.7.4', 'html_url': 'u'}])
+        original = launcher.urllib.request.urlopen
+        launcher.urllib.request.urlopen = lambda *a, **k: (calls.append(1), original(*a, **k))[1]
+        self.assertEqual(launcher.check_for_update()['version'], 'Alpha 1.7.4')
+        self.assertEqual(launcher.check_for_update()['version'], 'Alpha 1.7.4')
+        self.assertEqual(len(calls), 1)  # the second start used the cache
+        launcher.UPDATE_CACHE.write_text(json.dumps({'checked': time.time() - 7 * 3600, 'release': {'version': 'Alpha 1.7.3'}}))
+        def boom(request, timeout=None):
+            raise OSError('offline')
+        launcher.urllib.request.urlopen = boom
+        self.assertEqual(launcher.check_for_update()['version'], 'Alpha 1.7.3')  # stale but better than nothing
+
+    def test_newer_release_only_claims_what_it_knows(self):
+        latest = {'version': 'Alpha 1.7.4'}
+        self.assertTrue(launcher.newer_release('Alpha 1.7.0', latest))
+        self.assertFalse(launcher.newer_release('Alpha 1.7.4', latest))
+        self.assertFalse(launcher.newer_release('Alpha 1.8.0', latest))  # a dev build ahead of the release
+        self.assertFalse(launcher.newer_release('', latest))             # installed version unknown: no claim
+        self.assertFalse(launcher.newer_release('Alpha 1.7.0', None))
 
 
 if __name__ == '__main__':

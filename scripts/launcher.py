@@ -13,6 +13,7 @@ import shutil
 import subprocess
 import sys
 import time
+import urllib.request
 import zipfile
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -35,7 +36,7 @@ LANGUAGES = [
     ('繁體中文', 'zh-Hant'),
 ]
 LANGUAGE_CODES = [code for _, code in LANGUAGES]
-DEFAULTS = {'fullscreen': False, 'size': '1280x720', 'language': 'en-US', 'safe': False}
+DEFAULTS = {'check_updates': True, 'fullscreen': False, 'size': '1280x720', 'language': 'en-US', 'safe': False}
 
 
 LANGUAGE_RESET = None  # the saved language that load_settings() had to replace (for a note in the window)
@@ -87,6 +88,78 @@ def build_version():
         return ''
     match = re.search(r'\bnxrt\s+((?:Alpha|Beta|RC)\s+)?(\d+(?:\.\d+)+[\w.+-]*)', out.stdout + out.stderr)
     return match.group(0).split(None, 1)[1] if match else ''
+
+
+RELEASES_API = 'https://api.github.com/repos/RussoPhone/tomodachi-ltd-recomp/releases?per_page=10'
+UPDATE_CACHE = ROOT / 'local/update-check.json'
+UPDATE_EVERY = 6 * 3600  # seconds between looks at GitHub; the result is cached, so a start never waits for the network
+
+
+def version_key(text):
+    """'Alpha 1.7.4', 'v1.7.4' or '1.7.4-rc1' -> (1, 7, 4); () when there is no number."""
+    match = re.search(r'(\d+(?:\.\d+)+)', text or '')
+    return tuple(int(n) for n in match.group(1).split('.')) if match else ()
+
+
+def fetch_latest_release(timeout=4):
+    """Newest published release of the project, or None (offline, rate-limited, anything unexpected).
+
+    One read-only GET to the public GitHub API; nothing about this computer is sent. Every release is a
+    pre-release, so /releases/latest would not do: the list is read and the highest version wins.
+    """
+    request = urllib.request.Request(RELEASES_API, headers={
+        'Accept': 'application/vnd.github+json', 'User-Agent': 'tomodachi-ltd-recomp-launcher'})
+    try:
+        with urllib.request.urlopen(request, timeout=timeout) as response:
+            releases = json.load(response)
+    except (OSError, ValueError):
+        return None
+    best = None
+    for release in releases if isinstance(releases, list) else []:
+        if not isinstance(release, dict) or release.get('draft'):
+            continue
+        key = version_key(str(release.get('tag_name', '')))
+        if key and (best is None or key > best[0]):
+            best = (key, release)
+    if best is None:
+        return None
+    release = best[1]
+    title = str(release.get('name') or '')
+    version = re.match(r'(?:Alpha|Beta|RC)\s+\d+(?:\.\d+)+', title)
+    return {'tag': str(release['tag_name']), 'url': str(release.get('html_url') or ''),
+            'version': version.group(0) if version else str(release['tag_name']).lstrip('v'),
+            'title': title.split(':', 1)[1].strip() if ':' in title else ''}
+
+
+def cached_release():
+    """(release or None, fresh) from the last check; fresh means younger than UPDATE_EVERY."""
+    try:
+        data = json.loads(UPDATE_CACHE.read_text())
+        return data['release'], time.time() - float(data['checked']) < UPDATE_EVERY
+    except (OSError, ValueError, KeyError, TypeError):
+        return None, False
+
+
+def check_for_update(force=False):
+    """Latest release for the window: the cache when it is fresh, else one network look (blocking, call it off the UI thread)."""
+    release, fresh = cached_release()
+    if fresh and not force:
+        return release
+    found = fetch_latest_release()
+    if found is None:
+        return release  # offline: keep what we knew, and try again next start
+    try:
+        UPDATE_CACHE.parent.mkdir(parents=True, exist_ok=True)
+        UPDATE_CACHE.write_text(json.dumps({'checked': time.time(), 'release': found}))
+    except OSError:
+        pass
+    return found
+
+
+def newer_release(installed_version, release):
+    """True when `release` is a higher version than the installed build. Unknown on either side: no claim."""
+    have, latest = version_key(installed_version), version_key((release or {}).get('version', ''))
+    return bool(have and latest and latest > have)
 
 
 def installed():

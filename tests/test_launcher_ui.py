@@ -1,4 +1,5 @@
 import importlib.util
+import json
 import os
 from pathlib import Path
 import sys
@@ -27,6 +28,10 @@ class LauncherWindowTests(unittest.TestCase):
         launcher.SAVE_DIR = self.tmp / 'user-nxrt'
         launcher.BACKUPS = self.tmp / 'backups'
         launcher.installed = lambda: True
+        launcher.UPDATE_CACHE = self.tmp / 'update-check.json'
+        self.network = []
+        launcher.fetch_latest_release = lambda timeout=4: self.network.append(1)  # tests never touch the network
+        launcher.build_version = lambda: 'Alpha 1.7.0'
         sys.path.insert(0, str(SCRIPTS))
         import launcher_ui
         self.ui = launcher_ui
@@ -153,6 +158,82 @@ class LauncherWindowTests(unittest.TestCase):
             self.assertEqual(self.win.popup['scroll'], min(first + 1, len(launcher.LANGUAGES) - p['rows']))
         self.win._popup_step(1)
         self.assertIsNotNone(self.win.popup['hover'])
+
+    NEWER = {'version': 'Alpha 1.7.4', 'tag': 'v1.7.4', 'url': 'https://example.test/r', 'title': 'the clock is right again'}
+
+    def test_the_new_build_chip_shows_only_for_a_newer_release(self):
+        self.pump(0.4)
+        self.assertEqual(self.win.update_btn.box, (0, 0, 0, 0))
+        self.win._got_release(dict(self.NEWER))
+        self.pump(0.4)
+        self.assertGreater(self.win.update_btn.box[2], self.win.update_btn.box[0])
+        self.assertIn('1.7.4', self.win.update_btn.label)
+        self.assertIn('Alpha 1.7.4', self.win.note)
+        self.win._got_release({'version': 'Alpha 1.7.0'})  # same as installed: nothing to announce
+        self.pump(0.4)
+        self.assertEqual(self.win.update_btn.box, (0, 0, 0, 0))
+        self.assertEqual(self.win.cv.find_withtag('upd'), ())
+
+    def test_the_update_dialog_explains_and_never_updates_by_itself(self):
+        opened = []
+        self.ui.webbrowser.open = opened.append
+        self.pump(0.4)
+        self.win._got_release(dict(self.NEWER))
+        self.pump(0.3)
+        self.win.on_update()
+        self.pump(0.5)
+        text = self.win.dialog['body'].get('1.0', 'end')
+        for expected in ('Alpha 1.7.0', 'Alpha 1.7.4', 'git pull', './install.sh', 'never updates anything by itself'):
+            self.assertIn(expected, text)
+        self.assertEqual([b.label for b in self.win.dialog['buttons']], ['Later', 'Release notes'])
+        self.click_at(*self.center(self.win.dialog['buttons'][-1]))
+        self.pump(0.6)
+        self.assertEqual(opened, ['https://example.test/r'])
+        self.assertIsNone(self.win.dialog)
+
+    def test_turning_the_check_off_hides_the_notice_and_stops_asking(self):
+        self.pump(0.8)  # the look at GitHub that every start makes (stubbed) is over
+        self.network.clear()
+        self.win._got_release(dict(self.NEWER))
+        self.win._toggle_updates(False)
+        self.pump(0.4)
+        self.assertIsNone(self.win.update_info)
+        self.assertFalse(self.win.settings['check_updates'])
+        self.assertNotIn('newer build', self.win.note)
+        self.win._start_update_check()
+        self.pump(0.5)
+        self.assertEqual(self.network, [])  # nothing was fetched
+        self.win._got_release(dict(self.NEWER))
+        self.assertIsNone(self.win.update_info)
+
+    def test_the_window_looks_at_github_once_on_start_when_the_cache_is_stale(self):
+        self.pump(0.8)
+        self.assertEqual(self.network, [1])
+
+    def test_a_fresh_cache_means_no_look_at_github_on_start(self):
+        self.pump(0.8)  # let the setUp window finish its own (stubbed) look first
+        self.network.clear()
+        launcher.UPDATE_CACHE.write_text(json.dumps({'checked': time.time(), 'release': dict(self.NEWER)}))
+        win = self.ui.Window(launcher)
+        try:
+            end = time.time() + 0.8
+            while time.time() < end:
+                win.root.update()
+                time.sleep(0.005)
+            self.assertEqual(self.network, [])
+            self.assertEqual(win.update_info['version'], 'Alpha 1.7.4')  # shown straight from the cache
+        finally:
+            win.root.destroy()
+
+    def test_everything_fits_in_the_smallest_window(self):
+        for geometry in ('760x600', '940x700', '1200x640'):
+            self.win.root.geometry(geometry)
+            self.pump(0.8)
+            height = self.win.cv.winfo_height()
+            for widget in self.win._widgets():
+                if widget.box[2] > widget.box[0]:
+                    self.assertLessEqual(widget.box[3], height, f'{widget.tag} falls off the {geometry} window')
+            self.assertLessEqual(self.win.note_box[3], height, geometry)
 
 
 if __name__ == '__main__':
