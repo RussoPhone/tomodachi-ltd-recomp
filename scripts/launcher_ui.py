@@ -31,7 +31,7 @@ FONT_FAMILIES = ("M PLUS Rounded 1c", "Nunito", "Zen Maru Gothic", "Varela Round
 FRAME_MS = 16                                       # one layout-animation frame at 60/s
 DECIDE = ((0, 1.1), (3, 1.05), (6, 1.2), (12, 1.0))  # confirm: frame -> scale (last value = rest)
 HOVER = 1.08
-BASE_W, BASE_H = 940, 700
+BASE_W, BASE_H = 940, 748
 
 CONTROLS = (  # (tab, columns, rows, note); a row is (what, [key caps])
     ("Keyboard", 2, (
@@ -647,6 +647,27 @@ class Window:
         else:
             self.close_dialog()
 
+    # --- wordmark ---------------------------------------------------------------------
+    def _logo(self, target_h):
+        """The wordmark PNG whose height is closest to target_h (pre-scaled files: Tk only scales by whole numbers).
+        None when assets/wordmark is missing or unreadable, and the header falls back to the text title."""
+        if not hasattr(self, "_logo_files"):
+            self._logos, self._logo_files = {}, {}
+            for f in (self.L.ROOT / "assets/wordmark").glob("wordmark-h*.png"):
+                try:
+                    self._logo_files[int(f.stem.rsplit("h", 1)[1])] = f
+                except ValueError:
+                    pass
+        if not self._logo_files:
+            return None
+        h = min(self._logo_files, key=lambda k: abs(k - target_h))
+        if h not in self._logos:
+            try:
+                self._logos[h] = tk.PhotoImage(master=self.root, file=str(self._logo_files[h]))
+            except tk.TclError:
+                self._logos[h] = None
+        return self._logos[h]
+
     # --- fonts ----------------------------------------------------------------------
     def font(self, px, weight="bold"):
         key = (max(8, round(px)), weight)
@@ -706,7 +727,7 @@ class Window:
         self.close_popup()
         raw = max(0.78, min(1.6, min(W / BASE_W, H / BASE_H)))
         u = self.u = round(raw * 25) / 25  # steps of 0.04 keep the font cache small while dragging
-        design_h = 696 * u  # height the content needs at this scale
+        design_h = 744 * u  # height the content needs at this scale
         slack = max(0.0, H - design_h)
         vg = min(slack / 6, 34 * u)  # extra space between the rows; the rest goes below the header
         top_extra = min((slack - 3 * vg) / 2, 60 * u) if slack > 3 * vg else 0.0
@@ -715,38 +736,51 @@ class Window:
         pad, gap = 26 * u, 22 * u
 
         # header
-        self.hh = hh = 92 * u
+        self.hh = hh = 140 * u
         for dy, col in ((7 * u, C["orange_side"]), (0, C["orange"])):
             pts, x = [0, 0, W, 0], W
             while x >= -10:
                 pts += (x, hh + dy + 6 * u * math.sin(x / (64 * u)))
                 x -= 12
             cv.create_polygon(pts, fill=col, outline="", smooth=True, tags="bg")
-        t = cv.create_text(pad, hh * 0.40, text="Tomodachi-LTD-Recomp", anchor="w", fill=C["paper"],
-                           font=self.font(32 * u), tags="label")
-        if self.version:  # build chip next to the title
-            bx = cv.bbox(t)[2] + 14 * u
+        logo = self._logo(118 * u)
+        if logo:  # the wordmark on a cream sticker (its red-orange letters vanish on the orange band); chips beside it
+            m = 12 * u
+            sx0, sy0 = pad - m, 6 * u
+            sx1, sy1 = pad + logo.width() + m, sy0 + logo.height() + 2 * m
+            for dy, col in ((8 * u, shadow_on(C["orange"])), (0, C["cream_l"])):
+                cv.create_polygon(blob(sx0, sy0 + dy, sx1, sy1 + dy, 34 * u, wobble=2.0 * u, seed=9), smooth=True,
+                                  fill=col, outline="", tags="label")
+            cv.create_image(pad, sy0 + m, image=logo, anchor="nw", tags="label")
+            tx = sx1 + 24 * u
+            row, sub_x, sub_y, sub_px = hh * 0.36, tx, hh * 0.64, 17
+        else:  # no image shipped: the plain-text title, as before
+            t = cv.create_text(pad, hh * 0.40, text="Tomodachi-LTD-Recomp", anchor="w", fill=C["paper"],
+                               font=self.font(32 * u), tags="label")
+            tx, row, sub_x, sub_y, sub_px = cv.bbox(t)[2] + 14 * u, hh * 0.40, pad + 2, hh * 0.76, 14
+        if self.version:  # build chip
+            bx = tx
             f = self.font(14 * u)
             bw, bh2 = f.measure(self.version) + 24 * u, 28 * u
-            cv.create_polygon(blob(bx, hh * 0.40 - bh2 / 2 + 4 * u, bx + bw, hh * 0.40 + bh2 / 2 + 4 * u, bh2 / 2),
+            cv.create_polygon(blob(bx, row - bh2 / 2 + 4 * u, bx + bw, row + bh2 / 2 + 4 * u, bh2 / 2),
                               smooth=True, fill=C["orange_side"], outline="", tags="label")
-            cv.create_polygon(blob(bx, hh * 0.40 - bh2 / 2, bx + bw, hh * 0.40 + bh2 / 2, bh2 / 2), smooth=True,
+            cv.create_polygon(blob(bx, row - bh2 / 2, bx + bw, row + bh2 / 2, bh2 / 2), smooth=True,
                               fill=C["cream_l"], outline="", tags="label")
-            cv.create_text(bx + bw / 2, hh * 0.40, text=self.version, fill=C["ink"], font=f, tags="label")
+            cv.create_text(bx + bw / 2, row, text=self.version, fill=C["ink"], font=f, tags="label")
             if self.update_info:  # a newer published build: yellow chip, click for how to update
                 label = f'{self.update_info["version"]} available'
                 uw = f.measure(label) + 40 * u
                 ux = bx + bw + 10 * u
                 self.update_btn.set_label(label)
-                self.update_btn.place(ux, hh * 0.40 - 18 * u, ux + uw, hh * 0.40 + 18 * u, C["orange"])
+                self.update_btn.place(ux, row - 18 * u, ux + uw, row + 18 * u, C["orange"])
             else:
                 self.update_btn.box = (0, 0, 0, 0)
                 cv.delete(self.update_btn.tag)
         else:
             self.update_btn.box = (0, 0, 0, 0)
             cv.delete(self.update_btn.tag)
-        cv.create_text(pad + 2, hh * 0.76, text="Unofficial PC Port · Bring your own copy!",
-                       anchor="w", fill=C["cream_l"], font=self.font(14 * u), tags="label")
+        cv.create_text(sub_x, sub_y, text="Unofficial PC Port · Bring your own copy!", anchor="w", fill=C["cream_l"],
+                       font=self.font(sub_px * u), tags="label")
 
         # row 1: play | settings
         top = hh + 32 * u + top_extra
@@ -857,7 +891,7 @@ class Window:
         u, W = self.u, self.cv.winfo_width()
         label, face, fg, dot = self.status()
         f = self.font(16 * u)
-        right, cy, h = W - 26 * u, 92 * u * 0.5, 38 * u
+        right, cy, h = W - 26 * u, self.hh * 0.36, 38 * u
         x0 = right - f.measure(label) - 42 * u
         for dy, col in ((5 * u, C["orange_side"]), (0, face)):
             self.cv.create_polygon(blob(x0, cy - h / 2 + dy, right, cy + h / 2 + dy, h / 2), smooth=True, fill=col,

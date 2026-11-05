@@ -2,6 +2,7 @@ import importlib.util
 import json
 import os
 from pathlib import Path
+import shutil
 import sys
 import tempfile
 import time
@@ -234,6 +235,47 @@ class LauncherWindowTests(unittest.TestCase):
                 if widget.box[2] > widget.box[0]:
                     self.assertLessEqual(widget.box[3], height, f'{widget.tag} falls off the {geometry} window')
             self.assertLessEqual(self.win.note_box[3], height, geometry)
+
+    def pump_window(self, win, seconds):
+        end = time.time() + seconds
+        while time.time() < end:
+            win.root.update()
+            time.sleep(0.005)
+
+    def canvas_texts(self, win):
+        return [win.cv.itemcget(i, 'text') for i in win.cv.find_all() if win.cv.type(i) == 'text']
+
+    def test_without_the_wordmark_files_the_header_is_the_plain_text_title(self):
+        self.pump(0.5)
+        self.assertIn('Tomodachi-LTD-Recomp', self.canvas_texts(self.win))
+        self.assertEqual([i for i in self.win.cv.find_all() if self.win.cv.type(i) == 'image'], [])
+
+    def test_the_header_shows_the_wordmark_in_place_of_the_title_text(self):
+        shutil.copytree(Path(__file__).resolve().parents[1] / 'assets/wordmark', self.tmp / 'assets/wordmark')
+        win = self.ui.Window(launcher)
+        try:
+            self.pump_window(win, 0.6)
+            images = [i for i in win.cv.find_all() if win.cv.type(i) == 'image']
+            self.assertEqual(len(images), 1)
+            self.assertNotIn('Tomodachi-LTD-Recomp', self.canvas_texts(win))  # the image replaced the text
+            self.assertIn('Alpha 1.7.0', self.canvas_texts(win))               # the build chip is still there
+            self.assertIn('Unofficial PC Port · Bring your own copy!', self.canvas_texts(win))
+            # the closest pre-scaled file is used (Tk cannot scale smoothly)
+            self.assertEqual(win._logo(131).height(), 128)
+            self.assertEqual(win._logo(10).height(), 96)
+            self.assertEqual(win._logo(999).height(), 192)
+        finally:
+            win.root.destroy()
+
+    def test_a_broken_wordmark_file_falls_back_to_the_text_title(self):
+        (self.tmp / 'assets/wordmark').mkdir(parents=True)
+        (self.tmp / 'assets/wordmark/wordmark-h120.png').write_bytes(b'not a png')
+        win = self.ui.Window(launcher)
+        try:
+            self.pump_window(win, 0.6)
+            self.assertIn('Tomodachi-LTD-Recomp', self.canvas_texts(win))
+        finally:
+            win.root.destroy()
 
 
 if __name__ == '__main__':
