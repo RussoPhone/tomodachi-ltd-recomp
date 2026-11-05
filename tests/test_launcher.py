@@ -20,8 +20,8 @@ class LauncherTests(unittest.TestCase):
 
     def test_settings_roundtrip_and_defaults(self):
         self.assertEqual(launcher.load_settings(), launcher.DEFAULTS)
-        launcher.save_settings({'fullscreen': True, 'size': '1920x1080', 'language': 'pt-BR'})
-        self.assertEqual(launcher.load_settings()['language'], 'pt-BR')
+        launcher.save_settings({'fullscreen': True, 'size': '1920x1080', 'language': 'ja'})
+        self.assertEqual(launcher.load_settings()['language'], 'ja')
         launcher.SETTINGS.write_text('not json')
         self.assertEqual(launcher.load_settings(), launcher.DEFAULTS)
 
@@ -94,6 +94,46 @@ class LauncherTests(unittest.TestCase):
         old.write_text('[Desktop Entry]\nExec=/somewhere/else/play.sh\n')
         launcher.install_shortcut(apps)
         self.assertTrue(old.exists())
+
+    def test_languages_are_the_ones_the_game_ships_and_the_runtime_knows(self):
+        # romfs/Mals has message data for exactly these 13 (USen EUen JPja EUfr USfr EUde EUit EUes USes EUnl KRko CNzh TWzh)
+        self.assertEqual(sorted(launcher.LANGUAGE_CODES), sorted(
+            ['en-US', 'en-GB', 'ja', 'fr', 'fr-CA', 'de', 'it', 'es', 'es-419', 'nl', 'ko', 'zh-Hans', 'zh-Hant']))
+        runtime = (Path(__file__).resolve().parents[1] / 'runtime/src/services/am.cpp').read_text()
+        for code in launcher.LANGUAGE_CODES:  # every offered code must be one GetDesiredLanguage accepts
+            self.assertIn(f'"{code}"', runtime, code)
+
+    def test_a_language_the_game_has_no_text_for_falls_back_to_english(self):
+        for old in ('pt-BR', 'ru', 'nonsense'):
+            launcher.SETTINGS.write_text('{"language": "%s", "size": "1920x1080"}' % old)
+            settings = launcher.load_settings()
+            self.assertEqual(settings['language'], 'en-US')
+            self.assertEqual(launcher.LANGUAGE_RESET, old)
+            self.assertEqual(settings['size'], '1920x1080')
+        launcher.SETTINGS.write_text('{"language": "ja"}')
+        self.assertEqual(launcher.load_settings()['language'], 'ja')
+        self.assertIsNone(launcher.LANGUAGE_RESET)
+
+    def _fake_build(self, text, exit_code=2):
+        binary = self.tmp / 'local/nxrt/bin/nxrt'
+        binary.parent.mkdir(parents=True, exist_ok=True)
+        binary.write_text(f'#!/bin/sh\necho "{text}" >&2\nexit {exit_code}\n')
+        binary.chmod(0o755)
+
+    def test_build_version_comes_from_the_installed_binary(self):
+        self.assertEqual(launcher.build_version(), '')  # no build installed
+        self._fake_build('[    0.000] info  nxrt Alpha 1.7.0')
+        self.assertEqual(launcher.build_version(), 'Alpha 1.7.0')
+        self._fake_build('[    0.000] info  nxrt Alpha 9.8.7-rc1')
+        self.assertEqual(launcher.build_version(), 'Alpha 9.8.7-rc1')
+        self._fake_build('[    0.000] info  nxrt 2.0.1')
+        self.assertEqual(launcher.build_version(), '2.0.1')
+
+    def test_build_version_is_empty_rather_than_guessed(self):
+        self._fake_build('something else entirely')
+        self.assertEqual(launcher.build_version(), '')
+        (self.tmp / 'CHANGELOG.md').write_text('## Alpha 9.9.9 - 2030-01-01\n')  # the source's version must not leak in
+        self.assertEqual(launcher.build_version(), '')
 
 
 if __name__ == '__main__':

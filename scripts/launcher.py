@@ -8,6 +8,7 @@ Settings are kept in local/launcher.json and handed to scripts/play-nxrt.sh as o
 import json
 import os
 from pathlib import Path
+import re
 import shutil
 import subprocess
 import sys
@@ -24,21 +25,33 @@ TESTING_URL = 'https://github.com/RussoPhone/tomodachi-ltd-recomp/blob/main/docs
 ISSUES_URL = 'https://github.com/RussoPhone/tomodachi-ltd-recomp/issues/new?template=install-or-play-problem.md'
 
 SIZES = ['1280x720', '1600x900', '1920x1080', '2560x1440', '3840x2160']
+# The languages the game ships message data for (romfs/Mals: USen EUen JPja EUfr USfr EUde EUit EUes USes EUnl KRko
+# CNzh TWzh), as the Switch language codes the runtime hands to the game. Others (e.g. Portuguese, Russian) have no
+# text in the game, so choosing them would silently show English.
 LANGUAGES = [
     ('English (US)', 'en-US'), ('English (UK)', 'en-GB'), ('日本語', 'ja'), ('Français', 'fr'),
     ('Français (Canada)', 'fr-CA'), ('Deutsch', 'de'), ('Italiano', 'it'), ('Español', 'es'),
-    ('Español (Latinoamérica)', 'es-419'), ('Português (Brasil)', 'pt-BR'), ('Nederlands', 'nl'),
-    ('Русский', 'ru'), ('한국어', 'ko'), ('简体中文', 'zh-Hans'), ('繁體中文', 'zh-Hant'),
+    ('Español (Latinoamérica)', 'es-419'), ('Nederlands', 'nl'), ('한국어', 'ko'), ('简体中文', 'zh-Hans'),
+    ('繁體中文', 'zh-Hant'),
 ]
+LANGUAGE_CODES = [code for _, code in LANGUAGES]
 DEFAULTS = {'fullscreen': False, 'size': '1280x720', 'language': 'en-US', 'safe': False}
 
 
+LANGUAGE_RESET = None  # the saved language that load_settings() had to replace (for a note in the window)
+
+
 def load_settings():
+    global LANGUAGE_RESET
     settings = dict(DEFAULTS)
     try:
         settings.update(json.loads(SETTINGS.read_text()))
     except (OSError, ValueError):
         pass
+    LANGUAGE_RESET = None
+    if settings.get('language') not in LANGUAGE_CODES:  # e.g. pt-BR/ru from an older launcher: the game has no such text
+        LANGUAGE_RESET = settings.get('language')
+        settings['language'] = DEFAULTS['language']
     return settings
 
 
@@ -56,6 +69,24 @@ def play_command(settings):
     if settings.get('safe'):
         cmd.append('--safe')
     return cmd
+
+
+def build_version():
+    """Version of the nxrt build that is actually installed ("Alpha 1.7.0"), read from the binary itself.
+
+    The executable prints its version before it rejects the missing --game argument, so this starts nothing
+    (about 25 ms). It is NOT taken from CHANGELOG.md: that describes the source, and the installed build can
+    be older. Returns '' when there is no build or it does not report a version.
+    """
+    binary = ROOT / 'local/nxrt/bin/nxrt'
+    if not binary.is_file():
+        return ''
+    try:
+        out = subprocess.run([str(binary), '--version'], cwd=ROOT, capture_output=True, text=True, timeout=10)
+    except (OSError, subprocess.SubprocessError):
+        return ''
+    match = re.search(r'\bnxrt\s+((?:Alpha|Beta|RC)\s+)?(\d+(?:\.\d+)+[\w.+-]*)', out.stdout + out.stderr)
+    return match.group(0).split(None, 1)[1] if match else ''
 
 
 def installed():

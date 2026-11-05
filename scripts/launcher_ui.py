@@ -46,17 +46,6 @@ CONTROLS = (
     "Full table: docs/CONTROLS.md")
 
 
-def build_version(root):
-    """The newest released build, from the first "## Alpha x.y.z" heading of CHANGELOG.md ("" if unknown)."""
-    try:
-        for line in (root / "CHANGELOG.md").read_text(encoding="utf-8").splitlines():
-            if line.startswith("## ") and line[3:].lower().startswith(("alpha", "beta", "v")):
-                return line[3:].split(" — ")[0].split(" - ")[0].strip()
-    except OSError:
-        pass
-    return ""
-
-
 def register_bundled_fonts(root):
     """Let fontconfig see assets/fonts (an optional OFL font) for this process only; call before Tk starts."""
     fonts = root / "assets" / "fonts"
@@ -161,7 +150,7 @@ class Widget:
 
     def __init__(self, ui, key):
         self.ui, self.cv, self.tag = ui, ui.cv, key
-        self.box, self.under, self.anim = (0, 0, 0, 0), C["paper"], None
+        self.box, self.under, self.anim, self.disposed = (0, 0, 0, 0), C["paper"], None, False
 
     def blocked(self):
         return self.ui.modal_blocks(self)
@@ -185,17 +174,32 @@ class Widget:
     def click(self, x, y):
         pass
 
+    def dispose(self):
+        """Stop animating and never draw again (a widget that was removed must not come back from a pending frame)."""
+        self.disposed = True
+        if self.anim:
+            self.cv.after_cancel(self.anim)
+            self.anim = None
+        self.box = (0, 0, 0, 0)
+        self.cv.delete(self.tag)
+
     def place(self, x0, y0, x1, y1, under=None):
+        if self.disposed:
+            return
         self.box = (x0, y0, x1, y1)
         if under:
             self.under = under
         self.draw()
 
     def run(self, steps, frame_fn, done=None):
+        if self.disposed:
+            return
         if self.anim:
             self.cv.after_cancel(self.anim)
 
         def tick(i=0):
+            if self.disposed:
+                return
             frame_fn(i / steps if steps else 1.0)
             if i < steps:
                 self.anim = self.cv.after(FRAME_MS, tick, i + 1)
@@ -309,16 +313,7 @@ class Dropdown(Pill):
         return f"{value}  ▾"
 
     def open(self):
-        m = tk.Menu(self.cv, tearoff=0, bg=C["paper"], fg=C["ink"], activebackground=C["focus"],
-                    activeforeground=C["ink"], bd=0, relief="flat", font=self.ui.font(15 * self.ui.u, "bold"))
-        for choice in self.choices:
-            m.add_command(label=("✓  " if choice == self.value else "    ") + choice,
-                          command=lambda c=choice: self.pick(c))
-        x0, y0, x1, y1 = self.box
-        try:
-            m.tk_popup(int(self.cv.winfo_rootx() + x0), int(self.cv.winfo_rooty() + y1 + 6))
-        finally:
-            m.grab_release()
+        self.ui.open_popup(self)
 
     def pick(self, choice):
         self.value = choice
@@ -367,7 +362,7 @@ class Window:
         self.L = L  # the launcher module (settings, play_command, backups, report)
         register_bundled_fonts(L.ROOT)
         self.root = root = tk.Tk()
-        self.version = build_version(L.ROOT)
+        self.version = L.build_version()  # read from the installed binary, never from the changelog
         root.title("Tomodachi-LTD-Recomp" + (f" · {self.version}" if self.version else ""))
         root.geometry(f"{BASE_W}x{BASE_H}")
         root.minsize(760, 600)
@@ -401,6 +396,7 @@ class Window:
                           Pill(self, "ht", "Testing guide", "soft", lambda: webbrowser.open(L.TESTING_URL)),
                           Pill(self, "hp", "Report a problem", "orange", lambda: webbrowser.open(L.ISSUES_URL))]
         self._job = None
+        self.popup = None     # open dropdown list (drawn on the canvas, so a click outside can dismiss it)
         self.hovered = None   # widget under the pointer
         self.pressed = None   # widget the left button went down on
         self.cv.bind("<Configure>", lambda e: self._schedule())
@@ -408,9 +404,17 @@ class Window:
         self.cv.bind("<Leave>", lambda e: self._set_hover(None))
         self.cv.bind("<ButtonPress-1>", self._on_press)
         self.cv.bind("<ButtonRelease-1>", self._on_release)
+        for seq in ("<MouseWheel>", "<Button-4>", "<Button-5>"):
+            root.bind(seq, self._on_wheel)
+        root.bind("<Up>", lambda e: self._popup_step(-1))
+        root.bind("<Down>", lambda e: self._popup_step(1))
         root.bind("<Return>", lambda e: self._on_return())
-        root.bind("<Escape>", lambda e: self.close_dialog())
-        self.set_note("Your save is backed up automatically before each play session.")
+        root.bind("<Escape>", lambda e: self._on_escape())
+        if L.LANGUAGE_RESET:  # a language from an older launcher that the game has no text for
+            self._set(language=self.settings["language"])
+            self.set_note(f'The game has no "{L.LANGUAGE_RESET}" text, so the language is back to English (US).')
+        else:
+            self.set_note("Your save is backed up automatically before each play session.")
 
     # --- pointer routing (hit-test on boxes, so redrawing items cannot re-trigger hover) --------
     def _widgets(self):
@@ -419,6 +423,8 @@ class Window:
         return [self.fullscreen, self.safe, self.size, self.language, self.play_btn] + self.save_btns + self.help_btns
 
     def _pick(self, x, y):
+        if self.popup:
+            return None
         for wd in reversed(self._widgets()):
             if wd.interactive() and wd.hit(x, y):
                 return wd
@@ -435,17 +441,134 @@ class Window:
         self.cv.config(cursor="hand2" if wd is not None else "")
 
     def _on_motion(self, e):
+        if self.popup:
+            idx = self._popup_row(e.x, e.y)
+            self.cv.config(cursor="hand2" if idx is not None else "")
+            if idx != self.popup["hover"]:
+                self.popup["hover"] = idx
+                self._draw_popup()
+            return
         self._set_hover(self._pick(e.x, e.y))
 
     def _on_press(self, e):
+        if self.popup:
+            if self._popup_row(e.x, e.y) is None:
+                self.close_popup()  # a click anywhere outside the list dismisses it (and does nothing else)
+                return
+            self.popup["down"] = self._popup_row(e.x, e.y)
+            return
         self.pressed = self._pick(e.x, e.y)
         if self.pressed is not None:
             self.pressed.press()
 
     def _on_release(self, e):
+        if self.popup:
+            idx, self.popup["down"] = self._popup_row(e.x, e.y), self.popup.get("down")
+            if idx is not None and idx == self.popup["down"]:
+                self._popup_choose(idx)
+            return
         wd, self.pressed = self.pressed, None
         if wd is not None and wd.interactive() and wd.hit(e.x, e.y):
             wd.click(e.x, e.y)
+
+    # --- dropdown list (drawn on the canvas) -------------------------------------------
+    def open_popup(self, owner):
+        self.close_popup()
+        self._set_hover(None)
+        u, cv = self.u, self.cv
+        W, H = cv.winfo_width(), cv.winfo_height()
+        rh, pad = 40 * u, 10 * u
+        f = self.font(16 * u)
+        width = max(owner.box[2] - owner.box[0], max(f.measure(c) for c in owner.choices) + 84 * u)
+        width = min(width, W - 24 * u)
+        x1 = min(owner.box[2], W - 12 * u)
+        x0 = max(12 * u, x1 - width)
+        below = H - owner.box[3] - 16 * u
+        above = owner.box[1] - 16 * u
+        room = below if below >= min(above, len(owner.choices) * rh + 2 * pad) or below >= above else above
+        rows = max(2, min(len(owner.choices), int((room - 2 * pad) // rh)))
+        height = rows * rh + 2 * pad
+        y0 = owner.box[3] + 8 * u if room is below else owner.box[1] - 8 * u - height
+        cur = owner.choices.index(owner.value) if owner.value in owner.choices else 0
+        scroll = max(0, min(cur - rows // 2, len(owner.choices) - rows))
+        self.popup = {"owner": owner, "box": (x0, y0, x0 + width, y0 + height), "rows": rows, "rh": rh, "pad": pad,
+                      "scroll": scroll, "hover": cur, "down": None, "font": f}
+        self._draw_popup()
+
+    def close_popup(self):
+        if self.popup:
+            self.popup = None
+            self.cv.delete("popup")
+            self.cv.config(cursor="")
+
+    def _popup_row(self, x, y):
+        p = self.popup
+        x0, y0, x1, y1 = p["box"]
+        if not (x0 <= x <= x1 and y0 + p["pad"] <= y < y0 + p["pad"] + p["rows"] * p["rh"]):
+            return None
+        return p["scroll"] + int((y - y0 - p["pad"]) // p["rh"])
+
+    def _popup_choose(self, idx):
+        owner = self.popup["owner"]
+        choice = owner.choices[idx]
+        self.close_popup()
+        owner.pick(choice)
+
+    def _popup_step(self, d):
+        p = self.popup
+        if not p:
+            return
+        n = len(p["owner"].choices)
+        p["hover"] = max(0, min(n - 1, (p["hover"] if p["hover"] is not None else -1) + d))
+        p["scroll"] = max(min(p["scroll"], p["hover"]), p["hover"] - p["rows"] + 1)
+        self._draw_popup()
+
+    def _on_wheel(self, e):
+        p = self.popup
+        if not p:
+            return
+        up = e.num == 4 or getattr(e, "delta", 0) > 0
+        n = len(p["owner"].choices)
+        p["scroll"] = max(0, min(n - p["rows"], p["scroll"] + (-1 if up else 1)))
+        p["hover"] = self._popup_row(self.root.winfo_pointerx() - self.cv.winfo_rootx(),
+                                     self.root.winfo_pointery() - self.cv.winfo_rooty())
+        self._draw_popup()
+
+    def _draw_popup(self):
+        p, cv, u = self.popup, self.cv, self.u
+        cv.delete("popup")
+        x0, y0, x1, y1 = p["box"]
+        for dy, col, grow in ((10 * u, mix(C["cream"], "#000000", 0.3), 0), (0, C["cream_l"], 4 * u), (0, C["paper"], 0)):
+            cv.create_polygon(blob(x0 - grow, y0 + dy - grow, x1 + grow, y1 + dy + grow, 26 * u, wobble=1.2 * u, seed=5),
+                              smooth=True, fill=col, outline="", tags="popup")
+        owner = p["owner"]
+        for i in range(p["rows"]):
+            idx = p["scroll"] + i
+            if idx >= len(owner.choices):
+                break
+            ry = y0 + p["pad"] + i * p["rh"]
+            if idx == p["hover"]:
+                cv.create_polygon(blob(x0 + 8 * u, ry + 2 * u, x1 - 8 * u, ry + p["rh"] - 2 * u, 16 * u), smooth=True,
+                                  fill=C["focus"], outline="", tags="popup")
+            cv.create_text(x0 + 24 * u, ry + p["rh"] / 2, text=owner.choices[idx], anchor="w", fill=C["ink"],
+                           font=p["font"], tags="popup")
+            if owner.choices[idx] == owner.value:
+                cv.create_text(x1 - 24 * u, ry + p["rh"] / 2, text="✓", anchor="e", fill=C["red"],
+                               font=self.font(18 * u), tags="popup")
+        n = len(owner.choices)
+        if n > p["rows"]:  # scroll thumb
+            track = p["rows"] * p["rh"] - 8 * u
+            th = max(24 * u, track * p["rows"] / n)
+            ty = y0 + p["pad"] + 4 * u + (track - th) * (p["scroll"] / (n - p["rows"]))
+            cv.create_polygon(blob(x1 - 9 * u, ty, x1 - 4 * u, ty + th, 2.5 * u), smooth=True, fill=C["edge"], outline="",
+                              tags="popup")
+        cv.tag_raise("popup")
+
+    def _on_escape(self):
+        if self.popup:
+            self.close_popup()
+        else:
+            self.close_dialog()
 
     # --- fonts ----------------------------------------------------------------------
     def font(self, px, weight="bold"):
@@ -503,6 +626,7 @@ class Window:
         W, H = cv.winfo_width(), cv.winfo_height()
         if W < 50:
             return
+        self.close_popup()
         raw = max(0.78, min(1.6, min(W / BASE_W, H / BASE_H)))
         u = self.u = round(raw * 25) / 25  # steps of 0.04 keep the font cache small while dragging
         design_h = 650 * u  # height the content needs at this scale
@@ -674,6 +798,7 @@ class Window:
 
     def show_dialog(self, message, buttons, body=None):
         """buttons: [(label, style, callback or None)]; the last one answers Return."""
+        self.close_popup()
         if self.dialog:
             self.close_dialog()
         pills = []
@@ -690,8 +815,18 @@ class Window:
             text.insert("1.0", body)
             text.config(state="disabled")
         self._set_hover(None)
-        self.dialog = {"message": message, "buttons": pills, "body": text}
-        pills[0].run(6, lambda t: self._draw_dialog(0.6 + 0.4 * ease_back(t)))  # dialog in: 6 frames
+        self.dialog = {"message": message, "buttons": pills, "body": text, "anim": None}
+        self._pop_dialog(6)  # dialog in: 6 frames
+
+    def _pop_dialog(self, steps):
+        d = self.dialog
+
+        def tick(i=0):
+            if self.dialog is not d:
+                return
+            self._draw_dialog(0.6 + 0.4 * ease_back(i / steps))
+            d["anim"] = self.root.after(FRAME_MS, tick, i + 1) if i < steps else None
+        tick()
 
     def _draw_dialog(self, s):
         cv, u, d = self.cv, self.u, self.dialog
@@ -729,8 +864,10 @@ class Window:
     def close_dialog(self):
         if not self.dialog:
             return
+        if self.dialog.get("anim"):
+            self.root.after_cancel(self.dialog["anim"])
         for b in self.dialog["buttons"]:
-            self.cv.delete(b.tag)
+            b.dispose()
         if self.dialog["body"] is not None:
             self.dialog["body"].destroy()
         self.cv.delete("dlg")
@@ -739,6 +876,10 @@ class Window:
         self.cv.config(cursor="")
 
     def _on_return(self):
+        if self.popup:
+            if self.popup["hover"] is not None:
+                self._popup_choose(self.popup["hover"])
+            return
         if self.dialog:
             self.dialog["buttons"][-1].command()
         elif self.play_btn.enabled:

@@ -63,6 +63,97 @@ class LauncherWindowTests(unittest.TestCase):
         self.win.close_dialog()
         self.assertIs(self.win._pick((x0 + x1) / 2, (y0 + y1) / 2), self.win.play_btn)
 
+    def center(self, widget):
+        x0, y0, x1, y1 = widget.box
+        return (x0 + x1) / 2, (y0 + y1) / 2
+
+    def click_at(self, x, y):
+        class E:  # a left click at canvas coordinates, routed the way the canvas bindings do
+            pass
+        e = E()
+        e.x, e.y = x, y
+        self.win._on_motion(e)
+        self.win._on_press(e)
+        self.win._on_release(e)
+
+    def leftovers(self, tags):
+        return [i for t in tags for i in self.win.cv.find_withtag(t)]
+
+    def test_closing_a_dialog_leaves_nothing_behind(self):
+        """The OK button used to be redrawn by its own 'pop' animation after the dialog had closed."""
+        self.pump(0.4)
+        openers = (self.win.on_controls,
+                   lambda: self.win.show_dialog('Sure?', [('Cancel', 'neutral', None), ('OK', 'primary', None)]))
+        for opener in openers:
+            opener()
+            self.pump(0.5)
+            tags = [b.tag for b in self.win.dialog['buttons']] + ['dlg']
+            ok = self.win.dialog['buttons'][-1]
+            self.click_at(*self.center(ok))  # the confirm animation is still running when the dialog closes
+            self.pump(1.0)
+            self.assertIsNone(self.win.dialog)
+            self.assertEqual(self.leftovers(tags), [], 'items of the closed dialog are still on the canvas')
+
+    def test_check_my_computer_dialog_closes_cleanly(self):
+        self.pump(0.4)
+        self.win.info('Check my computer', 'GPU: test')
+        self.pump(0.5)
+        tags = [b.tag for b in self.win.dialog['buttons']] + ['dlg']
+        self.click_at(*self.center(self.win.dialog['buttons'][-1]))
+        self.pump(1.0)
+        self.assertEqual(self.leftovers(tags), [])
+
+    def open_list(self, dropdown):
+        self.click_at(*self.center(dropdown))
+        self.pump(0.3)
+        self.assertIsNotNone(self.win.popup)
+        x0, y0, x1, y1 = self.win.popup['box']
+        return x0, y0, x1, y1
+
+    def test_a_dropdown_list_closes_on_a_click_outside(self):
+        self.pump(0.4)
+        for dropdown in (self.win.size, self.win.language):
+            before = dropdown.value
+            x0, y0, x1, y1 = self.open_list(dropdown)
+            self.click_at(30, 30)  # outside the list (top-left corner of the window)
+            self.assertIsNone(self.win.popup)
+            self.assertEqual(self.leftovers(['popup']), [])
+            self.assertEqual(dropdown.value, before)  # nothing was chosen
+
+    def test_a_click_outside_does_not_press_what_is_under_it(self):
+        self.pump(0.4)
+        before = self.win.fullscreen.value
+        self.open_list(self.win.size)
+        self.click_at(*self.center(self.win.fullscreen))
+        self.assertIsNone(self.win.popup)
+        self.assertEqual(self.win.fullscreen.value, before)
+
+    def test_a_dropdown_list_closes_on_escape_and_on_choosing(self):
+        self.pump(0.4)
+        self.open_list(self.win.language)
+        self.win._on_escape()
+        self.assertIsNone(self.win.popup)
+        x0, y0, x1, y1 = self.open_list(self.win.language)
+        p = self.win.popup
+        target = 3 - p['scroll']  # the 4th language
+        self.click_at((x0 + x1) / 2, y0 + p['pad'] + (target + 0.5) * p['rh'])
+        self.assertIsNone(self.win.popup)
+        self.assertEqual(self.win.language.value, launcher.LANGUAGES[3][0])
+        self.assertEqual(self.win.settings['language'], launcher.LANGUAGES[3][1])
+
+    def test_a_long_list_scrolls(self):
+        self.pump(0.4)
+        self.open_list(self.win.language)
+        p = self.win.popup
+        if p['rows'] < len(launcher.LANGUAGES):
+            class E:
+                num, delta = 5, -1
+            first = p['scroll']
+            self.win._on_wheel(E())
+            self.assertEqual(self.win.popup['scroll'], min(first + 1, len(launcher.LANGUAGES) - p['rows']))
+        self.win._popup_step(1)
+        self.assertIsNotNone(self.win.popup['hover'])
+
 
 if __name__ == '__main__':
     unittest.main()
