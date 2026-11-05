@@ -152,13 +152,16 @@ def ease_back(t):
 
 # --- widgets --------------------------------------------------------------------------
 class Widget:
-    """A group of canvas items under one tag, redrawn on state change; hover shows a hand cursor."""
+    """A group of canvas items under one tag, redrawn on state change.
+
+    Pointer events are NOT bound to the items: redrawing the item under the pointer makes Tk fire
+    Leave/Enter again, which restarts the hover animation and loops forever. Window routes motion and
+    clicks by hit-testing `box`, so it does not matter how often an item is deleted and recreated.
+    """
 
     def __init__(self, ui, key):
         self.ui, self.cv, self.tag = ui, ui.cv, key
         self.box, self.under, self.anim = (0, 0, 0, 0), C["paper"], None
-        self.cv.tag_bind(key, "<Enter>", lambda e: self._enter())
-        self.cv.tag_bind(key, "<Leave>", lambda e: self._leave())
 
     def blocked(self):
         return self.ui.modal_blocks(self)
@@ -166,19 +169,20 @@ class Widget:
     def interactive(self):
         return not self.blocked()
 
-    def _enter(self):
-        if self.interactive():
-            self.cv.config(cursor="hand2")
-        self.enter()
-
-    def _leave(self):
-        self.cv.config(cursor="")
-        self.leave()
+    def hit(self, x, y):
+        x0, y0, x1, y1 = self.box
+        return x1 > x0 and x0 <= x <= x1 and y0 <= y <= y1
 
     def enter(self):
         pass
 
     def leave(self):
+        pass
+
+    def press(self):
+        pass
+
+    def click(self, x, y):
         pass
 
     def place(self, x0, y0, x1, y1, under=None):
@@ -211,8 +215,6 @@ class Pill(Widget):
         super().__init__(ui, key)
         self.label, self.style, self.command = label, style, command
         self.enabled, self.hover, self.scale, self.lift = True, False, 1.0, 0.0
-        self.cv.tag_bind(key, "<ButtonPress-1>", lambda e: self.press())
-        self.cv.tag_bind(key, "<ButtonRelease-1>", self.release)
 
     def interactive(self):
         return self.enabled and not self.blocked()
@@ -275,14 +277,12 @@ class Pill(Widget):
         if self.interactive():
             self.animate_to(1.04, 0, frames=1)
 
-    def release(self, e):
+    def click(self, x, y):
         if not self.interactive():
             return
-        x0, y0, x1, y1 = self.box
-        if x0 <= e.x <= x1 and y0 - 8 <= e.y <= y1 + 8:
-            self.decide()
-            if self.command:
-                self.cv.after(FRAME_MS * 4, self.command)
+        self.decide()
+        if self.command:
+            self.cv.after(FRAME_MS * 4, self.command)
 
     def decide(self):
         keys = list(DECIDE[:-1]) + [(DECIDE[-1][0], HOVER if self.hover else 1.0)]
@@ -330,7 +330,6 @@ class Switch(Widget):
     def __init__(self, ui, key, value, on_change):
         super().__init__(ui, key)
         self.value, self.on_change, self.pos = value, on_change, 1.0 if value else 0.0
-        self.cv.tag_bind(key, "<ButtonRelease-1>", lambda e: self.toggle())
 
     def draw(self):
         cv = self.cv
@@ -345,6 +344,9 @@ class Switch(Widget):
         cv.create_oval(kx, y0 + pad + h * 0.07, kx + d, y0 + pad + d + h * 0.07, fill=shadow_on(track),
                        outline="", tags=self.tag)
         cv.create_oval(kx, y0 + pad, kx + d, y0 + pad + d, fill=C["paper"], outline="", tags=self.tag)
+
+    def click(self, x, y):
+        self.toggle()
 
     def toggle(self):
         if self.blocked():
@@ -399,10 +401,51 @@ class Window:
                           Pill(self, "ht", "Testing guide", "soft", lambda: webbrowser.open(L.TESTING_URL)),
                           Pill(self, "hp", "Report a problem", "orange", lambda: webbrowser.open(L.ISSUES_URL))]
         self._job = None
+        self.hovered = None   # widget under the pointer
+        self.pressed = None   # widget the left button went down on
         self.cv.bind("<Configure>", lambda e: self._schedule())
+        self.cv.bind("<Motion>", self._on_motion)
+        self.cv.bind("<Leave>", lambda e: self._set_hover(None))
+        self.cv.bind("<ButtonPress-1>", self._on_press)
+        self.cv.bind("<ButtonRelease-1>", self._on_release)
         root.bind("<Return>", lambda e: self._on_return())
         root.bind("<Escape>", lambda e: self.close_dialog())
         self.set_note("Your save is backed up automatically before each play session.")
+
+    # --- pointer routing (hit-test on boxes, so redrawing items cannot re-trigger hover) --------
+    def _widgets(self):
+        if self.dialog:
+            return list(self.dialog["buttons"])
+        return [self.fullscreen, self.safe, self.size, self.language, self.play_btn] + self.save_btns + self.help_btns
+
+    def _pick(self, x, y):
+        for wd in reversed(self._widgets()):
+            if wd.interactive() and wd.hit(x, y):
+                return wd
+        return None
+
+    def _set_hover(self, wd):
+        if wd is self.hovered:
+            return
+        old, self.hovered = self.hovered, wd
+        if old is not None:
+            old.leave()
+        if wd is not None:
+            wd.enter()
+        self.cv.config(cursor="hand2" if wd is not None else "")
+
+    def _on_motion(self, e):
+        self._set_hover(self._pick(e.x, e.y))
+
+    def _on_press(self, e):
+        self.pressed = self._pick(e.x, e.y)
+        if self.pressed is not None:
+            self.pressed.press()
+
+    def _on_release(self, e):
+        wd, self.pressed = self.pressed, None
+        if wd is not None and wd.interactive() and wd.hit(e.x, e.y):
+            wd.click(e.x, e.y)
 
     # --- fonts ----------------------------------------------------------------------
     def font(self, px, weight="bold"):
@@ -646,6 +689,7 @@ class Window:
                            padx=12, pady=10, cursor="arrow", font=self.font(13 * self.u, "normal"))
             text.insert("1.0", body)
             text.config(state="disabled")
+        self._set_hover(None)
         self.dialog = {"message": message, "buttons": pills, "body": text}
         pills[0].run(6, lambda t: self._draw_dialog(0.6 + 0.4 * ease_back(t)))  # dialog in: 6 frames
 
@@ -690,8 +734,9 @@ class Window:
         if self.dialog["body"] is not None:
             self.dialog["body"].destroy()
         self.cv.delete("dlg")
-        self.cv.config(cursor="")
         self.dialog = None
+        self.hovered = None
+        self.cv.config(cursor="")
 
     def _on_return(self):
         if self.dialog:
