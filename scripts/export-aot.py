@@ -24,7 +24,30 @@ import lab  # noqa: E402
 sys.path.insert(0, str(ROOT / 'upstream/mk8-recomp/scripts'))
 from mcp import rpc  # noqa: E402
 
+OPEN_FILES_NEEDED = 4096  # the export opens ~1700 files at once, plus what Qt and the libraries hold
 PORT = int(os.environ.get('SUYU_MCP_PORT', '9742'))
+
+
+def raise_open_file_limit(wanted=65536):
+    """The exporter keeps every generated .c file of a module open at once (1650 for this game) and fails silently once the process runs
+    out of file descriptors. Linux gives a process 1024 by default, so the export stopped at about 970 files (issue #17). Raise the soft
+    limit up to the hard one; the suyu we start inherits it. Returns the limit in force, or None where there is no such limit (Windows)."""
+    try:
+        import resource
+    except ImportError:
+        return None
+    soft, hard = resource.getrlimit(resource.RLIMIT_NOFILE)
+    if hard == resource.RLIM_INFINITY:
+        target = wanted
+    else:
+        target = min(wanted, hard)
+    if soft == resource.RLIM_INFINITY or soft >= target:
+        return soft
+    try:
+        resource.setrlimit(resource.RLIMIT_NOFILE, (target, hard))
+    except (OSError, ValueError):
+        return soft
+    return target
 
 
 def port_open():
@@ -118,6 +141,10 @@ def main():
         ':' + env['LD_LIBRARY_PATH'] if env.get('LD_LIBRARY_PATH') else '')
     exe = lab.tool('suyu')
     lab.portable_profile()
+    limit = raise_open_file_limit()
+    if limit is not None and limit < OPEN_FILES_NEEDED:
+        sys.exit(f'This session allows only {limit} open files and cannot raise it; the export needs {OPEN_FILES_NEEDED}. '
+                 f'Run "ulimit -n 65536" in this terminal (or raise the limit in /etc/security/limits.conf) and run the installer again.')
     with gui_log.open('w') as log:
         gui = subprocess.Popen([str(exe), '-hacker'], cwd=ROOT / 'local/runtime', env=env,
                                stdout=log, stderr=subprocess.STDOUT)

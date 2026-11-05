@@ -39,6 +39,37 @@ def load_exporter(rpc):
     return module
 
 
+class OpenFileLimit(unittest.TestCase):
+    """Issue #17: suyu keeps all ~1650 generated .c files of a module open at once, so the default soft limit of 1024 cut the export at ~970."""
+
+    def load(self):
+        return load_exporter(None)
+
+    def test_soft_limit_is_raised_up_to_the_wanted_value(self):
+        import resource
+        module = self.load()
+        with mock.patch.object(resource, "getrlimit", return_value=(1024, 524288)), \
+                mock.patch.object(resource, "setrlimit") as setrlimit:
+            self.assertEqual(module.raise_open_file_limit(), 65536)
+        setrlimit.assert_called_once_with(resource.RLIMIT_NOFILE, (65536, 524288))
+
+    def test_soft_limit_is_capped_by_the_hard_limit(self):
+        import resource
+        module = self.load()
+        with mock.patch.object(resource, "getrlimit", return_value=(1024, 2048)), \
+                mock.patch.object(resource, "setrlimit") as setrlimit:
+            self.assertEqual(module.raise_open_file_limit(), 2048)
+        setrlimit.assert_called_once_with(resource.RLIMIT_NOFILE, (2048, 2048))
+
+    def test_a_high_enough_limit_is_left_alone(self):
+        import resource
+        module = self.load()
+        with mock.patch.object(resource, "getrlimit", return_value=(524288, 524288)), \
+                mock.patch.object(resource, "setrlimit") as setrlimit:
+            self.assertEqual(module.raise_open_file_limit(), 524288)
+        setrlimit.assert_not_called()
+
+
 class ExportOutputChecks(unittest.TestCase):
     def test_sources_listed_but_missing_are_reported_and_settling_returns(self):
         mcp = types.ModuleType("mcp")
