@@ -1,8 +1,6 @@
-<p align="center">
-  <img src="docs/images/banner.pt-BR.svg" alt="Tomodachi LTD Recomp — recompilação experimental para PC" width="100%">
-</p>
-
-# Tomodachi LTD Recomp
+<h1 align="center">
+  <img src="docs/images/banner.pt-BR.png" alt="Tomodachi LTD Recomp: port nativo não oficial de Tomodachi Life: Living the Dream para PC (alpha)" width="100%">
+</h1>
 
 🇺🇸 [Read in English](README.md)
 
@@ -28,7 +26,7 @@ O projeto **não contém o jogo, o firmware nem as chaves**. Você usa a **sua p
 > Leia o [aviso legal completo](LEGAL.pt-BR.md).
 
 <p align="center">
-  <img src="docs/images/how-it-works.pt-BR.svg" alt="1. Seu jogo e suas chaves → 2. ./install.sh → 3. ./play.sh" width="90%">
+  <img src="docs/images/how-it-works.pt-BR.png" alt="1. Seu jogo e suas chaves → 2. ./install.sh → 3. ./play.sh" width="90%">
 </p>
 
 ---
