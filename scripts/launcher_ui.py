@@ -1293,6 +1293,7 @@ class Window:
         current = dict(self.settings)
         L.save_settings(current)
         profile = self.profile
+        L.mark_played(profile)  # the launcher opens on this save next time, even if the game saves nothing
         L.auto_backup(profile)
         self.playing = True
         self.watch = L.SaveWatch(profile)

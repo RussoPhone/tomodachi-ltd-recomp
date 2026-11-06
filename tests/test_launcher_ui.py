@@ -6,6 +6,7 @@ import shutil
 import sys
 import tempfile
 import time
+import subprocess
 import zipfile
 import unittest
 
@@ -13,6 +14,8 @@ SCRIPTS = Path(__file__).resolve().parents[1] / 'scripts'
 spec = importlib.util.spec_from_file_location('launcher', SCRIPTS / 'launcher.py')
 launcher = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(launcher)
+
+subprocess_run = subprocess.run  # the real one, to restore after a test replaces it
 
 try:
     import tkinter
@@ -328,6 +331,18 @@ class LauncherWindowTests(unittest.TestCase):
         win = self.fresh_window()
         self.assertEqual(win.profile, other)
         self.assertEqual(win.profile_dd.value, 'Practice island')
+
+    def test_pressing_play_makes_that_save_the_one_the_launcher_opens_on_next_time(self):
+        other = launcher.create_profile('Practice island')
+        self.write_save('main', mtime=time.time())       # main is the one with the newest files
+        self.win._refresh_saves()
+        self.win.profile_dd.pick('Practice island')
+        self.ui.subprocess.run = lambda cmd, **kw: type('R', (), {'returncode': 0})()
+        self.addCleanup(setattr, self.ui.subprocess, 'run', subprocess_run)
+        self.win.on_play()
+        self.pump(1.0)
+        self.assertEqual(launcher.most_recent_profile(), other)
+        self.assertEqual(self.fresh_window().profile, other)
 
     def test_the_recent_saves_are_on_the_main_screen_newest_first(self):
         now = time.time()

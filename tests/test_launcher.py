@@ -249,6 +249,16 @@ class LauncherTests(unittest.TestCase):
         self._write_save('main', mtime=3000)
         self.assertEqual(launcher.most_recent_profile(), 'main')
 
+    def test_the_save_you_played_last_wins_even_if_it_was_not_written(self):
+        other = launcher.create_profile('Other')
+        self._write_save('main', mtime=5000)            # main was written most recently...
+        self._write_save(other, mtime=1000)
+        self.assertEqual(launcher.most_recent_profile(), 'main')
+        launcher.mark_played(other)                     # ...but the other one was played after that
+        self.assertEqual(launcher.most_recent_profile(), other)
+        launcher.mark_played('nope')                    # an unknown save is ignored, not created
+        self.assertEqual(list(launcher.load_profiles()), ['main', other])
+
     def test_play_command_passes_the_save_folder_only_when_it_is_not_the_default(self):
         settings = {'fullscreen': False, 'size': '1280x720', 'language': 'en-US'}
         self.assertNotIn('--user', launcher.play_command(settings, launcher.SAVE_DIR))  # works with an older play-nxrt.sh

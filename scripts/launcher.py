@@ -262,11 +262,22 @@ def last_activity(slug):
     return max(times, default=0.0)
 
 
-def most_recent_profile():
-    """The save the game wrote to last: the launcher starts on it. 'main' when none has anything yet."""
+def mark_played(slug):
+    """Remember that this save was just played (or just imported): the launcher starts on the one played last."""
     profiles = load_profiles()
-    best = max(profiles, key=lambda k: (last_activity(k), k == MAIN))
-    return best if last_activity(best) else MAIN
+    if slug in profiles:
+        profiles[slug]['played'] = time.time()
+        _write_json(profiles_file(), profiles)
+
+
+def most_recent_profile():
+    """The save to start on: the one you played last. A save the game wrote to counts too (playing and closing
+    without saving in the game still means you played it). 'main' when nothing has been played or saved yet."""
+    profiles = load_profiles()
+    def last(k):
+        return max(last_activity(k), float(profiles[k].get('played', 0)))
+    best = max(profiles, key=lambda k: (last(k), k == MAIN))
+    return best if last(best) else MAIN
 
 
 # --- backups and save points -----------------------------------------------------------------------------
