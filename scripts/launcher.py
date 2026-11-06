@@ -63,8 +63,12 @@ def save_settings(settings):
     tmp.replace(SETTINGS)
 
 
-def play_command(settings):
+def play_command(settings, user_dir=None):
+    """user_dir: the save folder to play with. The default one (local/user-nxrt) is not passed, so it also works
+    with an older scripts/play-nxrt.sh that has no --user."""
     cmd = [str(PLAY), '--language', settings['language'], '--size', settings['size']]
+    if user_dir is not None and Path(user_dir) != SAVE_DIR:
+        cmd += ['--user', str(user_dir)]
     if settings['fullscreen']:
         cmd.append('--fullscreen')
     if settings.get('safe'):
@@ -166,49 +170,334 @@ def installed():
     return (ROOT / 'local/nxrt/bin/nxrt').exists() and (ROOT / 'local/install/tomodachi').is_dir()
 
 
-KEEP_AUTO = 10
+KEEP_AUTO = 10     # "before playing" copies kept per save
+KEEP_POINTS = 20   # automatic save points (taken while playing / at the end of a session) kept per save
+KEEP_SAFETY = 5    # "before restore" copies kept per save
+MAIN = 'main'      # the save that always existed: local/user-nxrt (never moved)
+
+KIND_NAMES = {'save': 'Backup', 'auto': 'Before playing', 'point': 'Save point', 'session': 'End of session',
+              'safety': 'Before restore'}
 
 
-def backup_save(prefix='save'):
-    """Zip local/user-nxrt into local/backups/<prefix>-<time>.zip and return the path (None if there is no save yet)."""
-    if not SAVE_DIR.is_dir() or not any(SAVE_DIR.iterdir()):
+# --- saves ("islands"): each one is a folder the game uses as its save directory -----------------------------
+def profiles_file():
+    return ROOT / 'local/profiles.json'
+
+
+def profiles_dir():
+    return ROOT / 'local/profiles'
+
+
+def _write_json(path, data):
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_suffix(path.suffix + '.tmp')
+    tmp.write_text(json.dumps(data, indent=2, ensure_ascii=False))
+    tmp.replace(path)
+
+
+def load_profiles():
+    """{slug: {'name': ..}} in creation order. 'main' (the existing local/user-nxrt) is always there."""
+    try:
+        data = json.loads(profiles_file().read_text())
+        found = {k: v for k, v in data.items() if isinstance(v, dict) and isinstance(v.get('name'), str)}
+    except (OSError, ValueError, AttributeError):
+        found = {}
+    profiles = {MAIN: found.get(MAIN) or {'name': 'Main'}}
+    profiles.update({k: v for k, v in found.items() if k != MAIN})
+    return profiles
+
+
+def profile_dir(slug):
+    return SAVE_DIR if slug == MAIN else profiles_dir() / slug
+
+
+def slugify(name):
+    slug = re.sub(r'[^a-z0-9]+', '-', name.lower()).strip('-')
+    return slug[:30] or 'save'
+
+
+def create_profile(name):
+    """A new, empty save (the game starts a fresh island in it). Returns its slug."""
+    name = ' '.join(name.split())[:40]
+    if not name:
+        raise ValueError('Give the new save a name.')
+    profiles = load_profiles()
+    if any(p['name'].lower() == name.lower() for p in profiles.values()):
+        raise ValueError(f'There is already a save called "{name}".')
+    base = slug = slugify(name)
+    n = 1
+    while slug in profiles or slug == MAIN:
+        n += 1
+        slug = f'{base}-{n}'
+    profiles[slug] = {'name': name, 'created': time.time()}
+    profile_dir(slug).mkdir(parents=True, exist_ok=True)
+    _write_json(profiles_file(), profiles)
+    return slug
+
+
+def rename_profile(slug, name):
+    name = ' '.join(name.split())[:40]
+    profiles = load_profiles()
+    if slug not in profiles or not name:
+        raise ValueError('Give the save a name.')
+    if any(k != slug and p['name'].lower() == name.lower() for k, p in profiles.items()):
+        raise ValueError(f'There is already a save called "{name}".')
+    profiles[slug]['name'] = name
+    _write_json(profiles_file(), profiles)
+
+
+def save_files(slug):
+    folder = profile_dir(slug)
+    return [f for f in folder.rglob('*') if f.is_file()] if folder.is_dir() else []
+
+
+def last_activity(slug):
+    """When the game last wrote into this save (0 when it has nothing yet)."""
+    times = []
+    for f in save_files(slug):
+        try:
+            times.append(f.stat().st_mtime)
+        except OSError:
+            pass
+    return max(times, default=0.0)
+
+
+def most_recent_profile():
+    """The save the game wrote to last: the launcher starts on it. 'main' when none has anything yet."""
+    profiles = load_profiles()
+    best = max(profiles, key=lambda k: (last_activity(k), k == MAIN))
+    return best if last_activity(best) else MAIN
+
+
+# --- backups and save points -----------------------------------------------------------------------------
+def _index():
+    try:
+        data = json.loads((BACKUPS / 'index.json').read_text())
+        return data if isinstance(data, dict) else {}
+    except (OSError, ValueError):
+        return {}
+
+
+def _remember(name, **info):
+    index = _index()
+    index[name] = info
+    try:
+        _write_json(BACKUPS / 'index.json', index)
+    except OSError:
+        pass
+
+
+def backup_save(prefix='save', profile=MAIN, label=None):
+    """Zip a save into local/backups/ and return the path (None if it has nothing yet). prefix = the kind:
+    save (made by hand), auto (before playing), point / session (taken while playing), safety (before a restore)."""
+    folder = profile_dir(profile)
+    if not folder.is_dir() or not any(folder.iterdir()):
         return None
     BACKUPS.mkdir(parents=True, exist_ok=True)
     stamp = time.strftime('%Y%m%d-%H%M%S')
-    out, n = BACKUPS / f'{prefix}-{stamp}.zip', 1
+    stem = f'{prefix}-{stamp}' if profile == MAIN else f'{prefix}-{profile}-{stamp}'
+    out, n = BACKUPS / f'{stem}.zip', 1
     while out.exists():  # never overwrite an earlier backup (two in the same second)
         n += 1
-        out = BACKUPS / f'{prefix}-{stamp}-{n}.zip'
+        out = BACKUPS / f'{stem}-{n}.zip'
     with zipfile.ZipFile(out, 'w', zipfile.ZIP_DEFLATED) as z:
-        for path in sorted(SAVE_DIR.rglob('*')):
+        for path in sorted(folder.rglob('*')):
             if path.is_file():
-                z.write(path, path.relative_to(SAVE_DIR).as_posix())
+                z.write(path, path.relative_to(folder).as_posix())
+    info = {'kind': prefix, 'profile': profile, 'created': time.time()}
+    if label:
+        info['label'] = label
+    _remember(out.name, **info)
     return out
 
 
-def auto_backup():
-    """Back the save up before each play session and keep only the newest KEEP_AUTO automatic copies (manual ones are never pruned)."""
+def list_saves(profile=None):
+    """Every backup / save point, newest first: dicts with path, kind, profile, label, created, size.
+    Zips made by older launchers (no index entry) are read from their file names."""
+    index, out = _index(), []
+    for path in BACKUPS.glob('*.zip') if BACKUPS.is_dir() else []:
+        info = index.get(path.name)
+        if not info:
+            kind = path.name.split('-', 1)[0]
+            try:
+                created = time.mktime(time.strptime(re.search(r'(\d{8}-\d{6})', path.name).group(1), '%Y%m%d-%H%M%S'))
+            except (AttributeError, ValueError):
+                created = path.stat().st_mtime
+            info = {'kind': kind if kind in KIND_NAMES else 'save', 'profile': MAIN, 'created': created}
+        if profile is not None and info.get('profile', MAIN) != profile:
+            continue
+        try:
+            size = path.stat().st_size
+        except OSError:
+            continue
+        out.append({'path': path, 'kind': info.get('kind', 'save'), 'profile': info.get('profile', MAIN),
+                    'label': info.get('label'), 'created': float(info.get('created', 0)), 'size': size})
+    return sorted(out, key=lambda e: e['created'], reverse=True)
+
+
+def save_title(entry):
+    return entry['label'] or KIND_NAMES.get(entry['kind'], 'Backup')
+
+
+def when_text(created, now=None):
+    """'12 min ago', 'Today 17:33', 'Yesterday 21:10', '03 Nov 18:04' (hour:minute so two saves are never confused)."""
+    now = time.time() if now is None else now
+    age = now - created
+    if age < 90:
+        return 'just now'
+    if age < 3600:
+        return f'{int(age // 60)} min ago'
+    day = time.strftime('%Y%m%d', time.localtime(created))
+    clock = time.strftime('%H:%M', time.localtime(created))
+    if day == time.strftime('%Y%m%d', time.localtime(now)):
+        return f'Today {clock}'
+    if day == time.strftime('%Y%m%d', time.localtime(now - 86400)):
+        return f'Yesterday {clock}'
+    return time.strftime('%d %b ', time.localtime(created)) + clock
+
+
+def size_text(size):
+    return f'{size / 1048576:.1f} MB' if size >= 1048576 else f'{max(1, round(size / 1024))} KB'
+
+
+def rename_save(path, label):
+    label = ' '.join(label.split())[:50]
+    index = _index()
+    entry = dict(index.get(Path(path).name) or next(
+        ({k: e[k] for k in ('kind', 'profile', 'created')} for e in list_saves() if e['path'] == Path(path)), {}))
+    if label:
+        entry['label'] = label
+    else:
+        entry.pop('label', None)
+    _remember(Path(path).name, **entry)
+
+
+def delete_save(path):
+    Path(path).unlink()
+    index = _index()
+    if index.pop(Path(path).name, None) is not None:
+        try:
+            _write_json(BACKUPS / 'index.json', index)
+        except OSError:
+            pass
+
+
+def prune(profile=MAIN):
+    """Drop the oldest automatic copies of one save. Backups made by hand and renamed ones are never pruned."""
+    caps = {'auto': KEEP_AUTO, 'point': KEEP_POINTS, 'session': KEEP_POINTS, 'safety': KEEP_SAFETY}
+    groups = {}
+    for e in list_saves(profile):
+        if e['kind'] in caps and not e['label']:
+            groups.setdefault('points' if e['kind'] in ('point', 'session') else e['kind'], []).append(e)
+    for kind, entries in groups.items():
+        cap = KEEP_POINTS if kind == 'points' else caps[kind]
+        for old in entries[cap:]:  # newest first
+            try:
+                delete_save(old['path'])
+            except OSError:
+                pass
+
+
+def auto_backup(profile=MAIN):
+    """Back the save up before each play session and keep only the newest KEEP_AUTO of those (manual ones are never pruned)."""
     try:
-        out = backup_save('auto')
-        for old in sorted(BACKUPS.glob('auto-*.zip'))[:-KEEP_AUTO]:
-            old.unlink()
+        out = backup_save('auto', profile)
+        prune(profile)
         return out
     except OSError:
         return None  # a full disk must not stop the game from starting
 
 
-def restore_save(archive):
-    """Replace the save with the contents of `archive`, after backing up the current one. Returns the safety backup path."""
+def restore_save(archive, profile=MAIN):
+    """Replace a save with the contents of `archive`, after backing the current one up. Returns the safety backup path."""
+    folder = profile_dir(profile)
     with zipfile.ZipFile(archive) as z:
         bad = [n for n in z.namelist() if n.startswith('/') or '..' in Path(n).parts]
         if bad:
             raise ValueError('The zip has unsafe paths; refusing to restore it.')
-        safety = backup_save()
-        if SAVE_DIR.exists():
-            shutil.rmtree(SAVE_DIR)
-        SAVE_DIR.mkdir(parents=True)
-        z.extractall(SAVE_DIR)
+        safety = backup_save('safety', profile)
+        if folder.exists():
+            shutil.rmtree(folder)
+        folder.mkdir(parents=True)
+        z.extractall(folder)
+    prune(profile)
     return safety
+
+
+# --- watching a save while the game runs ----------------------------------------------------------------
+def save_signature(profile=MAIN):
+    """Cheap fingerprint of a save folder: it changes whenever the game writes into it."""
+    sig = []
+    for f in sorted(save_files(profile)):
+        try:
+            st = f.stat()
+            sig.append((f.name, st.st_size, st.st_mtime_ns))
+        except OSError:
+            pass
+    return tuple(sig)
+
+
+class SaveWatch:
+    """Takes a save point when the game has written a save and then gone quiet, and tells at the end of the session
+    what was (not) saved. The game keeps its progress in memory until you save in the game: a copy of the folder
+    cannot contain what was never written, so this protects what the game DID write (a half-written save after a
+    kill, an overwrite you regret) and says plainly when the last real save was."""
+    QUIET = 4.0       # seconds without writes before a change counts as a finished save
+    MIN_GAP = 180.0   # at most one automatic save point per 3 minutes
+    HURT = 10.0       # a kill this soon after a write may have cut it in half
+
+    def __init__(self, profile=MAIN, now=None):
+        now = time.time() if now is None else now
+        self.profile, self.started = profile, now
+        self.sig = save_signature(profile)
+        self.dirty, self.changed_at, self.last_write = False, None, None
+        self.last_point = now - self.MIN_GAP
+        self.points = 0
+
+    def poll(self, now=None):
+        """Call every couple of seconds. Returns the path of a new save point, or None."""
+        now = time.time() if now is None else now
+        sig = save_signature(self.profile)
+        if sig != self.sig:
+            self.sig, self.dirty = sig, True
+            self.changed_at = self.last_write = now
+            return None
+        if self.dirty and now - self.changed_at >= self.QUIET and now - self.last_point >= self.MIN_GAP:
+            return self._take('point', now)
+        return None
+
+    def _take(self, kind, now):
+        try:
+            out = backup_save(kind, self.profile)
+            prune(self.profile)
+        except OSError:
+            return None
+        self.dirty, self.last_point = False, now
+        self.points += 1 if out else 0
+        return out
+
+    def finish(self, exit_code, now=None):
+        """The game ended. Returns a dict for the window: text (a sentence to show), interrupted, saved, last_write."""
+        now = time.time() if now is None else now
+        killed = exit_code is not None and (exit_code < 0 or exit_code >= 128)
+        interrupted = bool(self.dirty and self.changed_at is not None and (killed or exit_code not in (0, None))
+                           and now - self.changed_at < self.HURT)
+        saved = None
+        if self.dirty and not interrupted:
+            saved = self._take('session', now)
+        minutes = None if self.last_write is None else (now - self.last_write) / 60
+        played = (now - self.started) / 60
+        if interrupted:
+            text = ('The game was closed while it was writing the save. If it misbehaves, restore the previous '
+                    'save point from "All saves".')
+        elif self.last_write is None:
+            text = ('Nothing was saved this session.' if played >= 5 else '')
+        elif minutes >= 10:
+            text = f'Your last save in the game was {int(minutes)} min before you closed it. Anything after it is lost.'
+        else:
+            text = 'Saved. Have a nice day on the island!'
+        return {'text': text, 'interrupted': interrupted, 'saved': saved, 'last_write': self.last_write,
+                'minutes_since_save': minutes}
 
 
 def open_folder(path):

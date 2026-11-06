@@ -1,4 +1,7 @@
 import importlib.util
+import os
+import subprocess
+import shutil
 import io
 import json
 import time
@@ -196,6 +199,228 @@ class LauncherTests(unittest.TestCase):
         self.assertFalse(launcher.newer_release('Alpha 1.8.0', latest))  # a dev build ahead of the release
         self.assertFalse(launcher.newer_release('', latest))             # installed version unknown: no claim
         self.assertFalse(launcher.newer_release('Alpha 1.7.0', None))
+
+    # --- saves ("islands") ---------------------------------------------------------------------------
+    def _write_save(self, slug, content=b'x', mtime=None):
+        folder = launcher.profile_dir(slug)
+        folder.mkdir(parents=True, exist_ok=True)
+        f = folder / 'game.sav'
+        f.write_bytes(content)
+        if mtime:
+            os.utime(f, (mtime, mtime))
+        return f
+
+    def _fake_zip(self, name, kind, created, label=None, profile='main'):
+        launcher.BACKUPS.mkdir(parents=True, exist_ok=True)
+        path = launcher.BACKUPS / name
+        with zipfile.ZipFile(path, 'w') as z:
+            z.writestr('game.sav', name)
+        info = {'kind': kind, 'profile': profile, 'created': created}
+        if label:
+            info['label'] = label
+        launcher._remember(name, **info)
+        return path
+
+    def test_the_main_save_is_always_there_and_new_saves_are_separate_folders(self):
+        self.assertEqual(list(launcher.load_profiles()), ['main'])
+        self.assertEqual(launcher.profile_dir('main'), launcher.SAVE_DIR)  # the existing save is never moved
+        slug = launcher.create_profile('  My   Island! ')
+        self.assertEqual(launcher.load_profiles()[slug]['name'], 'My Island!')
+        self.assertEqual(launcher.profile_dir(slug), self.tmp / 'local/profiles' / slug)
+        self.assertTrue(launcher.profile_dir(slug).is_dir())
+        for bad in ('my island!', 'MAIN', 'Main', ''):  # same name, whatever the case; the empty name
+            with self.assertRaises(ValueError):
+                launcher.create_profile(bad)
+        self.assertEqual(launcher.create_profile('My Island?'.replace('?', '2')), slug + '2')  # a slug is never reused
+
+    def test_rename_a_save_keeps_names_unique(self):
+        slug = launcher.create_profile('Practice')
+        launcher.rename_profile(slug, 'Real game')
+        self.assertEqual(launcher.load_profiles()[slug]['name'], 'Real game')
+        with self.assertRaises(ValueError):
+            launcher.rename_profile(slug, 'main')
+
+    def test_the_launcher_starts_on_the_save_the_game_wrote_to_last(self):
+        self.assertEqual(launcher.most_recent_profile(), 'main')  # nothing yet
+        other = launcher.create_profile('Other')
+        self._write_save('main', mtime=1000)
+        self._write_save(other, mtime=2000)
+        self.assertEqual(launcher.most_recent_profile(), other)
+        self._write_save('main', mtime=3000)
+        self.assertEqual(launcher.most_recent_profile(), 'main')
+
+    def test_play_command_passes_the_save_folder_only_when_it_is_not_the_default(self):
+        settings = {'fullscreen': False, 'size': '1280x720', 'language': 'en-US'}
+        self.assertNotIn('--user', launcher.play_command(settings, launcher.SAVE_DIR))  # works with an older play-nxrt.sh
+        cmd = launcher.play_command(settings, self.tmp / 'x')
+        self.assertEqual(cmd[cmd.index('--user') + 1], str(self.tmp / 'x'))
+
+    def test_backups_get_readable_titles_and_can_be_named_renamed_and_deleted(self):
+        self._write_save('main')
+        point = launcher.backup_save('point')
+        named = launcher.backup_save('save', 'main', 'Before the festival')
+        entries = launcher.list_saves('main')
+        self.assertEqual({launcher.save_title(e) for e in entries}, {'Save point', 'Before the festival'})
+        launcher.rename_save(point, 'After the first flower')
+        self.assertIn('After the first flower', [launcher.save_title(e) for e in launcher.list_saves()])
+        launcher.rename_save(point, '')  # an empty name goes back to the kind
+        self.assertIn('Save point', [launcher.save_title(e) for e in launcher.list_saves()])
+        launcher.delete_save(named)
+        self.assertFalse(named.exists())
+        self.assertNotIn(named.name, launcher._index())
+
+    def test_zips_from_older_launchers_are_still_listed(self):
+        launcher.BACKUPS.mkdir(parents=True)
+        for name in ('save-20261105-173346.zip', 'auto-20261105-044933.zip'):
+            with zipfile.ZipFile(launcher.BACKUPS / name, 'w') as z:
+                z.writestr('a', 'b')
+        entries = launcher.list_saves('main')
+        self.assertEqual([launcher.save_title(e) for e in entries], ['Backup', 'Before playing'])  # newest first
+        self.assertEqual(time.strftime('%Y-%m-%d %H:%M', time.localtime(entries[0]['created'])), '2026-11-05 17:33')
+
+    def test_when_and_size_are_short_and_human(self):
+        now = time.mktime((2026, 11, 5, 18, 0, 0, 0, 0, -1))
+        at = lambda d, h, m: time.mktime((2026, 11, d, h, m, 0, 0, 0, -1))
+        self.assertEqual(launcher.when_text(now - 30, now), 'just now')
+        self.assertEqual(launcher.when_text(now - 12 * 60, now), '12 min ago')
+        self.assertEqual(launcher.when_text(at(5, 15, 7), now), 'Today 15:07')
+        self.assertEqual(launcher.when_text(at(4, 21, 10), now), 'Yesterday 21:10')
+        older = launcher.when_text(at(3, 18, 4), now)
+        self.assertTrue(older.startswith('03 ') and older.endswith('18:04'), older)
+        self.assertEqual(launcher.size_text(500), '1 KB')
+        self.assertEqual(launcher.size_text(56 * 1024), '56 KB')
+        self.assertEqual(launcher.size_text(int(1.5 * 1048576)), '1.5 MB')
+
+    def test_prune_drops_old_automatic_copies_but_never_named_ones_or_other_saves(self):
+        other = launcher.create_profile('Other')
+        base = 1_000_000
+        for i in range(launcher.KEEP_POINTS + 5):
+            self._fake_zip(f'point-{i:03}.zip', 'point', base + i)
+        named = self._fake_zip('point-old.zip', 'point', base - 10, label='Keep me')
+        manual = self._fake_zip('save-old.zip', 'save', base - 20)
+        theirs = self._fake_zip('point-other.zip', 'point', base - 30, profile=other)
+        launcher.prune('main')
+        kept = [e['path'].name for e in launcher.list_saves('main') if e['kind'] == 'point' and not e['label']]
+        self.assertEqual(len(kept), launcher.KEEP_POINTS)
+        self.assertIn(f'point-{launcher.KEEP_POINTS + 4:03}.zip', kept)       # the newest stay
+        self.assertNotIn('point-000.zip', kept)                               # the oldest went
+        self.assertTrue(named.exists() and manual.exists() and theirs.exists())
+
+    def test_restoring_one_save_leaves_the_others_alone_and_keeps_a_safety_copy(self):
+        other = launcher.create_profile('Other')
+        self._write_save('main', b'main-now')
+        self._write_save(other, b'other-then')
+        snap = launcher.backup_save('save', other)
+        self._write_save(other, b'other-now')
+        safety = launcher.restore_save(snap, other)
+        self.assertEqual((launcher.profile_dir(other) / 'game.sav').read_bytes(), b'other-then')
+        self.assertEqual((launcher.SAVE_DIR / 'game.sav').read_bytes(), b'main-now')
+        with zipfile.ZipFile(safety) as z:
+            self.assertEqual(z.read('game.sav'), b'other-now')
+        kinds = {(e['kind'], e['profile']) for e in launcher.list_saves()}
+        self.assertIn(('safety', other), kinds)
+
+    # --- watching a save while the game runs -------------------------------------------------------------
+    def _touch(self, content, slug='main'):
+        self._write_save(slug, content)
+
+    def test_a_save_point_is_taken_when_the_game_wrote_and_went_quiet(self):
+        self._touch(b'start')
+        watch = launcher.SaveWatch('main', now=1000)
+        self.assertIsNone(watch.poll(1001))                 # nothing changed
+        self._touch(b'the player saved in the game')
+        self.assertIsNone(watch.poll(1002))                 # just written: it may still be writing
+        self.assertIsNone(watch.poll(1004))
+        point = watch.poll(1007)                            # quiet for 5 s: the save is complete
+        self.assertIsNotNone(point)
+        self.assertEqual([e['kind'] for e in launcher.list_saves('main')], ['point'])
+        self.assertIsNone(watch.poll(1010))                 # nothing new, nothing more
+
+    def test_save_points_are_spaced_out(self):
+        self._touch(b'1')
+        watch = launcher.SaveWatch('main', now=1000)
+        watch.poll(1001)
+        self._touch(b'22')
+        watch.poll(1002)
+        self.assertIsNotNone(watch.poll(1007))
+        self._touch(b'333')
+        watch.poll(1020)
+        self.assertIsNone(watch.poll(1030))                 # only 23 s after the last point: wait
+        self.assertIsNotNone(watch.poll(1007 + launcher.SaveWatch.MIN_GAP + 1))
+
+    def test_a_normal_close_after_a_save_says_saved_and_keeps_the_final_state(self):
+        self._touch(b'a')
+        watch = launcher.SaveWatch('main', now=1000)
+        self._touch(b'bb')
+        watch.poll(1001)
+        done = watch.finish(0, now=1100)                    # Alt+F4 and a normal exit are both 0
+        self.assertFalse(done['interrupted'])
+        self.assertIsNotNone(done['saved'])                 # the last state was kept as an "end of session" point
+        self.assertIn('Saved', done['text'])
+
+    def test_it_says_how_long_before_closing_the_last_save_was(self):
+        self._touch(b'a')
+        watch = launcher.SaveWatch('main', now=1000)
+        self._touch(b'bb')
+        watch.poll(1001)
+        done = watch.finish(0, now=1001 + 47 * 60)
+        self.assertIn('47 min', done['text'])
+        self.assertIn('lost', done['text'])
+
+    def test_a_session_without_a_save_says_so_only_when_it_was_long_enough_to_matter(self):
+        self._touch(b'a')
+        self.assertEqual(launcher.SaveWatch('main', now=1000).finish(0, now=1060)['text'], '')
+        self.assertEqual(launcher.SaveWatch('main', now=1000).finish(0, now=1000 + 30 * 60)['text'],
+                         'Nothing was saved this session.')
+
+    def test_a_kill_right_after_a_write_is_reported_and_not_kept_as_a_save_point(self):
+        self._touch(b'a')
+        watch = launcher.SaveWatch('main', now=1000)
+        self._touch(b'half-written')
+        watch.poll(1001)
+        done = watch.finish(137, now=1003)                  # killed 2 s after the game wrote
+        self.assertTrue(done['interrupted'])
+        self.assertIsNone(done['saved'])                    # a possibly half-written state is not a "good" point
+        self.assertIn('writing the save', done['text'])
+        self.assertEqual(launcher.list_saves('main'), [])
+
+    def test_a_kill_long_after_the_last_write_is_not_called_interrupted(self):
+        self._touch(b'a')
+        watch = launcher.SaveWatch('main', now=1000)
+        self._touch(b'bb')
+        watch.poll(1001)
+        watch.poll(1010)                                    # the save point was taken
+        done = watch.finish(137, now=1600)
+        self.assertFalse(done['interrupted'])
+
+    # --- the play script: --user and the game's exit code through the pipe ------------------------------
+    def _run_play_script(self, *args, game_exit=0):
+        root = self.tmp / 'game-root'
+        (root / 'scripts').mkdir(parents=True, exist_ok=True)
+        (root / 'local/nxrt/bin').mkdir(parents=True, exist_ok=True)
+        (root / 'local/install/tomodachi').mkdir(parents=True, exist_ok=True)
+        shutil.copy(Path(__file__).resolve().parents[1] / 'scripts/play-nxrt.sh', root / 'scripts/play-nxrt.sh')
+        nxrt = root / 'local/nxrt/bin/nxrt'
+        nxrt.write_text('#!/bin/sh\necho "args: $*"\nexit ' + str(game_exit) + '\n')
+        nxrt.chmod(0o755)
+        exit_file = self.tmp / 'exit.txt'
+        env = dict(os.environ, NXRT_EXIT_FILE=str(exit_file))
+        done = subprocess.run(['sh', str(root / 'scripts/play-nxrt.sh'), *args], cwd=root, env=env, capture_output=True, text=True)
+        return root, done, exit_file
+
+    def test_play_script_hands_back_the_games_exit_code(self):
+        for code in (0, 3, 137):
+            root, done, exit_file = self._run_play_script(game_exit=code)
+            self.assertEqual(done.returncode, 0)             # the script itself keeps exiting 0 (as before)
+            self.assertEqual(exit_file.read_text().strip(), str(code))
+
+    def test_play_script_uses_the_given_save_folder(self):
+        other = self.tmp / 'my-island'
+        root, done, _ = self._run_play_script('--user', str(other))
+        self.assertTrue(other.is_dir())
+        self.assertFalse((root / 'local/user-nxrt').exists())
+        root, done, _ = self._run_play_script()
+        self.assertTrue((root / 'local/user-nxrt').is_dir())  # the default is unchanged
 
 
 if __name__ == '__main__':

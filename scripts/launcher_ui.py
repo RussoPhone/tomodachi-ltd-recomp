@@ -7,6 +7,7 @@ Everything is drawn on one Tk Canvas; the logic (settings, play, backups, report
 """
 import math
 import os
+import queue
 import random
 import subprocess
 import sys
@@ -17,7 +18,6 @@ import tkinter.font as tkfont
 import webbrowser
 import zipfile
 from pathlib import Path
-from tkinter import filedialog
 
 C = {
     "ink": "#00040D", "paper": "#FFFFFF", "edge": "#C8C8C8",
@@ -31,7 +31,7 @@ FONT_FAMILIES = ("M PLUS Rounded 1c", "Nunito", "Zen Maru Gothic", "Varela Round
 FRAME_MS = 16                                       # one layout-animation frame at 60/s
 DECIDE = ((0, 1.1), (3, 1.05), (6, 1.2), (12, 1.0))  # confirm: frame -> scale (last value = rest)
 HOVER = 1.08
-BASE_W, BASE_H = 940, 748
+BASE_W, BASE_H = 940, 840
 
 CONTROLS = (  # (tab, columns, rows, note); a row is (what, [key caps])
     ("Keyboard", 2, (
@@ -265,8 +265,11 @@ class Pill(Widget):
         if stripes:
             for poly in wave_bands(bx0, by0, bx1, by1):
                 cv.create_polygon(poly, fill=C["red_stripe"], outline="", tags=self.tag)
-        cv.create_text(cx, cy, text=self.label, fill=fg, font=self.ui.fit_font(self.label, h * 0.36, w - h * 0.6),
-                       tags=self.tag)
+        self._label(cx, cy, w, h, fg)
+
+    def _label(self, cx, cy, w, h, fg):
+        self.cv.create_text(cx, cy, text=self.label, fill=fg,
+                            font=self.ui.fit_font(self.label, h * 0.36, w - h * 0.6), tags=self.tag)
 
     def animate_to(self, scale, lift, frames=2):
         s0, l0 = self.scale, self.lift
@@ -330,6 +333,29 @@ class Dropdown(Pill):
         self.on_change(choice)
 
 
+class SaveRow(Pill):
+    """One recent save: its name on the left, when it was made on the right. Click it to restore it."""
+
+    def __init__(self, ui, key, command):
+        super().__init__(ui, key, "", "soft", command)
+        self.title, self.when = "", ""
+
+    def set_text(self, title, when, enabled=True):
+        self.title, self.when = title, when
+        self.set_enabled(enabled)
+        self.draw()
+
+    def _label(self, cx, cy, w, h, fg):
+        left, right = cx - w / 2 + h * 0.5, cx + w / 2 - h * 0.5
+        when = self.when
+        wf = self.ui.font(h * 0.34, "normal")
+        self.cv.create_text(right, cy, text=when, anchor="e", fill=C["note"] if self.enabled else C["off_fg"], font=wf,
+                            tags=self.tag)
+        room = max(20, right - left - wf.measure(when) - h * 0.3)
+        self.cv.create_text(left, cy, text=self.title, anchor="w", fill=fg,
+                            font=self.ui.fit_font(self.title, h * 0.4, room), tags=self.tag)
+
+
 class Switch(Widget):
     def __init__(self, ui, key, value, on_change):
         super().__init__(ui, key)
@@ -373,7 +399,7 @@ class Window:
         self.root = root = tk.Tk()
         self.version = L.build_version()  # read from the installed binary, never from the changelog
         root.title("Tomodachi-LTD-Recomp" + (f" · {self.version}" if self.version else ""))
-        root.geometry(f"{BASE_W}x{BASE_H}")
+        root.geometry(f"{BASE_W}x{min(BASE_H, max(600, root.winfo_screenheight() - 90))}")
         root.minsize(760, 600)
         self.settings = L.load_settings()
         self.playing = False
@@ -381,6 +407,7 @@ class Window:
         self.note = ""
         self._fonts = {}
         self.u = 1.0
+        self.hh = 140.0  # header height, set properly by every relayout
         fams = set(tkfont.families(root))
         self.family = next((f for f in FONT_FAMILIES if f in fams), "TkDefaultFont")
         self.cv = tk.Canvas(root, highlightthickness=0, bd=0, bg=C["cream"])
@@ -398,9 +425,16 @@ class Window:
         self.size = Dropdown(self, "size", sizes, s["size"], lambda v: self._set(size=v))
         self.language = Dropdown(self, "language", [n for n, _ in L.LANGUAGES], lang_name,
                                  lambda v: self._set(language=next(c for n, c in L.LANGUAGES if n == v)))
+        # saves: the launcher opens on the one the game wrote to last; "+ New save" starts a separate fresh game
+        self.profiles = L.load_profiles()
+        self.profile = L.most_recent_profile()
+        self.rows_data, self._last_activity, self.watch = [], 0.0, None
+        self._game_events = queue.Queue()  # the game runs in a thread; it reports back through this, never into Tk
+        self.profile_dd = Dropdown(self, "profile", [], self.profiles[self.profile]["name"], self._on_profile_pick)
+        self.save_rows = [SaveRow(self, f"sv{i}", lambda i=i: self.on_restore_row(i)) for i in range(3)]
         self.save_btns = [Pill(self, "bk", "Back up now", "soft", self.on_backup),
-                          Pill(self, "rs", "Restore…", "soft", self.on_restore),
-                          Pill(self, "of", "Open folder", "soft", lambda: L.open_folder(L.SAVE_DIR))]
+                          Pill(self, "as", "All saves…", "soft", self.on_all_saves)]
+        self.folder_btn = Pill(self, "fd", "Folder", "soft", lambda: L.open_folder(L.profile_dir(self.profile)))
         self.help_btns = [Pill(self, "hc", "Controls", "soft", self.on_controls),
                           Pill(self, "hk", "Check my computer", "soft", self.on_check),
                           Pill(self, "hr", "Bug report", "soft", self.on_report),
@@ -427,6 +461,7 @@ class Window:
             self.set_note(f'The game has no "{L.LANGUAGE_RESET}" text, so the language is back to English (US).')
         else:
             self.set_note("Your save is backed up automatically before each play session.")
+        self._refresh_saves()
         self._start_update_check()
 
     # --- new-build notice ------------------------------------------------------------
@@ -496,8 +531,8 @@ class Window:
     def _widgets(self):
         if self.dialog:
             return list(self.dialog["buttons"]) + self.dialog["tabs"]
-        return [self.fullscreen, self.safe, self.updates, self.size, self.language, self.play_btn, self.update_btn] \
-            + self.save_btns + self.help_btns
+        return [self.fullscreen, self.safe, self.updates, self.size, self.language, self.play_btn, self.update_btn,
+                self.profile_dd, self.folder_btn] + self.save_rows + self.save_btns + self.help_btns
 
     def _pick(self, x, y):
         if self.popup:
@@ -727,7 +762,7 @@ class Window:
         self.close_popup()
         raw = max(0.78, min(1.6, min(W / BASE_W, H / BASE_H)))
         u = self.u = round(raw * 25) / 25  # steps of 0.04 keep the font cache small while dragging
-        design_h = 744 * u  # height the content needs at this scale
+        design_h = 836 * u  # height the content needs at this scale
         slack = max(0.0, H - design_h)
         vg = min(slack / 6, 34 * u)  # extra space between the rows; the rest goes below the header
         top_extra = min((slack - 3 * vg) / 2, 60 * u) if slack > 3 * vg else 0.0
@@ -785,13 +820,20 @@ class Window:
         # row 1: play | settings
         top = hh + 32 * u + top_extra
         mid = W * 0.47
-        h1 = 284 * u
+        h1 = 312 * u
         self._card(pad, top, mid - gap / 2, top + h1, "Play")
         self._card(mid + gap / 2, top, W - pad, top + h1, "Settings")
         ix0, ix1 = pad + 26 * u, mid - gap / 2 - 26 * u
         self.play_btn.place(ix0, top + 66 * u, ix1, top + 170 * u, C["paper"])
-        self._hint(ix0, top + 226 * u, "↵", "Play", u)
-        cv.create_text(ix0, top + 256 * u, text="First face-paint opening takes ~40 s (it builds a cache).",
+        sy = top + 208 * u
+        cv.create_text(ix0, sy, text="Save", anchor="w", fill=C["ink"], font=self.font(17 * u), tags="label")
+        ddw = min(ix1 - ix0 - 64 * u, 260 * u)
+        self.profile_dd.place(ix1 - ddw, sy - 19 * u, ix1, sy + 19 * u, C["paper"])
+        last = self._last_activity
+        cv.create_text(ix0, top + 238 * u, anchor="w", fill=C["note"], font=self.font(12.5 * u, "normal"), tags="label",
+                       text=(f"Last saved {self.L.when_text(last)}" if last else "Nothing saved here yet: the game starts fresh."))
+        self._hint(ix0, top + 268 * u, "↵", "Play", u)
+        cv.create_text(ix0, top + 296 * u, text="First face-paint opening takes ~40 s (it builds a cache).",
                        anchor="w", fill=C["note"], font=self.fit_font("x" * 52, 12.5 * u, ix1 - ix0, "normal"),
                        tags="label")
 
@@ -811,33 +853,49 @@ class Window:
                             C["paper"])
         self.updates.place(sx1 - sw_w, rows[4] - sw_h / 2, sx1, rows[4] + sw_h / 2, C["paper"])
 
-        # row 2: save data | help
+        # row 2: saves | help
         top2 = top + h1 + gap + 8 * u + vg
-        h2 = 168 * u
+        h2 = 232 * u
         split = W * 0.36
-        self._card(pad, top2, split - gap / 2, top2 + h2, "Save data")
+        self._card(pad, top2, split - gap / 2, top2 + h2, "Saves")
         self._card(split + gap / 2, top2, W - pad, top2 + h2, "Help")
         bx0, bx1 = pad + 22 * u, split - gap / 2 - 22 * u
-        bh, by = 46 * u, top2 + 58 * u
+        self.folder_btn.place(bx1 - 84 * u, top2 + 11 * u, bx1, top2 + 43 * u, C["paper"])
+        row_h, ry = 34 * u, top2 + 54 * u
+        for i, row in enumerate(self.save_rows):
+            if i < len(self.rows_data):
+                e = self.rows_data[i]
+                row.set_text(self.L.save_title(e), self.L.when_text(e["created"]))
+            elif i == 0:
+                row.set_text("No saves yet", "", False)
+            else:
+                row.box = (0, 0, 0, 0)
+                cv.delete(row.tag)
+                continue
+            row.place(bx0, ry + i * (row_h + 6 * u), bx1, ry + i * (row_h + 6 * u) + row_h, C["paper"])
+        by = top2 + 54 * u + 3 * (row_h + 6 * u) + 4 * u
+        bh = 40 * u
         bw = (bx1 - bx0 - 10 * u) / 2
         self.save_btns[0].place(bx0, by, bx0 + bw, by + bh)
         self.save_btns[1].place(bx0 + bw + 10 * u, by, bx1, by + bh)
-        self.save_btns[2].place(bx0, by + bh + 16 * u, bx1, by + 2 * bh + 16 * u)
         hx0, hx1 = split + gap / 2 + 22 * u, W - pad - 22 * u
         cols = 3 if hx1 - hx0 > 480 * u else 2
-        hb = bh if cols == 3 else bh * 0.78
+        hb = 46 * u if cols == 3 else 36 * u
         hw = (hx1 - hx0 - (cols - 1) * 10 * u) / cols
+        rows_n = -(-len(self.help_btns) // cols)
+        hgap = 16 * u if cols == 3 else 9 * u
+        hy0 = top2 + 24 * u + (h2 - 24 * u - (rows_n * hb + (rows_n - 1) * hgap)) / 2
         for i, b in enumerate(self.help_btns):
-            cx, ry = i % cols, i // cols
+            cx, r_ = i % cols, i // cols
             x = hx0 + cx * (hw + 10 * u)
-            y = by - (6 * u if cols == 2 else 0) + ry * (hb + (16 if cols == 3 else 9) * u)
+            y = hy0 + r_ * (hb + hgap)
             b.place(x, y, x + hw, y + hb)
 
         # note balloon
         ny = top2 + h2 + gap + 10 * u + vg
         self.note_box = (pad, ny, W - pad, min(H - 16 * u, ny + 54 * u))
         self._draw_note()
-        for t in ("play", "upd", "fullscreen", "safe", "updates", "size", "language", "bk", "rs", "of", "hc", "hk", "hr", "hl", "ht", "hp"):
+        for t in ("play", "upd", "profile", "fd", "sv0", "sv1", "sv2", "fullscreen", "safe", "updates", "size", "language", "bk", "as", "hc", "hk", "hr", "hl", "ht", "hp"):
             cv.tag_raise(t)
         self.refresh()
         if self.dialog:
@@ -920,26 +978,32 @@ class Window:
     def modal_blocks(self, widget):
         return self.dialog is not None and widget not in self.dialog["buttons"] + self.dialog["tabs"]
 
-    def show_dialog(self, message, buttons, body=None, tabs=None):
-        """buttons: [(label, style, callback or None)]; the last one answers Return."""
+    def show_dialog(self, message, buttons, body=None, tabs=None, collect=None, compact=False):
+        """buttons: [(label, style, callback or None)]; the last one answers Return.
+        body: text, or a function that builds a widget on the canvas (a list, an entry). collect(): reads that widget
+        before the dialog closes; when given, every callback is called with its result."""
         self.close_popup()
         if self.dialog:
             self.close_dialog()
         pills = []
         for i, (label, style, cb) in enumerate(buttons):
             def act(cb=cb):
+                payload = collect() if collect and self.dialog else None
                 self.close_dialog()
                 if cb:
-                    cb()
+                    cb(payload) if collect else cb()
             pills.append(Pill(self, f"dlg_b{i}", label, style, act))
         text = None
-        if body:
+        if callable(body):
+            text = body(self.cv)
+        elif body:
             text = tk.Text(self.cv, wrap="none", bd=0, highlightthickness=0, bg=C["cream_p"], fg=C["ink"],
                            padx=12, pady=10, cursor="arrow", font=self.font(13 * self.u, "normal"))
             text.insert("1.0", body)
             text.config(state="disabled")
         self._set_hover(None)
-        self.dialog = {"message": message, "buttons": pills, "body": text, "anim": None, "tabs": [], "tab": 0}
+        self.dialog = {"message": message, "buttons": pills, "body": text, "anim": None, "tabs": [], "tab": 0,
+                       "compact": compact}
         if tabs:  # the controls sheet: one tab per CONTROLS entry
             def pick(i):
                 self.dialog["tab"] = i
@@ -964,7 +1028,8 @@ class Window:
         W, H = cv.winfo_width(), cv.winfo_height()
         cv.create_rectangle(0, 0, W, H, fill=C["dim"], stipple="gray50", outline="", tags="dlg")
         sheet = bool(d["tabs"])
-        big = d["body"] is not None or sheet
+        compact = bool(d.get("compact"))
+        big = (d["body"] is not None and not compact) or sheet
         cw = min((820 if big else 620) * u, W - 40) * s
         ch = min((640 if sheet else 520 if big else 340) * u, H - 40) * s
         cx, cy = W / 2, H / 2
@@ -975,7 +1040,7 @@ class Window:
                           fill=mix(C["dim"], "#000000", 0.35), outline="", tags="dlg")
         cv.create_polygon(blob(x0, y0, x1, y1, r, wobble=wob, seed=3), smooth=True, fill=C["cream"],
                           outline="", tags="dlg")
-        ty = y0 + (ch * 0.075 if sheet else ch * (0.12 if big else 0.36))
+        ty = y0 + (ch * 0.075 if sheet else ch * (0.12 if big else 0.27 if compact else 0.36))
         cv.create_text(cx, ty, text=d["message"], width=cw * 0.78, justify="center", fill=C["ink"],
                        font=self.font((22 if big else 24) * u * s), tags="dlg")
         bh = 60 * u * s
@@ -989,6 +1054,9 @@ class Window:
             cv.tag_raise(b.tag)
         if sheet:
             self._draw_sheet(x0, y0, x1, y1, cw, by, s)
+        elif compact and s >= 0.99:
+            cv.create_window(cx - cw * 0.34, y0 + ch * 0.43, anchor="nw", window=d["body"], width=cw * 0.68,
+                             height=46 * u, tags="dlg")
         elif big and s >= 0.99:
             tx0, ty0 = x0 + cw * 0.07, ty + 30 * u
             cv.create_window(tx0, ty0, anchor="nw", window=d["body"], width=cw * 0.86,
@@ -1073,58 +1141,231 @@ class Window:
         self.show_dialog(title, [("OK", "primary", None)], body=text)
 
     # --- actions (logic lives in launcher.py) ---------------------------------------
+    # --- saves ----------------------------------------------------------------------------
+    NEW_SAVE, RENAME_SAVE = "+ New save…", "Rename this save…"
+
+    def _profile_name(self, slug=None):
+        return self.profiles.get(slug or self.profile, {}).get("name", "Main")
+
+    def _refresh_saves(self):
+        """Re-read the saves from disk (after playing, restoring, creating...) and redraw."""
+        L = self.L
+        self.profiles = L.load_profiles()
+        if self.profile not in self.profiles:
+            self.profile = L.MAIN
+        self.rows_data = L.list_saves(self.profile)[:len(self.save_rows)]
+        self._last_activity = L.last_activity(self.profile)
+        dd = self.profile_dd
+        dd.choices = [p["name"] for p in self.profiles.values()] + [self.NEW_SAVE, self.RENAME_SAVE]
+        dd.value = self._profile_name()
+        dd.set_label(dd._text(dd.value))
+        self._schedule()
+
+    def _on_profile_pick(self, choice):
+        if choice == self.NEW_SAVE:
+            self._refresh_saves()  # the list showed an action, not a save: put the real name back
+            self.ask_text("Name for the new save", f"Game {len(self.profiles) + 1}", self._create_profile)
+        elif choice == self.RENAME_SAVE:
+            self._refresh_saves()
+            self.ask_text("Rename this save", self._profile_name(), self._rename_profile)
+        else:
+            self.profile = next((k for k, p in self.profiles.items() if p["name"] == choice), self.profile)
+            self._refresh_saves()
+            self.set_note(f'Playing from "{choice}".' + ("" if self._last_activity else " It is empty: the game starts fresh."))
+
+    def _create_profile(self, text):
+        try:
+            self.profile = self.L.create_profile(text)
+        except ValueError as error:
+            self.show_dialog(str(error), [("OK", "primary", None)])
+            return
+        self._refresh_saves()
+        self.set_note(f'New save "{self._profile_name()}" is ready: Play starts a fresh game in it. Your other saves are untouched.')
+
+    def _rename_profile(self, text):
+        try:
+            self.L.rename_profile(self.profile, text)
+        except ValueError as error:
+            self.show_dialog(str(error), [("OK", "primary", None)])
+            return
+        self._refresh_saves()
+
+    def ask_text(self, title, initial, on_ok):
+        """A small dialog with one line of text; on_ok(text) when confirmed with OK or Return."""
+        box = {}
+
+        def make(parent):
+            e = tk.Entry(parent, bd=0, highlightthickness=0, bg=C["cream_p"], fg=C["ink"], insertbackground=C["ink"],
+                         justify="center", font=self.font(18 * self.u, "bold"))
+            e.insert(0, initial)
+            e.select_range(0, "end")
+            box["entry"] = e
+            self.root.after(150, e.focus_set)
+            return e
+        self.show_dialog(title, [("Cancel", "neutral", None), ("OK", "primary", on_ok)], body=make,
+                         collect=lambda: box["entry"].get(), compact=True)
+
+    def on_backup(self):
+        L = self.L
+        if not L.save_files(self.profile):
+            self.set_note("There is no save to back up yet.")
+            return
+
+        def go(label):
+            out = L.backup_save("save", self.profile, " ".join(label.split())[:50] or None)
+            self._refresh_saves()
+            self.set_note(f'Backed up "{self._profile_name()}"' + (f' as "{" ".join(label.split())[:50]}".' if label.strip() else "."))
+        self.ask_text("Name this backup (or leave it empty)", "", go)
+
+    def on_restore_row(self, i):
+        if i < len(self.rows_data):
+            self._confirm_restore(self.rows_data[i])
+
+    def _confirm_restore(self, entry):
+        L = self.L
+        name = self._profile_name(entry["profile"])
+
+        def go():
+            try:
+                L.restore_save(entry["path"], entry["profile"])
+            except (OSError, ValueError, zipfile.BadZipFile) as error:
+                self.show_dialog(f"Restore failed.\n{error}", [("OK", "primary", None)])
+                return
+            self.profile = entry["profile"]
+            self._refresh_saves()
+            self.set_note(f'"{name}" is back to {L.when_text(entry["created"])}. What it was before is kept as "Before restore".')
+        self.show_dialog(f'Go back to "{L.save_title(entry)}" ({L.when_text(entry["created"])})?\n'
+                         f'"{name}" is backed up first, so you can undo this.',
+                         [("Cancel", "neutral", None), ("Restore", "primary", go)])
+
+    def on_all_saves(self):
+        L = self.L
+        entries = L.list_saves(self.profile)
+        if not entries:
+            self.show_dialog(f'"{self._profile_name()}" has no backups yet.\nThey are made before you play, while you '
+                             'play (each time the game saves) and when you press Back up now.', [("OK", "primary", None)])
+            return
+        box = {}
+
+        def make(parent):
+            lb = tk.Listbox(parent, activestyle="none", bd=0, highlightthickness=0, relief="flat", exportselection=False,
+                            bg=C["cream_p"], fg=C["ink"], selectbackground=C["focus"], selectforeground=C["ink"],
+                            font=self.font(15 * self.u, "bold"))
+            for e in entries:
+                lb.insert("end", f'  {L.when_text(e["created"])}   ·   {L.save_title(e)}   ·   {L.size_text(e["size"])}')
+            lb.selection_set(0)
+            lb.activate(0)
+            lb.bind("<Double-Button-1>", lambda _e: self._dialog_press(-1))
+            box["list"] = lb
+            return lb
+
+        def chosen():
+            sel = box["list"].curselection()
+            return entries[sel[0]] if sel else None
+
+        def restore(entry):
+            if entry:
+                self._confirm_restore(entry)
+
+        def rename(entry):
+            if entry:
+                self.ask_text("Name for this save", entry["label"] or "",
+                              lambda text: (L.rename_save(entry["path"], text), self._refresh_saves(), self.on_all_saves()))
+
+        def delete(entry):
+            if not entry:
+                return
+            self.show_dialog(f'Delete "{L.save_title(entry)}" ({L.when_text(entry["created"])})?\nThis cannot be undone.',
+                             [("Keep it", "neutral", None),
+                              ("Delete", "primary", lambda: (L.delete_save(entry["path"]), self._refresh_saves(), self.on_all_saves()))])
+        self.show_dialog(f'Saves of "{self._profile_name()}"',
+                         [("Close", "neutral", None), ("Rename", "neutral", rename), ("Delete", "neutral", delete),
+                          ("Restore", "primary", restore)], body=make, collect=chosen)
+
+    def _dialog_press(self, index):
+        if self.dialog:
+            self.dialog["buttons"][index].command()
+
     def on_play(self):
         L = self.L
         if self.playing or not L.installed():
             return
         current = dict(self.settings)
         L.save_settings(current)
-        L.auto_backup()
+        profile = self.profile
+        L.auto_backup(profile)
         self.playing = True
+        self.watch = L.SaveWatch(profile)
         self.refresh()
-        self.set_note("Playing… close the game window to come back.")
-        self.root.iconify()
+        self.set_note(f'Playing "{self._profile_name(profile)}"… close the game window to come back.')
+        self._minimize(True)
+        self.root.after(2000, self._watch_tick)
+        exit_file = Path(tempfile.gettempdir()) / f"tomodachi-launcher-exit-{os.getpid()}.txt"
 
         def run():
+            error, code = None, None
             try:
                 env = dict(os.environ)
                 if env.get("FONTCONFIG_FILE", "").endswith(f"tomodachi-launcher-fonts-{os.getuid()}.conf"):
                     env.pop("FONTCONFIG_FILE")  # the bundled-font config is for the launcher window only
-                code = subprocess.run(L.play_command(current), cwd=L.ROOT, env=env).returncode
-                note = ("Have a nice day on the island!" if code == 0
-                        else f"The game ended with code {code}. See local/logs/play-nxrt-*.log.")
-            except OSError as error:
-                note = f"Could not start the game: {error}"
-            self.root.after(0, lambda: self._played(note))
+                exit_file.unlink(missing_ok=True)
+                env["NXRT_EXIT_FILE"] = str(exit_file)  # play-nxrt.sh writes the game's own exit code here
+                code = subprocess.run(L.play_command(current, L.profile_dir(profile)), cwd=L.ROOT, env=env).returncode
+                try:
+                    code = int(exit_file.read_text().strip())
+                except (OSError, ValueError):
+                    pass  # an older play-nxrt.sh: keep the script's code
+            except OSError as exc:
+                error = f"Could not start the game: {exc}"
+            self._game_events.put((code, error))
         threading.Thread(target=run, daemon=True).start()
+        self.root.after(250, self._poll_game)
 
-    def _played(self, note):
-        self.playing = False
-        self.root.deiconify()
-        self.refresh()
-        self.set_note(note)
+    def _minimize(self, on):
+        """Get out of the way while the game runs. Some window managers do not allow it: then the window just stays."""
+        try:
+            self.root.iconify() if on else self.root.deiconify()
+        except tk.TclError:
+            pass
 
-    def on_backup(self):
-        out = self.L.backup_save()
-        self.set_note(f"Backup saved: {out.relative_to(self.L.ROOT)}" if out else "There is no save to back up yet.")
-
-    def on_restore(self):
-        L = self.L
-        archive = filedialog.askopenfilename(title="Choose a save backup (.zip)",
-                                             initialdir=L.BACKUPS if L.BACKUPS.exists() else L.ROOT,
-                                             filetypes=[("Backups", "*.zip")])
-        if not archive:
+    def _poll_game(self):
+        """Pick up the end of the game from the thread that runs it."""
+        try:
+            code, error = self._game_events.get_nowait()
+        except queue.Empty:
+            if self.playing:
+                self.root.after(250, self._poll_game)
             return
+        self._played(code, error)
 
-        def go():
-            try:
-                safety = L.restore_save(archive)
-            except (OSError, ValueError, zipfile.BadZipFile) as error:
-                self.show_dialog(f"Restore failed.\n{error}", [("OK", "primary", None)])
-                return
-            self.set_note("Save restored." + (f" Previous save kept in {safety.relative_to(L.ROOT)}." if safety else ""))
-        self.show_dialog("This replaces your current save with the backup.\nThe current save is backed up first.",
-                         [("Cancel", "neutral", None), ("Restore", "primary", go)])
+    def _watch_tick(self):
+        """While the game runs: take a save point whenever it has written a save and gone quiet."""
+        if not self.playing or not self.watch:
+            return
+        if self.watch.poll():
+            self._refresh_saves()
+        self.root.after(2000, self._watch_tick)
+
+    def _played(self, code, error=None):
+        L = self.L
+        self.playing = False
+        self._minimize(False)
+        summary = self.watch.finish(code) if self.watch and not error else {}
+        self.watch = None
+        self._refresh_saves()
+        self.refresh()
+        if error:
+            self.set_note(error)
+            return
+        note = summary.get("text") or ""
+        if code not in (0, None) and not summary.get("interrupted"):
+            note = (note + " " if note else "") + f"The game ended with code {code} (see local/logs/play-nxrt-*.log)."
+        self.set_note(note or "Have a nice day on the island!")
+        if summary.get("interrupted"):
+            previous = next((e for e in L.list_saves(self.profile) if e["kind"] in ("point", "session", "auto")), None)
+            if previous:
+                self.show_dialog(summary["text"] + f'\n\nGo back to "{L.save_title(previous)}" ({L.when_text(previous["created"])})?',
+                                 [("Keep it", "neutral", None), ("Go back", "primary", lambda: self._confirm_restore(previous))])
 
     def on_controls(self):
         self.show_dialog("Controls", [("OK", "primary", None)], tabs=[t[0] for t in CONTROLS])
