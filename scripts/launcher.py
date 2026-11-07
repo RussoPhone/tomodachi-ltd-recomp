@@ -599,7 +599,14 @@ def main():
         return
     sys.path.insert(0, str(Path(__file__).resolve().parent))
     import launcher_ui
-    launcher_ui.run(sys.modules[__name__], smoke='--smoke' in sys.argv)
+    try:
+        launcher_ui.run(sys.modules[__name__], smoke='--smoke' in sys.argv)
+    except Exception:  # noqa: BLE001 - whatever went wrong, the game must stay reachable
+        import traceback
+        traceback.print_exc()
+        print('\nThe launcher could not start (the error is above). You can still play: ./play.sh --nogui\n'
+              'If you report this, attach the text above.', file=sys.stderr)
+        sys.exit(1)
 
 
 if __name__ == '__main__':

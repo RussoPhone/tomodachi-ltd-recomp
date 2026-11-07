@@ -34,4 +34,6 @@ Whatever you try, a [report](TESTING.md#how-to-report-a-problem) (`./install.sh 
 
 ## Saves
 
-They live in `local/user-nxrt`. The launcher's **Back up now** makes a zip in `local/backups`. Back up before updating.
+The first one lives in `local/user-nxrt` (extra saves made in the launcher: `local/profiles/`). The launcher keeps named copies in `local/backups`, lists the newest on its main window and restores them from **All saves…** (see [LAUNCHER.md](LAUNCHER.md#saves)). **Back up now** makes one on demand: do it before updating.
+
+**The game started a new save, not mine.** Check the *Save* list on the launcher's main window: the launcher opens on the save you played last, and a new save (*+ New save…*) starts a fresh game. The game also only saves when you save inside it: closing with Alt+F4 or killing the task loses what you did since your last in-game save, and nothing can recover that.

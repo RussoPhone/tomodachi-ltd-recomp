@@ -53,12 +53,17 @@ CONTROLS = (  # (tab, columns, rows, note); a row is (what, [key caps])
 )
 
 
+def _uid():
+    """The user id for per-user temp file names (os.getuid does not exist on Windows)."""
+    return os.getuid() if hasattr(os, "getuid") else 0
+
+
 def register_bundled_fonts(root):
     """Let fontconfig see assets/fonts (an optional OFL font) for this process only; call before Tk starts."""
     fonts = root / "assets" / "fonts"
     if not fonts.is_dir() or sys.platform.startswith("win") or "FONTCONFIG_FILE" in os.environ:
         return
-    conf = Path(tempfile.gettempdir()) / f"tomodachi-launcher-fonts-{os.getuid()}.conf"
+    conf = Path(tempfile.gettempdir()) / f"tomodachi-launcher-fonts-{_uid()}.conf"
     try:
         conf.write_text('<?xml version="1.0"?><!DOCTYPE fontconfig SYSTEM "fonts.dtd"><fontconfig>'
                         '<include ignore_missing="yes">/etc/fonts/fonts.conf</include>'
@@ -1307,7 +1312,7 @@ class Window:
             error, code = None, None
             try:
                 env = dict(os.environ)
-                if env.get("FONTCONFIG_FILE", "").endswith(f"tomodachi-launcher-fonts-{os.getuid()}.conf"):
+                if env.get("FONTCONFIG_FILE", "").endswith(f"tomodachi-launcher-fonts-{_uid()}.conf"):
                     env.pop("FONTCONFIG_FILE")  # the bundled-font config is for the launcher window only
                 exit_file.unlink(missing_ok=True)
                 env["NXRT_EXIT_FILE"] = str(exit_file)  # play-nxrt.sh writes the game's own exit code here

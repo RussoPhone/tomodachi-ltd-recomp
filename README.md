@@ -121,17 +121,32 @@ Search for **Tomodachi LTD Recomp** in your applications menu (it opens the laun
 
 | To… | Use |
 |---|---|
-| Open the launcher (default) | `./play.sh`: PLAY, fullscreen, window size, language, save backup/restore, bug report |
+| Open the launcher (default) | `./play.sh`: PLAY, several named saves, settings, build version, bug report. See [docs/LAUNCHER.md](docs/LAUNCHER.md) |
 | Start the game directly | `./play.sh --nogui` |
 | Fullscreen / window size | `./play.sh --nogui --fullscreen`, `./play.sh --nogui --size 1920x1080` (F11 toggles fullscreen in the game) |
-| Game language | `./play.sh --nogui --language en-GB` (codes: `ja`, `en-US`, `en-GB`, `fr`, `fr-CA`, `de`, `it`, `es`, `es-419`, `pt-BR`, `nl`, `ru`, `ko`, `zh-Hans`, `zh-Hant`; default `en-US`) |
+| Game language | `./play.sh --nogui --language en-GB` (codes: `ja`, `en-US`, `en-GB`, `fr`, `fr-CA`, `de`, `it`, `es`, `es-419`, `nl`, `ko`, `zh-Hans`, `zh-Hant`; default `en-US`. The game has no Portuguese or Russian text) |
 | Check this computer | `./play.sh --nogui --diagnose` (GPU, Vulkan, memory, missing tools) |
 | Picture looks wrong | `./play.sh --nogui --safe` (conservative graphics path; tell us if it fixes it) |
 | Controls (keyboard, mouse, controller) | [docs/CONTROLS.md](docs/CONTROLS.md); the mouse is the touch screen, the wheel zooms the island |
 | Close the game | the **Home** key (or the controller's Guide button) closes it, like HOME on the console |
 | Look for problems | each run writes `local/logs/play-nxrt-*.log`; attach it to bug reports |
 
-Your saves live in `local/user-nxrt` (inside the project folder). Back that folder up now and then (the launcher has a **Back up now** button).
+Your first save lives in `local/user-nxrt` (inside the project folder); extra saves made in the launcher are in `local/profiles/`. The launcher keeps named copies of them in `local/backups` (before each play session, while you play, and when you press **Back up now**) and lists the newest ones on its main window. Note that the game only saves when you save **inside the game**: closing it with Alt+F4 or killing the task loses what you did since. See [docs/LAUNCHER.md](docs/LAUNCHER.md#saves).
+
+### ✨ What's new in the launcher
+
+| | New | What it does |
+|---|---|---|
+| 🎨 | **New look** | The soft, bouncy style of the project's banner, with the logo, pill buttons and cloud dialogs. |
+| 🔖 | **Build version** | Shows the version of the build that is **installed**, read from the program itself (never guessed). |
+| 🔔 | **New-build notice** | A yellow chip when a newer release is on GitHub, with what changed and how to update. It never updates by itself, asks GitHub at most every 6 hours, and can be switched off. |
+| 🗂️ | **Named saves** | Keep several games (*+ New save…*) without mixing them up. Your existing save stays as **Main**, untouched. The launcher opens on the one you played last. |
+| 🕒 | **Recent saves** | The three newest copies on the main window with a readable time ("Save point · 12 min ago"). **All saves…** restores (with an undo copy), renames and deletes. |
+| 🛟 | **Save points while you play** | A copy each time the game writes a save. When you close the game it says how long before closing your last save was, and offers to go back if it was killed while writing. |
+| 🌐 | **Real languages only** | The 13 languages the game has text for. Portuguese and Russian were removed from the list: the game shows English for them. |
+| ⌨️ | **Controls sheet** | Keyboard, Mouse and Controller tabs. |
+| 🧭 | **Menu entry** | Search **Tomodachi LTD Recomp** in your applications menu. `./play.sh --shortcut` adds it, `--remove-shortcut` removes it. |
+| 🛠️ | **Fixes** | Lists close with a click outside or Esc. No stuck buttons after closing a dialog. The window redraws while you resize it. If it cannot open, it tells you how to play with `./play.sh --nogui`. |
 
 Once installed, the game **no longer needs the `.nsp` or the keys**. Everything lives inside the project folder.
 
@@ -159,7 +174,7 @@ Fixed it? Just run `./install.sh` again.
 <details>
 <summary><b>Where are my saves?</b></summary>
 
-In `local/user-nxrt`. Back that folder up now and then (the launcher's **Back up now** button makes a zip in `local/backups`).
+In `local/user-nxrt` (extra saves made in the launcher: `local/profiles/`). The launcher keeps named copies in `local/backups`; **Back up now** makes one on demand. See [docs/LAUNCHER.md](docs/LAUNCHER.md#saves).
 </details>
 
 <details>

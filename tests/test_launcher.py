@@ -6,6 +6,7 @@ import io
 import json
 import time
 from pathlib import Path
+import sys
 import tempfile
 import unittest
 import zipfile
@@ -431,6 +432,15 @@ class LauncherTests(unittest.TestCase):
         self.assertFalse((root / 'local/user-nxrt').exists())
         root, done, _ = self._run_play_script()
         self.assertTrue((root / 'local/user-nxrt').is_dir())  # the default is unchanged
+
+    def test_a_launcher_that_cannot_start_says_how_to_play_anyway(self):
+        """No display (or no Tk): a clear message and a non-zero exit, never a silent crash."""
+        env = {k: v for k, v in os.environ.items() if k != 'WAYLAND_DISPLAY'}
+        env['DISPLAY'] = ':99'  # nothing listens there
+        done = subprocess.run([sys.executable, str(Path(__file__).resolve().parents[1] / 'scripts/launcher.py')],
+                              env=env, capture_output=True, text=True, timeout=60)
+        self.assertEqual(done.returncode, 1)
+        self.assertIn('./play.sh --nogui', done.stderr)
 
 
 if __name__ == '__main__':

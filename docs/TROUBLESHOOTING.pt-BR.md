@@ -35,4 +35,6 @@ report** no launcher) é o que nos permite ajudar.
 
 ## Saves
 
-Ficam em `local/user-nxrt`. O botão **Back up now** do launcher cria um zip em `local/backups`. Faça backup antes de atualizar.
+O primeiro fica em `local/user-nxrt` (saves extras criados no launcher: `local/profiles/`). O launcher guarda cópias com nome em `local/backups`, lista as mais novas na janela principal e restaura em **All saves…** (veja [LAUNCHER.pt-BR.md](LAUNCHER.pt-BR.md#saves)). O **Back up now** faz uma na hora: faça antes de atualizar.
+
+**O jogo começou com um save novo, e não o meu.** Veja a lista *Save* na janela principal do launcher: ele abre no save que você jogou por último, e um save novo (*+ New save…*) começa um jogo do zero. O jogo também só salva quando você salva dentro dele: fechar com Alt+F4 ou matar a tarefa perde o que você fez depois do último save no jogo, e nada recupera isso.

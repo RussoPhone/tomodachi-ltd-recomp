@@ -1,6 +1,24 @@
 # Changelog
 
 ## Unreleased
+- **Launcher, new look.** The window is redrawn in the project's style (logo, pill buttons, cloud dialogs, the game's quick bounce on press), still Tk only.
+  The Controls button is now a sheet with Keyboard, Mouse and Controller tabs. Lists (window size, language) close with a click outside or Esc and
+  work with the arrow keys and the wheel. The window redraws while it is resized.
+- **Launcher shows the installed build's version**, read from `local/nxrt/bin/nxrt` itself (not from the source folder, which can be newer), and
+  tells when a newer release exists on GitHub, with how to update. It never updates anything by itself, asks GitHub at most every 6 hours in the
+  background (read-only, cached, silent when offline), and *Check for new builds* switches it off.
+- **Launcher saves.** Several named saves: **Main** is the save you already have (`local/user-nxrt`, never moved), *+ New save…* starts a fresh game in
+  `local/profiles/<name>`. The launcher opens on the save you played last. Backups have readable names and times ("Save point · 12 min ago"), the three
+  newest are on the main window, and *All saves…* restores (a "Before restore" copy is made first), renames and deletes. While you play it takes a save
+  point each time the game writes a save and goes quiet (at most one every 3 minutes), and when the game closes it says how long before closing your last save
+  was, offering to go back if the game was killed right after writing. It cannot recover progress that was never saved inside the game.
+- **Launcher languages:** only the 13 the game has text for. Portuguese and Russian were removed (the game showed English for them); a language saved by an
+  older launcher that is not in the list goes back to English (US). The README no longer lists `pt-BR` and `ru` for `--language`.
+- **Menu entry:** search "Tomodachi LTD Recomp". `./play.sh --shortcut` / `--remove-shortcut`; the installer uses the same code.
+- `play-nxrt.sh`: new `--user DIR` (save folder) and the game's exit code is written to `$NXRT_EXIT_FILE` (the pipe used to swallow it, so a killed game
+  looked like a normal exit).
+- Launcher fixes: a dialog's confirm button no longer stays on screen after closing, a button under the pointer no longer makes the window spin at 100% CPU,
+  and if the window cannot open it says so and points to `./play.sh --nogui`.
 - Installer: the game export (step 7) is now closed only after its files stopped changing, and it checks that every source listed by a module
   exists. Before, suyu was stopped as soon as it said "done" while the biggest module was still being written, which left `main` without
   `recomp_runtime.h/.c` and some `src/recompiled_main_*.c` on a fast machine (issue #17). Step 9 also stops early, with the fix, if a source is missing.

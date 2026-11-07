@@ -123,17 +123,32 @@ Abra **Tomodachi Life** no menu de aplicativos, ou rode:
 
 | Para… | Use |
 |---|---|
-| Abrir o launcher (padrão) | `./play.sh`: JOGAR, tela cheia, tamanho da janela, idioma, backup e restauração do save, relatório de bug |
+| Abrir o launcher (padrão) | `./play.sh`: JOGAR, vários saves com nome, opções, versão da build, relatório de bug. Veja [docs/LAUNCHER.pt-BR.md](docs/LAUNCHER.pt-BR.md) |
 | Iniciar o jogo direto | `./play.sh --nogui` |
 | Tela cheia / tamanho da janela | `./play.sh --nogui --fullscreen`, `./play.sh --nogui --size 1920x1080` (F11 alterna a tela cheia no jogo) |
-| Idioma do jogo | `./play.sh --nogui --language en-GB` (códigos: `ja`, `en-US`, `en-GB`, `fr`, `fr-CA`, `de`, `it`, `es`, `es-419`, `pt-BR`, `nl`, `ru`, `ko`, `zh-Hans`, `zh-Hant`; padrão `en-US`) |
+| Idioma do jogo | `./play.sh --nogui --language en-GB` (códigos: `ja`, `en-US`, `en-GB`, `fr`, `fr-CA`, `de`, `it`, `es`, `es-419`, `nl`, `ko`, `zh-Hans`, `zh-Hant`; padrão `en-US`. O jogo não tem texto em português nem em russo) |
 | Verificar o computador | `./play.sh --nogui --diagnose` (GPU, Vulkan, memória, ferramentas que faltam) |
 | A imagem está errada | `./play.sh --nogui --safe` (caminho gráfico conservador; conte se resolveu) |
 | Controles (teclado, mouse, controle) | [docs/CONTROLS.pt-BR.md](docs/CONTROLS.pt-BR.md); o mouse é a tela de toque e a roda dá zoom na ilha |
 | Fechar o jogo | a tecla **Home** (ou o botão Guide do controle) fecha, como o HOME do console |
 | Investigar problemas | cada execução grava `local/logs/play-nxrt-*.log`; anexe aos relatórios de bug |
 
-Os saves ficam em `local/user-nxrt` (dentro da pasta do projeto). Faça backup dessa pasta de vez em quando (o launcher tem o botão **Back up now**).
+O seu primeiro save fica em `local/user-nxrt` (dentro da pasta do projeto); os saves extras criados no launcher ficam em `local/profiles/`. O launcher guarda cópias com nome em `local/backups` (antes de cada sessão, enquanto você joga e quando você aperta **Back up now**) e lista as mais novas na janela principal. Lembre que o jogo só salva quando você salva **dentro do jogo**: fechar com Alt+F4 ou matar a tarefa perde o que você fez depois. Veja [docs/LAUNCHER.pt-BR.md](docs/LAUNCHER.pt-BR.md#saves).
+
+### ✨ Novidades do launcher
+
+| | Novo | O que faz |
+|---|---|---|
+| 🎨 | **Visual novo** | O estilo macio e saltitante do banner do projeto, com o logo, botões em pílula e diálogos em nuvem. |
+| 🔖 | **Versão da build** | Mostra a versão da build **instalada**, lida do próprio programa (nunca um chute). |
+| 🔔 | **Aviso de build nova** | Um selo amarelo quando há uma release mais nova no GitHub, com o que mudou e como atualizar. Nunca atualiza sozinho, consulta o GitHub no máximo a cada 6 horas e pode ser desligado. |
+| 🗂️ | **Saves com nome** | Mantenha vários jogos (*+ New save…*) sem misturar. O seu save atual continua como **Main**, intocado. O launcher abre no que você jogou por último. |
+| 🕒 | **Saves recentes** | As três cópias mais novas na janela principal, com hora legível ("Save point · 12 min ago"). **All saves…** restaura (com uma cópia para desfazer), renomeia e apaga. |
+| 🛟 | **Pontos de salvamento enquanto joga** | Uma cópia cada vez que o jogo grava um save. Ao fechar o jogo, diz quanto tempo antes foi o seu último save e oferece voltar se ele foi morto durante a gravação. |
+| 🌐 | **Só idiomas reais** | Os 13 idiomas para os quais o jogo tem texto. Português e russo saíram da lista: o jogo mostra inglês para eles. |
+| ⌨️ | **Folha de controles** | Abas Teclado, Mouse e Controle. |
+| 🧭 | **Entrada no menu** | Procure **Tomodachi LTD Recomp** no menu de aplicativos. `./play.sh --shortcut` adiciona, `--remove-shortcut` remove. |
+| 🛠️ | **Correções** | As listas fecham com um clique fora ou Esc. Nenhum botão preso depois de fechar um diálogo. A janela se redesenha enquanto você a redimensiona. Se ela não abrir, diz como jogar com `./play.sh --nogui`. |
 
 Depois de instalado, o jogo **não precisa mais do `.nsp` nem das chaves**. Tudo fica dentro da pasta do projeto.
 
@@ -161,7 +176,7 @@ Corrigiu? É só rodar `./install.sh` de novo.
 <details>
 <summary><b>Onde ficam meus saves?</b></summary>
 
-Em `local/user-nxrt`. Faça backup dessa pasta de vez em quando (o botão **Back up now** do launcher cria um zip em `local/backups`).
+Em `local/user-nxrt` (saves extras criados no launcher: `local/profiles/`). O launcher guarda cópias com nome em `local/backups`; o **Back up now** faz uma na hora. Veja [docs/LAUNCHER.pt-BR.md](docs/LAUNCHER.pt-BR.md#saves).
 </details>
 
 <details>
