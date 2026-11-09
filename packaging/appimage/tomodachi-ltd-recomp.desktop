@@ -1,0 +1,8 @@
+[Desktop Entry]
+Type=Application
+Name=Tomodachi LTD Recomp
+Comment=Unofficial native PC port, built from your own copy of the game
+Exec=AppRun
+Icon=tomodachi-ltd-recomp
+Categories=Game;
+Terminal=false

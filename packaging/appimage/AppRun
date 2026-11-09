@@ -1,0 +1,53 @@
+#!/bin/sh
+# AppRun of the Tomodachi LTD Recomp AppImage. The AppImage holds only this project's own files (installer, launcher, patches):
+# no game, keys or firmware. The project is copied to a writable folder, because an AppImage is read-only, and everything is
+# installed and played from there.
+HERE="$(dirname "$(readlink -f "$0")")"
+DATA="${TOMODACHI_LTD_HOME:-${XDG_DATA_HOME:-$HOME/.local/share}/tomodachi-ltd-recomp}"
+VERSION="$(cat "$HERE/usr/share/tomodachi-ltd-recomp/APPIMAGE_VERSION" 2>/dev/null)"
+
+say() {
+  if [ -n "$DISPLAY$WAYLAND_DISPLAY" ] && command -v zenity >/dev/null 2>&1; then zenity --error --no-markup --text="$1" 2>/dev/null; fi
+  echo "$1" >&2
+}
+
+command -v python3 >/dev/null 2>&1 || { say "Tomodachi LTD Recomp needs python3 (with tkinter) installed. See the README, Step 1."; exit 1; }
+
+# Copy (or refresh after an update) the project; never touches local/, which holds the install and the saves.
+if [ ! -f "$DATA/.appimage-version" ] || [ "$(cat "$DATA/.appimage-version")" != "$VERSION" ]; then
+  mkdir -p "$DATA" || { say "Cannot create $DATA"; exit 1; }
+  cp -a "$HERE/usr/share/tomodachi-ltd-recomp/project/." "$DATA/" || { say "Cannot copy the project to $DATA"; exit 1; }
+  printf '%s' "$VERSION" > "$DATA/.appimage-version"
+fi
+cd "$DATA" || exit 1
+
+if [ "$1" = "--appimage-help" ]; then
+  echo "Tomodachi LTD Recomp AppImage $VERSION. Files live in: $DATA"
+  echo "  (no option)   opens the launcher when the game is installed, otherwise starts the installer"
+  echo "  --install     run the installer (extra options go to ./install.sh)"
+  echo "  --play ...    same as ./play.sh ..."
+  exit 0
+fi
+
+installed() { [ -x "$DATA/local/nxrt/bin/nxrt" ]; }
+
+run_in_terminal() {  # the installer shows its progress in a terminal
+  if [ -t 1 ]; then "$@"; return; fi
+  for t in "$TERMINAL" konsole gnome-terminal kitty xfce4-terminal alacritty xterm; do
+    [ -n "$t" ] && command -v "$t" >/dev/null 2>&1 || continue
+    case "$t" in
+      gnome-terminal) exec "$t" -- "$@" ;;
+      *) exec "$t" -e "$@" ;;
+    esac
+  done
+  say "No terminal program found. Open a terminal and run: $DATA/install.sh"; exit 1
+}
+
+case "$1" in
+  --install) shift; run_in_terminal sh -c './install.sh "$@"; r=$?; echo; echo "Press Enter to close."; read _; exit $r' sh "$@" ;;
+  --play) shift; exec ./play.sh "$@" ;;
+  "")
+    if installed; then exec ./play.sh; fi
+    run_in_terminal sh -c 'echo "Tomodachi LTD Recomp: the game is not installed yet."; ./install.sh; r=$?; echo; echo "Press Enter to close."; read _; exit $r' ;;
+  *) exec ./play.sh "$@" ;;
+esac
