@@ -87,7 +87,9 @@ git clone https://github.com/RussoPhone/tomodachi-ltd-recomp.git
 cd tomodachi-ltd-recomp
 ```
 
-> Se preferir, clique no botão verde **Code → Download ZIP** aqui no GitHub, extraia a pasta e abra o Terminal dentro dela.
+> **Jeito mais fácil:** abra a [página de Releases](https://github.com/RussoPhone/tomodachi-ltd-recomp/releases), baixe o **`tomodachi-ltd-recomp-<versão>.tar.gz`** (ou o `.zip`), extraia e abra o Terminal dentro da pasta. Não precisa de `git`. Confira o download com `sha256sum -c SHA256SUMS`.
+>
+> **Por que não existe uma build do jogo pronta para baixar?** O executável é gerado a partir da *sua* cópia do jogo, então contém código da Nintendo e não pode ser compartilhado. Por isso o jogo é montado no seu computador (Passo 3). O Release só poupa a parte do `git`.
 
 ---
 
