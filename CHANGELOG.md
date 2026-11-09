@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## Alpha 1.7.5 — 2026-11-09
 - Installer: fixed the game export (step 7) stopping at about 970 of 1650 files on Linux (issue #17). The exporter keeps every generated file open at once
   and the default limit is 1024 open files per process; the installer now raises that limit before starting the export, and stops with the
   command to run if the system does not allow enough.

@@ -2,4 +2,4 @@
 #pragma once
 
 // Release name shown in the window title and the startup log.
-#define NXRT_VERSION "Alpha 1.7.4"
+#define NXRT_VERSION "Alpha 1.7.5"
