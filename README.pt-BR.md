@@ -89,6 +89,8 @@ cd tomodachi-ltd-recomp
 
 > **Jeito mais fácil:** abra a [página de Releases](https://github.com/RussoPhone/tomodachi-ltd-recomp/releases), baixe o **`tomodachi-ltd-recomp-<versão>.tar.gz`** (ou o `.zip`), extraia e abra o Terminal dentro da pasta. Não precisa de `git`. Confira o download com `sha256sum -c SHA256SUMS`.
 >
+> **Prefere um arquivo só?** Baixe o **`Tomodachi-LTD-Recomp-<versão>-x86_64.AppImage`**, torne-o executável (`chmod +x`) e dê dois cliques. Ele traz só o instalador e o launcher do projeto (sem o jogo): copia para `~/.local/share/tomodachi-ltd-recomp`, inicia o instalador na primeira vez (pede o seu `.nsp` e as chaves, como no Passo 3, e precisa dos mesmos pacotes do Passo 1) e depois abre o launcher.
+>
 > **Por que não existe uma build do jogo pronta para baixar?** O executável é gerado a partir da *sua* cópia do jogo, então contém código da Nintendo e não pode ser compartilhado. Por isso o jogo é montado no seu computador (Passo 3). O Release só poupa a parte do `git`.
 
 ---
