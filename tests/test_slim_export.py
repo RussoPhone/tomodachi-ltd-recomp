@@ -47,7 +47,9 @@ class SlimExportTests(unittest.TestCase):
         once = slim.apply_hooks(HOOKED_BLOCK)
         self.assertEqual(once.count(b'nxrt_hook_pointer(c);'), 1)
         self.assertTrue(once.index(b'    } } }') < once.index(b'nxrt_hook_pointer(c);') < once.index(b'c->x[8]=1;'))
-        self.assertTrue(once.startswith(b'void nxrt_hook_pointer(GuestContext* c);'))
+        self.assertTrue(once.startswith(b'__attribute__((weak)) void nxrt_hook_pointer(GuestContext* c){}'))
+        old = once.replace(b'__attribute__((weak)) void nxrt_hook_pointer(GuestContext* c){}', b'void nxrt_hook_pointer(GuestContext* c);')
+        self.assertEqual(slim.apply_hooks(old), once)
         self.assertEqual(slim.apply_hooks(once), once)
         other = BLOCK
         self.assertEqual(slim.apply_hooks(other), other)

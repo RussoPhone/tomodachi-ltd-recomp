@@ -21,9 +21,10 @@ EXPECTED = re.compile(rb'^[ \t]*static const uint32_t _expected\[\][^\n]*\n', re
 GUARD = re.compile(rb'^[ \t]*RECOMP_GG_GUARD\([^\n]*\n', re.M)
 MARKER = '.slimmed'
 # (module, function offset in the module, host function). The host function takes the GuestContext and runs when the guest function
-# is entered at its first instruction (never when a call returns into the middle of it).
+# is entered at its first instruction (never when a call returns into the middle of it). The generated C carries a weak no-op
+# definition of each host function, so the compile-only build (step 9) links; nxrt's real function overrides it.
 HOOKS = [('main', 0x22dce0, 'nxrt_hook_pointer')]
-HOOK_VERSION = 1
+HOOK_VERSION = 2
 
 
 def slim_text(data: bytes):
@@ -37,16 +38,21 @@ def slim_text(data: bytes):
 
 def apply_hooks(data: bytes) -> bytes:
     for module, offset, function in HOOKS:
+        weak = f'__attribute__((weak)) void {function}(GuestContext* c){{}}\n'.encode()
         header = f'void blk_{module}_{offset:016x}(GuestContext* c){{\n'.encode()
         at = data.find(header)
         call = f'    {function}(c);\n'.encode()
-        if at < 0 or call in data[at:at + 20000]:
+        plain = f'void {function}(GuestContext* c);\n'.encode()
+        if at < 0:
+            continue
+        if call in data[at:at + 20000]:
+            data = data.replace(plain, weak, 1)
             continue
         end = data.find(b'    } } }\n', at)
         if end < 0:
             raise ValueError(f'dispatcher of blk_{module}_{offset:016x} not found')
         end += len(b'    } } }\n')
-        data = data[:at] + f'void {function}(GuestContext* c);\n'.encode() + data[at:end] + call + data[end:]
+        data = data[:at] + weak + data[at:end] + call + data[end:]
     return data
 
 
