@@ -1,5 +1,10 @@
 # Changelog
 
+## Unreleased
+- Installer: fixed the compile (step 9) failing at the final link with `undefined reference to nxrt_hook_pointer` (issue #18). Since 1.7.2
+  the trim step (8) adds a call to nxrt's mouse hook to the generated C, but step 9 links without nxrt. The generated C now carries an empty
+  weak definition that nxrt's own function replaces. Running the installer again redoes step 8, recompiles one file and links.
+
 ## Alpha 1.7.6 — 2026-11-09
 - Releases now include an **AppImage** (installer + launcher, no game files; copies itself to `~/.local/share/tomodachi-ltd-recomp`) next to the source bundle and checksums.
 
