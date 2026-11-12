@@ -126,5 +126,57 @@ class NxrtStepHelpersTests(unittest.TestCase):
             self.assertEqual(installer.steamos_hint(), '')
 
 
+class FreeSpaceTests(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.root = Path(self.tmp.name)
+        for rel in installer.CLEANABLE[:3]:
+            (self.root / rel).mkdir(parents=True)
+            (self.root / rel / 'f.bin').write_bytes(b'x' * 1000)
+        (self.root / 'local/nxrt/bin').mkdir(parents=True)
+        (self.root / 'local/nxrt/bin/nxrt').write_bytes(b'x')
+        (self.root / 'local/install/tomodachi').mkdir(parents=True)
+        (self.root / 'local/state').mkdir(parents=True)
+        self.patches = [mock.patch.object(installer, 'ROOT', self.root),
+                        mock.patch.object(installer, 'CLEANED', self.root / 'local/state/cleaned'),
+                        mock.patch.object(installer, 'STATE', self.root / 'local/state')]
+        for patch in self.patches:
+            patch.start()
+            self.addCleanup(patch.stop)
+
+    def run_free(self, **kwargs):
+        with contextlib.redirect_stdout(io.StringIO()):
+            installer.free_space(**kwargs)
+
+    def test_clean_removes_only_build_leftovers_and_keeps_the_game(self):
+        self.run_free(ask=False)
+        for rel in installer.CLEANABLE:
+            self.assertFalse((self.root / rel).exists())
+        self.assertTrue((self.root / 'local/nxrt/bin/nxrt').exists())
+        self.assertTrue((self.root / 'local/install/tomodachi').is_dir())
+        self.assertTrue(installer.CLEANED.exists())
+
+    def test_nothing_is_deleted_before_the_game_is_installed(self):
+        (self.root / 'local/nxrt/bin/nxrt').unlink()
+        self.run_free(ask=False)
+        self.assertTrue((self.root / installer.CLEANABLE[0]).exists())
+        self.assertFalse(installer.CLEANED.exists())
+
+    def test_declining_keeps_everything(self):
+        with mock.patch('builtins.input', return_value='n'):
+            self.run_free(ask=True)
+        self.assertTrue((self.root / installer.CLEANABLE[0]).exists())
+
+    def test_after_a_clean_a_rerun_restarts_from_the_build_tools(self):
+        installer.CLEANED.write_text('x')
+        backend = [k for k, _, _ in installer.STEPS].index('backend') + 1
+        with contextlib.redirect_stdout(io.StringIO()):
+            self.assertEqual(installer.forget_cleaned_build(len(installer.STEPS)), backend)
+        self.assertFalse(installer.CLEANED.exists())
+        with contextlib.redirect_stdout(io.StringIO()):
+            self.assertEqual(installer.forget_cleaned_build(3), 3)
+
+
 if __name__ == '__main__':
     unittest.main()

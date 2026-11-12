@@ -576,6 +576,56 @@ def stage_paths(index, key):
     return stem.with_suffix('.ok'), stem.with_suffix('.sha256')
 
 
+CLEANED = STATE / 'cleaned'
+# Only needed to build: the game runs from local/nxrt, local/install and local/user-nxrt.
+CLEANABLE = ('upstream/mk8-recomp/build', 'local/build-nxrt', 'local/aot', 'local/cache/boost')
+
+
+def tree_bytes(path):
+    total = 0
+    for base, _dirs, files in os.walk(path):
+        for name in files:
+            try:
+                total += os.lstat(os.path.join(base, name)).st_size
+            except OSError:
+                pass
+    return total
+
+
+def free_space(ask):
+    """Delete the build leftovers once the game is installed (about 12 GB). Rebuilding after an update takes hours."""
+    if not (ROOT / 'local/nxrt/bin/nxrt').exists() or not (ROOT / 'local/install/tomodachi').is_dir():
+        say('Nothing to clean yet: the game is not fully installed.')
+        return
+    found = [(ROOT / rel, tree_bytes(ROOT / rel)) for rel in CLEANABLE if (ROOT / rel).exists()]
+    total = sum(size for _, size in found)
+    if not found:
+        say('Nothing to clean: the build leftovers are already gone.')
+        return
+    say(f'\nThe game is installed. {total / 2**30:.1f} GB of build leftovers can be deleted; the game does not need them.')
+    say('If this project is updated later, the long compile runs again (1 to 2 hours).')
+    if ask:
+        answer = input('Free the space now? [Y/n] ').strip().lower()
+        if answer not in ('', 'y', 'yes', 's', 'sim'):
+            say(f'Not now. You can do it later with: {RERUN} --clean')
+            return
+    for path, _ in found:
+        shutil.rmtree(path, ignore_errors=True)
+    atomic_write_text(CLEANED, time.strftime('%Y-%m-%d %H:%M:%S'))
+    say(f'{GREEN}Freed {total / 2**30:.1f} GB.{RESET}')
+
+
+def forget_cleaned_build(first_step):
+    """After free_space() the build tools and the compiled game are gone: a rerun must start at the extraction tools."""
+    if not CLEANED.exists():
+        return first_step
+    CLEANED.unlink(missing_ok=True)
+    rebuild_from = [key for key, _, _ in STEPS].index('backend') + 1
+    if first_step > rebuild_from:
+        say(f'{YELLOW}The build leftovers were deleted to free space, so the build restarts from step {rebuild_from}.{RESET}')
+    return min(first_step, rebuild_from)
+
+
 def refresh_after_update():
     """Invalidate changed stages and every downstream stage before resuming.
 
@@ -595,6 +645,7 @@ def refresh_after_update():
             changed_at = index
             break
     if changed_at is not None:
+        changed_at = forget_cleaned_build(changed_at)
         say(f'{YELLOW}Build inputs changed (or old state found): rerunning dependent steps from '
             f'{STEPS[changed_at - 1][0]}.{RESET}')
         for index, (key, _, _) in enumerate(STEPS[changed_at - 1:], changed_at):
@@ -620,6 +671,9 @@ def main():
     if '--report' in sys.argv:
         bundle_report()
         return
+    if '--clean' in sys.argv:
+        free_space(ask=False)
+        return
     if plat.IS_WINDOWS and not CI:
         fail('The native port is Linux-only for now; there is no Windows installer yet.')
     STATE.mkdir(parents=True, exist_ok=True)
@@ -630,6 +684,7 @@ def main():
             assert 1 <= first <= len(STEPS)
         except (IndexError, ValueError, AssertionError):
             fail(f'--redo needs a step number from 1 to {len(STEPS)}, for example: {RERUN} --redo 7')
+        first = forget_cleaned_build(first)
         for index, (key, _, _) in enumerate(STEPS[first - 1:], first):
             for f in stage_paths(index, key):
                 f.unlink(missing_ok=True)
@@ -659,6 +714,8 @@ def main():
     if not CI:
         say(f'To play:  {PLAY}          (fullscreen: {PLAY} --fullscreen)')
         say('The first time you open the face-paint editor it takes about 40 seconds (it prepares a cache on your computer); after that it opens in seconds.')
+        if sys.stdin.isatty():
+            free_space(ask=True)
 
 
 if __name__ == '__main__':

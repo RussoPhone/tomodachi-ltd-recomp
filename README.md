@@ -109,6 +109,8 @@ cd tomodachi-ltd-recomp
 
 During step 7 a window of the extraction tool opens and closes by itself. It is **not the game**; don't close it.
 
+When the install finishes it offers to delete about 12 GB of build leftovers (the game does not need them). Run `./install.sh --clean` to do it later. After an update the long compile runs again.
+
 If a step fails, the installer saves a **report** (`local/logs/report-*.txt`, no game data or keys inside) and tells you where it is. Run `./install.sh --report` to bundle every log into one zip and attach it to an [issue](https://github.com/RussoPhone/tomodachi-ltd-recomp/issues).
 
 At the end it offers a **shortcut in your applications menu**. Answer `Y`. (You can add it later with `./play.sh --shortcut`.)

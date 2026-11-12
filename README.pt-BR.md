@@ -111,6 +111,8 @@ cd tomodachi-ltd-recomp
 
 No passo 7, uma janela da ferramenta de extração abre e fecha sozinha. **Não é o jogo**; não feche.
 
+Quando a instalação termina, ela oferece apagar cerca de 12 GB de sobras da compilação (o jogo não precisa delas). Rode `./install.sh --clean` para fazer isso depois. Após uma atualização, a compilação longa roda de novo.
+
 Se um passo falhar, o instalador salva um **relatório** (`local/logs/report-*.txt`, sem dados do jogo nem chaves) e diz onde ele está. Rode `./install.sh --report` para juntar todos os logs em um zip e anexar numa [issue](https://github.com/RussoPhone/tomodachi-ltd-recomp/issues).
 
 No final, ele oferece um **atalho no menu de aplicativos**. Responda `Y` (ou `S`).
