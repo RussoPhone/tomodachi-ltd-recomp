@@ -25,7 +25,7 @@ e o instalador) continua só para Linux, e não há instalador para Windows. O W
 | GPUs Intel (Mesa ANV) | GPUs integradas podem ser lentas demais para 30 FPS; não sabemos |
 | Outras GPUs NVIDIA (séries GTX 10/16, RTX 20/30/40) | Gerações diferentes, mesma família de driver |
 | Ubuntu, Debian, Fedora, openSUSE, CachyOS, Manjaro | Os comandos de instalação estão escritos, mas não verificados |
-| SteamOS / Steam Deck | Não testado; espaço em disco e tempo de compilação podem ser um problema |
+| SteamOS / Steam Deck | Não testado; espaço em disco e tempo de compilação podem ser um problema. O sistema é somente leitura: compile e jogue dentro de um distrobox (veja abaixo) |
 | Sessões só X11, KDE, GNOME e outros desktops | Janela e tela cheia |
 | Notebooks híbridos (NVIDIA + Intel/AMD) | O port escolhe a GPU dedicada primeiro; veja `GPU:` em `./play.sh --nogui --diagnose` |
 
@@ -49,3 +49,14 @@ No launcher: **Check my computer** e a caixa **Safe mode** fazem o mesmo.
 `NXRT_SAFE_MODE=1` (ou `--safe`) desliga os caminhos mais novos e rápidos: envio assíncrono de gráficos, descarga assíncrona de compute e o
 decodificador de texturas na GPU (as texturas passam a ser decodificadas na CPU). É mais lento e serve para responder uma pergunta: *o
 problema some?* Se some, diga isso no relato: aponta direto para a causa.
+
+## SteamOS / Steam Deck
+
+O SteamOS mantém o sistema somente leitura, então as ferramentas de compilação não podem ser instaladas nele. Use um contêiner distrobox:
+
+```bash
+distrobox create --name tomodachi --image archlinux:latest
+distrobox enter tomodachi
+```
+
+Dentro dele, siga o "Passo 1" do README e rode `./install.sh` e `./play.sh` no mesmo contêiner. O Deck tem no máximo 16 GB de RAM e pouco espaço livre: a instalação pede cerca de 35 GB livres e bastante swap, e a compilação pode levar horas. Se não couber, compile em outro PC e copie a pasta `local/`.

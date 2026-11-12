@@ -25,7 +25,7 @@ installer) is still Linux-only, and there is no Windows installer. Windows is **
 | Intel GPUs (Mesa ANV) | Integrated GPUs may be too slow for 30 FPS; we do not know |
 | Other NVIDIA GPUs (GTX 10/16 series, RTX 20/30/40) | Different generations, same driver family |
 | Ubuntu, Debian, Fedora, openSUSE, CachyOS, Manjaro | The install commands for these are written but not verified |
-| SteamOS / Steam Deck | Untested; storage and the compile time may be a problem |
+| SteamOS / Steam Deck | Untested; storage and the compile time may be a problem. The system is read-only: build and play inside a distrobox (see below) |
 | X11-only sessions, KDE, GNOME, other desktops | Window and fullscreen handling |
 | Hybrid laptops (NVIDIA + Intel/AMD) | The port picks the discrete GPU first; check `GPU:` in `./play.sh --nogui --diagnose` |
 
@@ -49,3 +49,14 @@ In the launcher: **Check my computer** and the **Safe mode** checkbox do the sam
 `NXRT_SAFE_MODE=1` (or `--safe`) turns off the newer, faster paths: asynchronous graphics submit, asynchronous compute flush and the
 GPU texture decoder (textures are decoded on the CPU instead). It is slower and is meant to answer one question: *does the problem go away?*
 If it does, say so in your report: it points straight at the cause.
+
+## SteamOS / Steam Deck
+
+SteamOS keeps its system read-only, so the build tools cannot be installed on it. Use a distrobox container:
+
+```bash
+distrobox create --name tomodachi --image archlinux:latest
+distrobox enter tomodachi
+```
+
+Inside it, follow "Step 1" of the README, then run `./install.sh` and `./play.sh` from the same container. The Deck has 16 GB of RAM at most and little free space: the install wants about 35 GB free and a lot of swap, and the compile can take hours. If it does not fit, build on another PC and copy the `local/` folder.

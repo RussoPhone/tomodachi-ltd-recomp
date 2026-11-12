@@ -148,6 +148,14 @@ for font in "${fonts[@]}"; do
     atomic_install 0644 "$font" "$PREFIX/bin/fonts/$(basename "$font")"
 done
 
+# libfmt acompanha o programa (RPATH $ORIGIN/../lib): compilar num contêiner e jogar no host (SteamOS) não quebra.
+fmt_name="$(ldd "$BUILD_DIR/nxrt" 2>/dev/null | awk '/libfmt\.so/ { print $1; exit }')"
+fmt_lib="$(ldd "$BUILD_DIR/nxrt" 2>/dev/null | awk '/libfmt\.so/ { print $3; exit }')"
+if [[ -n "$fmt_name" && -f "$fmt_lib" ]]; then
+    install -d "$PREFIX/lib"
+    atomic_install 0644 "$fmt_lib" "$PREFIX/lib/$fmt_name"
+fi
+
 echo "pronto: $PREFIX/bin/nxrt"
 echo "fontes: $PREFIX/bin/fonts"
 echo "execute: $PREFIX/bin/nxrt --game <pasta-do-jogo> --user <pasta-de-saves>"

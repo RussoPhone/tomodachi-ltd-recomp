@@ -98,5 +98,33 @@ class InstallerStateTests(unittest.TestCase):
         self.assertEqual(self.runs, KEYS[KEYS.index('export'):])
 
 
+class NxrtStepHelpersTests(unittest.TestCase):
+    def test_boost_source_prefers_the_tree_suyu_downloaded(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            suyu = Path(tmp)
+            tree = suyu / '.cache/cpm/boost/boost-1.90.0'
+            tree.mkdir(parents=True)
+            with mock.patch.object(installer, 'SUYU', suyu):
+                self.assertEqual(installer.boost_source(), tree)
+
+    def test_boost_source_reuses_the_cached_download(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / 'cpmfile.json').write_text('{"boost": {"version": "boost-9.9.9", "artifact": "x", "repo": "a/b", "hash": "0"}}')
+            tree = root / 'local/cache/boost/boost-9.9.9'
+            (tree / 'libs').mkdir(parents=True)
+            with mock.patch.object(installer, 'SUYU', root), mock.patch.object(installer, 'ROOT', root):
+                self.assertEqual(installer.boost_source(), tree)
+
+    def test_steamos_hint_only_outside_a_container(self):
+        osr = 'PRETTY_NAME="SteamOS"\nID=steamos\n'
+        with mock.patch.object(installer.Path, 'read_text', return_value=osr), \
+                mock.patch.object(installer.Path, 'exists', return_value=False):
+            self.assertIn('distrobox', installer.steamos_hint())
+        with mock.patch.object(installer.Path, 'read_text', return_value=osr), \
+                mock.patch.object(installer.Path, 'exists', return_value=True):
+            self.assertEqual(installer.steamos_hint(), '')
+
+
 if __name__ == '__main__':
     unittest.main()

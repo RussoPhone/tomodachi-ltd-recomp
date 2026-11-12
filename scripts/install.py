@@ -18,8 +18,10 @@ from pathlib import Path
 import shutil
 import subprocess
 import sys
+import tarfile
 import tempfile
 import time
+import urllib.request
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import plat  # noqa: E402
@@ -61,7 +63,7 @@ def _cmd(args):
         return 'not available'
 
 
-def write_report(failed=None):
+def write_report(failed=None, message=None):
     """Write local/logs/report-<time>.txt: everything needed to investigate an install problem.
     It contains no game data and no key material; personal folders are replaced by ~ and <project>."""
     logs = ROOT / 'local/logs'
@@ -71,6 +73,8 @@ def write_report(failed=None):
     lines.append('project: ' + _cmd(['git', '-C', str(ROOT), 'log', '-1', '--format=%h %ad %s', '--date=short']))
     lines.append(f'time: {time.strftime("%Y-%m-%d %H:%M:%S")}')
     lines.append(f'failed step: {failed or "none (report requested)"}')
+    if message:
+        lines.append(f'error: {scrub(str(message))}')
     lines.append('')
     lines.append('--- system ---')
     osr = Path('/etc/os-release')
@@ -152,7 +156,7 @@ def write_report(failed=None):
 def fail(text):
     say(f'\n{RED}{BOLD}✗ {text}{RESET}')
     try:
-        report = write_report(CURRENT_STEP[2] if CURRENT_STEP else None)
+        report = write_report(CURRENT_STEP[2] if CURRENT_STEP else None, text)
         say(f'A report to attach to a bug report was saved in {report.relative_to(ROOT)}')
         say(f'(it has no game data or keys; run {RERUN} --report to bundle all logs in one zip)')
     except Exception:  # noqa: BLE001 - never hide the original error
@@ -244,6 +248,20 @@ def step(title):
     return deco
 
 
+def steamos_hint():
+    """SteamOS (Steam Deck) has a read-only system: the build tools go inside a distrobox container instead."""
+    try:
+        osr = Path('/etc/os-release').read_text()
+    except OSError:
+        return ''
+    if 'ID=steamos' not in osr or Path('/run/.containerenv').exists():
+        return ''
+    return ('\n  SteamOS keeps the system read-only. Create an Arch container and run the installer inside it:'
+            '\n    distrobox create --name tomodachi --image archlinux:latest && distrobox enter tomodachi'
+            '\n  then follow "Step 1" of the README inside it, and run ./install.sh and ./play.sh from there.'
+            '\n  See docs/COMPATIBILITY.md ("SteamOS / Steam Deck").')
+
+
 def check_windows():
     missing = [t for t in ('git', 'cmake', 'ninja', 'cl', 'clang-cl') if not shutil.which(t)]
     try:
@@ -304,7 +322,8 @@ def check_linux():
     if not any(glob.glob(f'{d}/libavcodec.so*') for d in ('/usr/lib', '/usr/lib64', '/usr/lib/x86_64-linux-gnu')):
         missing.append('ffmpeg')
     if missing:
-        fail('Missing software: ' + ', '.join(missing) + '.\n  Install it with the command in "Step 1 — Prepare your computer" in the README.')
+        fail('Missing software: ' + ', '.join(missing) + '.\n  Install it with the command in "Step 1 — Prepare your computer" in the README.'
+             + steamos_hint())
 
 
 @step('Choose your game and your keys')
@@ -455,6 +474,42 @@ def find_one(pattern, base):
     return hits[0]
 
 
+def boost_source():
+    """Boost source tree (libs/*/include) for the nxrt build.
+
+    The suyu build only downloads Boost when the system has none (it accepts any Boost >= 1.57 with CMake
+    config files, as on Arch/CachyOS); then .cache/cpm/boost does not exist. Fetch the pinned release ourselves."""
+    hits = sorted((SUYU / '.cache/cpm/boost').glob('boost-*'))
+    if hits:
+        return hits[0]
+    pin = json.loads((SUYU / 'cpmfile.json').read_text())['boost']
+    version = pin['version']
+    artifact = pin['artifact'].replace('%VERSION%', version)
+    dest = ROOT / 'local/cache/boost'
+    tree = dest / version
+    if (tree / 'libs').is_dir():
+        return tree
+    say(f'   The system already provides Boost, so the source tree is downloaded once ({version}, about 150 MB)...')
+    dest.mkdir(parents=True, exist_ok=True)
+    archive = dest / artifact
+    url = f"https://github.com/{pin['repo']}/releases/download/{version}/{artifact}"
+    try:
+        urllib.request.urlretrieve(url, archive)
+    except OSError as error:
+        fail(f'Could not download Boost from {url}: {error}. Check your connection and run {RERUN} again.')
+    digest = hashlib.sha512(archive.read_bytes()).hexdigest()
+    if digest != pin['hash']:
+        archive.unlink()
+        fail(f'The downloaded Boost archive failed its checksum ({url}). Run {RERUN} again.')
+    shutil.rmtree(tree, ignore_errors=True)
+    with tarfile.open(archive) as tar:
+        tar.extractall(dest, filter='data')
+    archive.unlink()
+    if not (tree / 'libs').is_dir():
+        fail(f'The Boost archive did not unpack to {scrub(str(tree))}. Delete local/cache/boost and run {RERUN} again.')
+    return tree
+
+
 @step('Build the nxrt runtime (the unofficial native port) — about 20 to 40 minutes')
 def nxrt():
     if plat.IS_WINDOWS:
@@ -462,7 +517,7 @@ def nxrt():
         return
     export = current_export()
     recomp = UPSTREAM / 'build/suyu-static/src/suyu_cmd/recomp'
-    boost = find_one('.cache/cpm/boost/boost-*', SUYU)
+    boost = boost_source()
     if not (recomp / 'main').is_dir():
         fail('The compiled game code was not found. Run the installer again so the compile step finishes.')
     say('   This builds the runtime on your computer; it contains code from your game and must not be shared.')

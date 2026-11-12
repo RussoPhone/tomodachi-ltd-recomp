@@ -279,6 +279,9 @@ endif()
 target_link_libraries(nxrt_core PUBLIC Threads::Threads SDL2::SDL2 ${NXRT_VULKAN_LIB} shader_recompiler)
 
 add_executable(nxrt src/main.cpp "${NXRT_GAME_EXPORT}/recomp_registration.c")
+# install.sh copies libfmt next to the program (../lib): a build made in a container (distrobox) then also runs on
+# a host whose fmt is older or missing, such as SteamOS.
+set_target_properties(nxrt PROPERTIES BUILD_RPATH "$ORIGIN/../lib")
 target_compile_definitions(nxrt PRIVATE NXRT_SOURCE_FONT_DIR="${CMAKE_CURRENT_SOURCE_DIR}/third_party/suyu/fonts")
 if(CMAKE_CXX_COMPILER_FRONTEND_VARIANT STREQUAL "MSVC")
   # lld-link: static libraries are resolved without ordering, no group needed.
