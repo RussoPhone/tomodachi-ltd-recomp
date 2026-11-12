@@ -611,6 +611,7 @@ def free_space(ask):
             return
     for path, _ in found:
         shutil.rmtree(path, ignore_errors=True)
+    CLEANED.parent.mkdir(parents=True, exist_ok=True)
     atomic_write_text(CLEANED, time.strftime('%Y-%m-%d %H:%M:%S'))
     say(f'{GREEN}Freed {total / 2**30:.1f} GB.{RESET}')
 

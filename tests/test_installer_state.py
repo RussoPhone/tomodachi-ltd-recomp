@@ -3,6 +3,7 @@ import contextlib
 import importlib.util
 import io
 from pathlib import Path
+import shutil
 import tempfile
 import unittest
 from unittest import mock
@@ -155,6 +156,11 @@ class FreeSpaceTests(unittest.TestCase):
             self.assertFalse((self.root / rel).exists())
         self.assertTrue((self.root / 'local/nxrt/bin/nxrt').exists())
         self.assertTrue((self.root / 'local/install/tomodachi').is_dir())
+        self.assertTrue(installer.CLEANED.exists())
+
+    def test_clean_works_when_the_state_folder_does_not_exist_yet(self):
+        shutil.rmtree(self.root / 'local/state')
+        self.run_free(ask=False)
         self.assertTrue(installer.CLEANED.exists())
 
     def test_nothing_is_deleted_before_the_game_is_installed(self):
