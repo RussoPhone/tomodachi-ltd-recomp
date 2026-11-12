@@ -1,5 +1,16 @@
 # Changelog
 
+## Alpha 1.7.8 — 2026-11-12
+- Installer: the failure report now has an `error:` line with the exact message, so a step that stops before it writes its own log (issue #17, step 11)
+  is no longer blank.
+- Installer, step 11 (nxrt runtime): when the system already provides Boost, suyu does not download its source tree and the step could not find it
+  (issue #17, likely cause). The installer now downloads the pinned Boost release once, checks its SHA-512 and uses it.
+- nxrt: `libfmt` is copied to `local/nxrt/lib` and the program looks for it there, so a build made inside a container (distrobox) also starts on a
+  host with an older or missing fmt, such as SteamOS (issue #20, `error while loading shared libraries: libfmt.so.12`). SDL2 and Vulkan still come from the system.
+- Installer on SteamOS: when build tools are missing, it explains how to use a distrobox container; the compatibility notes cover it (issue #19).
+- **Free disk space:** when the install finishes it offers to delete about 12 GB of build leftovers the game does not need (`./install.sh --clean` does it
+  later). After an update the long compile runs again.
+
 ## Alpha 1.7.7 — 2026-11-11
 - Installer: fixed the compile (step 9) failing at the final link with `undefined reference to nxrt_hook_pointer` (issue #18). Since 1.7.2
   the trim step (8) adds a call to nxrt's mouse hook to the generated C, but step 9 links without nxrt. The generated C now carries an empty
