@@ -9,6 +9,7 @@ from pathlib import Path
 import sys
 import tempfile
 import unittest
+from unittest import mock
 import zipfile
 
 SCRIPT = Path(__file__).resolve().parents[1] / 'scripts/launcher.py'
@@ -64,9 +65,9 @@ class LauncherTests(unittest.TestCase):
         which = launcher.shutil.which
         self.addCleanup(setattr, launcher.shutil, 'which', which)
         launcher.shutil.which = lambda name: f'/usr/bin/{name}' if name in found else None
-        env = dict(os.environ)
-        self.addCleanup(os.environ.clear)
-        self.addCleanup(os.environ.update, env)
+        env = mock.patch.dict(os.environ)  # restores the whole environment afterwards
+        env.start()
+        self.addCleanup(env.stop)
         os.environ.pop('TERMINAL', None)
         cmd = launcher.install_command()
         self.assertEqual(cmd[:4], ['xterm', '-e', 'sh', '-c'])
