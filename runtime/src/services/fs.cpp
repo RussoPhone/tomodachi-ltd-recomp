@@ -17,11 +17,14 @@
 #include <fstream>
 #include <mutex>
 #include <optional>
+#include <chrono>
+#include <thread>
 
 #include "memory.h"
 #include "runtime.h"
 #include "services/common.h"
 #include "services/fs_write_options.h"
+#include "services/save_store.h"
 #include "tts_trace.h"
 
 namespace nxrt::hle {
@@ -294,6 +297,9 @@ public:
             const s64 got = n ? file_.Pread(g_memory.Ptr(out.address, n), n, offset) : 0;
             if (trace) tts_trace::FsRead("save/" + relative_path_, offset, got > 0 ? static_cast<u64>(got) : 0,
                                          tts_trace::NowNs() - t0);
+            // A host read error must reach the game as an error: "0 bytes, success" reads as an empty or broken save,
+            // and the game answers that by starting the data over (issue #21: the island layout was reset).
+            if (got < 0) ctx.result = kTargetLocked;
             RecordRead(offset, size, got, ctx.result);
             ctx.Push<s64>(got < 0 ? 0 : got);
         });
@@ -334,7 +340,11 @@ public:
         Register(3, "SetSize", [this](Ctx& ctx) {
             if (!file_.Truncate(ctx.Pop<s64>())) ctx.result = kTargetLocked;
         });
-        Register(4, "GetSize", [this](Ctx& ctx) { ctx.Push<s64>(file_.Size()); });
+        Register(4, "GetSize", [this](Ctx& ctx) {
+            const s64 size = file_.Size();
+            if (size < 0) ctx.result = kTargetLocked;
+            ctx.Push<s64>(size < 0 ? 0 : size);
+        });
     }
     ~IFile() override {
         if (!TraceSaveIoEnabled()) return;
@@ -423,7 +433,9 @@ private:
 
 class IFileSystem final : public ServiceObject {
 public:
-    explicit IFileSystem(fs::path root) : ServiceObject("IFileSystem"), root_(std::move(root)) {
+    // `store` is null for a read-only view (no Commit to honor).
+    IFileSystem(fs::path root, std::shared_ptr<SaveStore> store)
+        : ServiceObject("IFileSystem"), root_(std::move(root)), store_(std::move(store)) {
         std::error_code ec;
         fs::create_directories(root_, ec);
         Register(0, "CreateFile", [this](Ctx& ctx) {
@@ -443,7 +455,8 @@ public:
             created.close();
             const int create_result = created.fail() ? 1 : 0;
             std::error_code ec;
-            fs::resize_file(p, static_cast<u64>(size), ec);
+            if (!create_result) fs::resize_file(p, static_cast<u64>(size), ec);
+            if (create_result || ec) ctx.result = kTargetLocked;
             TraceSaveIoPath("create", root_, p, {}, size, 0, ctx.result, ec ? ec.value() : create_result);
         });
         Register(1, "DeleteFile", [this](Ctx& ctx) {
@@ -495,7 +508,21 @@ public:
             }
             std::string relative_path;
             if (TraceSaveIoEnabled() || tts_trace::Enabled()) relative_path = SaveRelativePath(root_, p);
-            ctx.PushInterface(std::make_shared<IFile>(p, std::move(relative_path), mode));
+            // The file exists, so a failed open is the host holding it (an antivirus scan, a sync client) or a
+            // permission problem. Retry for a moment, then fail the open: handing the game a file that reads as empty
+            // made it treat the save as missing and start the data over (issue #21).
+            std::shared_ptr<IFile> file;
+            for (int attempt = 0;; ++attempt) {
+                file = std::make_shared<IFile>(p, relative_path, mode);
+                if (file->Ok() || attempt == 19) break;
+                std::this_thread::sleep_for(std::chrono::milliseconds(50));
+            }
+            if (!file->Ok()) {
+                LOG_ERROR("save: the host could not open %s (mode %u)", HostString(p.filename()).c_str(), mode);
+                ctx.result = kTargetLocked;
+                return;
+            }
+            ctx.PushInterface(std::move(file));
         });
         Register(9, "OpenDirectory", [this](Ctx& ctx) {
             const u32 mode = ctx.Pop<u32>();
@@ -507,8 +534,10 @@ public:
             }
             ctx.PushInterface(std::make_shared<IDirectory>(p, mode));
         });
-        Register(10, "Commit", [](Ctx&) {
-            TraceSaveIo("commit", ".", {}, {}, {}, rc::Success);
+        // On the console only Commit makes the writes the save; SaveStore gives the same guarantee (see save_store.h).
+        Register(10, "Commit", [this](Ctx& ctx) {
+            if (store_ && !store_->Commit()) ctx.result = kTargetLocked;
+            TraceSaveIo("commit", ".", {}, {}, {}, ctx.result);
         });
         Register(11, "GetFreeSpaceSize", [](Ctx& ctx) { ctx.Push<s64>(0x40000000); });
         Register(12, "GetTotalSpaceSize", [](Ctx& ctx) { ctx.Push<s64>(0x80000000); });
@@ -538,6 +567,7 @@ private:
     }
 
     fs::path root_;
+    std::shared_ptr<SaveStore> store_;
 };
 
 struct SaveDataAttribute {
@@ -552,13 +582,37 @@ struct SaveDataAttribute {
 };
 static_assert(sizeof(SaveDataAttribute) == 0x40);
 
-fs::path SaveRoot(u8 space, const SaveDataAttribute& a) {
+std::string SaveName(u8 space, const SaveDataAttribute& a) {
     char name[96];
     std::snprintf(name, sizeof(name), "%u/%016llx/%016llx%016llx/%u", space,
                   static_cast<unsigned long long>(a.program_id ? a.program_id : 0x010051F0207B2000ULL),
                   static_cast<unsigned long long>(a.user_id[1]), static_cast<unsigned long long>(a.user_id[0]),
                   a.type);
-    return g_config.user_dir / "save" / name;
+    return name;
+}
+
+// The committed save stays at user/save/<name>, where it always was (backups, the launcher and older builds read it
+// there). The working copy and the commit's scratch folders live apart, in user/.nxrt-save/<name>.
+// Only journaled saves (system, account, bcat, device) wait for Commit on the console; temporary and cache storage
+// are written straight through there too, so they keep using the folder directly (null store).
+constexpr u8 kLastJournaledSaveType = 3;
+
+// Pushes the save's file system to the game. `commits`: Commit publishes the writes (false for the read-only view).
+void PushSaveFileSystem(Ctx& ctx, u8 space, const SaveDataAttribute& a, bool commits) {
+    const std::string name = SaveName(space, a);
+    const fs::path committed = g_config.user_dir / "save" / name;
+    if (a.type > kLastJournaledSaveType) {
+        ctx.PushInterface(std::make_shared<IFileSystem>(committed, nullptr));
+        return;
+    }
+    auto store = AcquireSaveStore(committed, g_config.user_dir / ".nxrt-save" / name);
+    // Never fall back to an empty folder: the game would read it as "no save yet" and overwrite the real one.
+    if (!store) {
+        LOG_ERROR("save data (space %u, type %u) could not be opened", space, a.type);
+        ctx.result = kTargetLocked;
+        return;
+    }
+    ctx.PushInterface(std::make_shared<IFileSystem>(store->Live(), commits ? store : nullptr));
 }
 
 class FspSrv final : public ServiceObject {
@@ -568,15 +622,14 @@ public:
         Register(51, "OpenSaveDataFileSystem", [](Ctx& ctx) {
             const u8 space = ctx.Pop<u8>();
             const SaveDataAttribute a = ctx.Pop<SaveDataAttribute>();
-            const fs::path root = SaveRoot(space, a);
             // Save roots live under the user's host directory; do not expose that path in logs.
             LOG_INFO("save data (space %u, type %u)", space, a.type);
-            ctx.PushInterface(std::make_shared<IFileSystem>(root));
+            PushSaveFileSystem(ctx, space, a, true);
         });
         Register(53, "OpenReadOnlySaveDataFileSystem", [](Ctx& ctx) {
             const u8 space = ctx.Pop<u8>();
             const SaveDataAttribute a = ctx.Pop<SaveDataAttribute>();
-            ctx.PushInterface(std::make_shared<IFileSystem>(SaveRoot(space, a)));
+            PushSaveFileSystem(ctx, space, a, false);
         });
         Register(200, "OpenDataStorageByCurrentProcess", [](Ctx& ctx) {
             ctx.PushInterface(std::make_shared<IStorageFile>(g_config.game_dir / "exefs" / "romfs.bin"));

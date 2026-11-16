@@ -22,6 +22,7 @@
 #include <string>
 
 #include "services/hid.h"
+#include "services/save_store.h"
 #include "tts_trace.h"
 
 namespace nxrt {
@@ -585,6 +586,7 @@ void RunEventLoop() {
             switch (e.type) {
             case SDL_QUIT:
                 LOG_INFO("window closed");
+                ::nxrt::hle::HoldSaveCommitsForExit();
                 std::fflush(nullptr);
                 std::_Exit(0);
             case SDL_MOUSEMOTION:
@@ -603,6 +605,7 @@ void RunEventLoop() {
                 // same way pressing HOME and closing the software does on the console (the game asks for it after some dialogs).
                 if (e.cbutton.button == SDL_CONTROLLER_BUTTON_GUIDE && !g_inline_keyboard_input.Active()) {
                     LOG_INFO("window: HOME (controller guide button) pressed, closing the game");
+                    ::nxrt::hle::HoldSaveCommitsForExit();
                     std::fflush(nullptr);
                     std::_Exit(0);
                 }
@@ -660,6 +663,7 @@ void RunEventLoop() {
             case SDL_KEYDOWN:
                 if (e.key.keysym.scancode == SDL_SCANCODE_HOME && !e.key.repeat && !g_inline_keyboard_input.Active()) {
                     LOG_INFO("window: HOME key pressed, closing the game");
+                    ::nxrt::hle::HoldSaveCommitsForExit();
                     std::fflush(nullptr);
                     std::_Exit(0);
                 }

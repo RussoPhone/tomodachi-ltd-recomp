@@ -59,6 +59,22 @@ class LauncherTests(unittest.TestCase):
         with zipfile.ZipFile(safety) as z:
             self.assertEqual(z.read('a.sav'), b'two')
 
+    def test_backups_leave_out_the_runtimes_save_work_folder(self):
+        # nxrt's uncommitted writes and commit scratch copies are not part of the save (issue #21 fix).
+        work = launcher.SAVE_DIR / launcher.SAVE_WORK / 'save' / '1' / 'live'
+        work.mkdir(parents=True)
+        (work / 'Map.sav').write_bytes(b'uncommitted')
+        self.assertIsNone(launcher.backup_save())  # only the work folder: nothing to back up yet
+        self.assertEqual(launcher.save_files(launcher.MAIN), [])
+        committed = launcher.SAVE_DIR / 'save' / '1'
+        committed.mkdir(parents=True)
+        (committed / 'Map.sav').write_bytes(b'committed')
+        with zipfile.ZipFile(launcher.backup_save()) as z:
+            self.assertEqual(z.namelist(), ['save/1/Map.sav'])
+        # A restore replaces the whole folder, so a stale working copy cannot outlive it.
+        launcher.restore_save(sorted(launcher.BACKUPS.glob('save-*.zip'))[0])
+        self.assertFalse((launcher.SAVE_DIR / launcher.SAVE_WORK).exists())
+
     def test_restore_refuses_unsafe_paths(self):
         evil = self.tmp / 'evil.zip'
         with zipfile.ZipFile(evil, 'w') as z:
