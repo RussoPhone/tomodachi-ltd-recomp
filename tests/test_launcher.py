@@ -59,6 +59,23 @@ class LauncherTests(unittest.TestCase):
         with zipfile.ZipFile(safety) as z:
             self.assertEqual(z.read('a.sav'), b'two')
 
+    def test_install_command_opens_the_installer_in_a_terminal(self):
+        found = {'xterm'}
+        which = launcher.shutil.which
+        self.addCleanup(setattr, launcher.shutil, 'which', which)
+        launcher.shutil.which = lambda name: f'/usr/bin/{name}' if name in found else None
+        env = dict(os.environ)
+        self.addCleanup(os.environ.clear)
+        self.addCleanup(os.environ.update, env)
+        os.environ.pop('TERMINAL', None)
+        cmd = launcher.install_command()
+        self.assertEqual(cmd[:4], ['xterm', '-e', 'sh', '-c'])
+        self.assertIn('./install.sh', cmd[4])
+        found.add('gnome-terminal')
+        self.assertEqual(launcher.install_command()[:2], ['gnome-terminal', '--'])
+        found.clear()
+        self.assertIsNone(launcher.install_command())
+
     def test_backups_leave_out_the_runtimes_save_work_folder(self):
         # nxrt's uncommitted writes and commit scratch copies are not part of the save (issue #21 fix).
         work = launcher.SAVE_DIR / launcher.SAVE_WORK / 'save' / '1' / 'live'

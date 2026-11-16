@@ -23,8 +23,8 @@ cd "$DATA" || exit 1
 
 if [ "$1" = "--appimage-help" ]; then
   echo "Tomodachi LTD Recomp AppImage $VERSION. Files live in: $DATA"
-  echo "  (no option)   opens the launcher when the game is installed, otherwise starts the installer"
-  echo "  --install     run the installer (extra options go to ./install.sh)"
+  echo "  (no option)   opens the launcher (before the first install it has an Install button)"
+  echo "  --install     run the installer in a terminal (extra options go to ./install.sh)"
   echo "  --play ...    same as ./play.sh ..."
   exit 0
 fi
@@ -48,6 +48,8 @@ case "$1" in
   --play) shift; exec ./play.sh "$@" ;;
   "")
     if installed; then exec ./play.sh; fi
-    run_in_terminal sh -c 'echo "Tomodachi LTD Recomp: the game is not installed yet."; ./install.sh; r=$?; echo; echo "Press Enter to close."; read _; exit $r' ;;
+    # First start: the launcher welcomes and has an Install button that opens the installer in a terminal.
+    if [ -n "$DISPLAY$WAYLAND_DISPLAY" ] && python3 -c "import tkinter" 2>/dev/null; then exec python3 scripts/launcher.py; fi
+    run_in_terminal sh -c 'echo "Tomodachi LTD Recomp: welcome! Setting up the game from your own copy."; ./install.sh; r=$?; echo; echo "Press Enter to close."; read _; exit $r' ;;
   *) exec ./play.sh "$@" ;;
 esac

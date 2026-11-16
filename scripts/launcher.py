@@ -170,6 +170,23 @@ def installed():
     return (ROOT / 'local/nxrt/bin/nxrt').exists() and (ROOT / 'local/install/tomodachi').is_dir()
 
 
+# Terminal programs tried in order (after $TERMINAL), with the flag that runs a command given as separate arguments.
+TERMINALS = (('konsole', ['-e']), ('gnome-terminal', ['--']), ('kitty', []), ('xfce4-terminal', ['-x']),
+             ('alacritty', ['-e']), ('xterm', ['-e']))
+
+
+def install_command():
+    """The installer in its own terminal window (it shows its progress there), or None when no terminal program is found."""
+    if os.name == 'nt':
+        return ['cmd', '/c', 'start', 'Tomodachi LTD Recomp installer', 'cmd', '/k', 'install.bat']
+    script = ['sh', '-c', './install.sh; r=$?; echo; echo "Press Enter to close."; read _; exit $r']
+    custom = os.environ.get('TERMINAL')
+    for name, flag in ([(custom, ['-e'])] if custom else []) + list(TERMINALS):
+        if shutil.which(name):
+            return [name] + flag + script
+    return None
+
+
 KEEP_AUTO = 10     # "before playing" copies kept per save
 KEEP_POINTS = 20   # automatic save points (taken while playing / at the end of a session) kept per save
 KEEP_SAFETY = 5    # "before restore" copies kept per save

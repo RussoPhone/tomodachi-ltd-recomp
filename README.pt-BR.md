@@ -1,5 +1,6 @@
 <h1 align="center">
   <img src="docs/images/banner.pt-BR.png" alt="Tomodachi LTD Recomp: port nativo não oficial de Tomodachi Life: Living the Dream para PC (alpha)" width="100%">
+  <br>Tomodachi LTD Recomp
 </h1>
 
 🇺🇸 [Read in English](README.md)
