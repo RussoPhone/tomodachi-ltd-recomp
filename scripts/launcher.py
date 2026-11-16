@@ -170,6 +170,23 @@ def installed():
     return (ROOT / 'local/nxrt/bin/nxrt').exists() and (ROOT / 'local/install/tomodachi').is_dir()
 
 
+# Terminal programs tried in order (after $TERMINAL), with the flag that runs a command given as separate arguments.
+TERMINALS = (('konsole', ['-e']), ('gnome-terminal', ['--']), ('kitty', []), ('xfce4-terminal', ['-x']),
+             ('alacritty', ['-e']), ('xterm', ['-e']))
+
+
+def install_command():
+    """The installer in its own terminal window (it shows its progress there), or None when no terminal program is found."""
+    if os.name == 'nt':
+        return ['cmd', '/c', 'start', 'Tomodachi LTD Recomp installer', 'cmd', '/k', 'install.bat']
+    script = ['sh', '-c', './install.sh; r=$?; echo; echo "Press Enter to close."; read _; exit $r']
+    custom = os.environ.get('TERMINAL')
+    for name, flag in ([(custom, ['-e'])] if custom else []) + list(TERMINALS):
+        if shutil.which(name):
+            return [name] + flag + script
+    return None
+
+
 KEEP_AUTO = 10     # "before playing" copies kept per save
 KEEP_POINTS = 20   # automatic save points (taken while playing / at the end of a session) kept per save
 KEEP_SAFETY = 5    # "before restore" copies kept per save
@@ -246,9 +263,18 @@ def rename_profile(slug, name):
     _write_json(profiles_file(), profiles)
 
 
+# nxrt keeps the game's uncommitted writes and the scratch copies of a commit in this folder of the save folder (see
+# runtime/src/services/save_store.h). It is not part of the save: backing it up would bring stale work back on a restore.
+SAVE_WORK = '.nxrt-save'
+
+
+def _save_member(path, folder):
+    return path.is_file() and path.relative_to(folder).parts[0] != SAVE_WORK
+
+
 def save_files(slug):
     folder = profile_dir(slug)
-    return [f for f in folder.rglob('*') if f.is_file()] if folder.is_dir() else []
+    return [f for f in folder.rglob('*') if _save_member(f, folder)] if folder.is_dir() else []
 
 
 def last_activity(slug):
@@ -302,7 +328,7 @@ def backup_save(prefix='save', profile=MAIN, label=None):
     """Zip a save into local/backups/ and return the path (None if it has nothing yet). prefix = the kind:
     save (made by hand), auto (before playing), point / session (taken while playing), safety (before a restore)."""
     folder = profile_dir(profile)
-    if not folder.is_dir() or not any(folder.iterdir()):
+    if not folder.is_dir() or not any(p.name != SAVE_WORK for p in folder.iterdir()):
         return None
     BACKUPS.mkdir(parents=True, exist_ok=True)
     stamp = time.strftime('%Y%m%d-%H%M%S')
@@ -313,7 +339,7 @@ def backup_save(prefix='save', profile=MAIN, label=None):
         out = BACKUPS / f'{stem}-{n}.zip'
     with zipfile.ZipFile(out, 'w', zipfile.ZIP_DEFLATED) as z:
         for path in sorted(folder.rglob('*')):
-            if path.is_file():
+            if _save_member(path, folder):
                 z.write(path, path.relative_to(folder).as_posix())
     info = {'kind': prefix, 'profile': profile, 'created': time.time()}
     if label:

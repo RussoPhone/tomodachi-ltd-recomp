@@ -1,5 +1,6 @@
 <h1 align="center">
   <img src="docs/images/banner.png" alt="Tomodachi LTD Recomp: unofficial native PC port of Tomodachi Life: Living the Dream (alpha)" width="100%">
+  <br>Tomodachi LTD Recomp
 </h1>
 
 **Alpha: an unofficial native PC port of Tomodachi Life: Living the Dream, built on your computer from your own copy of the game.** The game's ARM code is statically recompiled to x86-64 and runs on **nxrt**, this project's own runtime, with its own NVN → Vulkan renderer. Parts of the Switch system services still come from suyu-derived code, so this is **not a from-scratch rewrite**.

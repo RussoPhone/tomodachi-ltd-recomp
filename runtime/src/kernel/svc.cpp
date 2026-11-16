@@ -28,6 +28,7 @@
 #include "kernel/kernel.h"
 #include "memory.h"
 #include "runtime.h"
+#include "services/save_store.h"
 #include "tts_trace.h"
 
 namespace nxrt {
@@ -677,7 +678,7 @@ static void DispatchSvc(KThread* t, u32 imm) {
     case 0x04: r = MapMemory(x[0], x[1], x[2]); break;
     case 0x05: r = UnmapMemory(x[0], x[1], x[2]); break;
     case 0x06: r = QueryMemory(x[0], x[2]); x[1] = 0; break;
-    case 0x07: LOG_INFO("guest called ExitProcess"); std::fflush(nullptr); std::_Exit(0);
+    case 0x07: LOG_INFO("guest called ExitProcess"); ::nxrt::hle::HoldSaveCommitsForExit(); std::fflush(nullptr); std::_Exit(0);
     case 0x08: {
         const s32 prio = static_cast<s32>(x[4]);
         s32 core = static_cast<s32>(x[5]);

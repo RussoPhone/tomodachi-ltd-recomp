@@ -1,5 +1,19 @@
 # Changelog
 
+## Unreleased
+- **Saves are now committed like on the console (issue #21, island layout lost).** The game rewrites `Mii.sav`, `Player.sav` and `Map.sav` one after
+  the other and then commits; nxrt used to write straight into the save, so closing the window, pressing HOME or a crash in the middle left a mix
+  of new and old files. Now the game writes to a working copy (`user/.nxrt-save/`) and only a commit replaces the save, flushed to disk and swapped
+  in with two renames; an interrupted commit is finished or undone on the next start. Closing the game waits for a commit in progress.
+- nxrt: a save file the computer cannot open or read (held by an antivirus or a sync client such as OneDrive, or a permission problem) is retried
+  for about a second and then reported to the game as an error. Before, it read as an empty file, and the game could take that as "no save" and
+  start the data over.
+- Launcher: backups and save points leave out `.nxrt-save/` (uncommitted writes are not part of the save).
+- Launcher, first start: before the game is installed it shows a welcome and an **Install** button that opens the installer in a terminal
+  (Play turns on by itself when the install finishes). The AppImage opens the launcher on its first start too, instead of a terminal that
+  stopped at "missing software" on computers without the build tools (AppImage catalog review).
+- README: the title is also written as text under the banner, so tools that read the first heading find the project's name.
+
 ## Alpha 1.7.8 — 2026-11-12
 - Installer: the failure report now has an `error:` line with the exact message, so a step that stops before it writes its own log (issue #17, step 11)
   is no longer blank.

@@ -50,6 +50,7 @@ add_library(nxrt_core STATIC
     src/services/time.cpp
     src/services/settings.cpp
     src/services/fs.cpp
+    src/services/save_store.cpp
     src/services/acc.cpp
     src/services/nvdrv.cpp
     src/services/vi.cpp
@@ -504,6 +505,11 @@ if(BUILD_TESTING)
   add_executable(nxrt_hid_touch_tests tests/hid_touch_tests.cpp)
   target_include_directories(nxrt_hid_touch_tests PRIVATE src)
   add_test(NAME nxrt_hid_touch_tests COMMAND nxrt_hid_touch_tests)
+
+  add_executable(nxrt_save_store_tests tests/services/save_store_test.cpp src/services/save_store.cpp src/log.cpp)
+  target_include_directories(nxrt_save_store_tests PRIVATE src)
+  target_link_libraries(nxrt_save_store_tests PRIVATE Threads::Threads)
+  add_test(NAME nxrt_save_store_tests COMMAND nxrt_save_store_tests)
 
   add_executable(nxrt_system_region_tests tests/system_region_tests.cpp)
   target_include_directories(nxrt_system_region_tests PRIVATE src)

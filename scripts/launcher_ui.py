@@ -408,6 +408,7 @@ class Window:
         root.minsize(760, 600)
         self.settings = L.load_settings()
         self.playing = False
+        self.installing = False  # the installer's terminal is open
         self.dialog = None
         self.note = ""
         self._fonts = {}
@@ -738,18 +739,24 @@ class Window:
 
     def status(self):
         if not self.L.installed():
-            return "Not installed", C["red_alt"], C["paper"], C["paper"]
+            return "Setup", C["paper"], C["ink"], C["pict"]
         if self.playing:
             return "Playing", C["focus"], C["ink"], C["red"]
         return "Ready", C["paper"], C["ink"], C["pict"]
 
     def refresh(self):
-        self.play_btn.set_enabled(self.L.installed() and not self.playing)
-        self.play_btn.set_label("Playing…" if self.playing else "Play")
+        ready = self.L.installed()
+        # Before the first install the main button starts the installer: a first start (or a fresh AppImage) shows
+        # a welcome and one clear next step, not an error.
+        # Install stays pressable while the installer runs: some terminals return at once, so the launcher cannot tell
+        # whether the window was closed halfway, and pressing again simply resumes the install.
+        self.play_btn.set_enabled(not self.playing)
+        self.play_btn.set_label("Playing…" if self.playing else "Play" if ready else "Install")
         self.cv.delete("status")
         self._draw_status()
-        if not self.L.installed():
-            self.set_note("The native port is not installed yet. Run ./install.sh first.")
+        if not ready and not self.installing:
+            self.set_note("Welcome! Press Install to build the game on this computer from your own copy of "
+                          "Tomodachi Life: Living the Dream. It checks your computer first.")
 
     # --- layout ---------------------------------------------------------------------
     def _schedule(self):
@@ -835,10 +842,16 @@ class Window:
         ddw = min(ix1 - ix0 - 64 * u, 260 * u)
         self.profile_dd.place(ix1 - ddw, sy - 19 * u, ix1, sy + 19 * u, C["paper"])
         last = self._last_activity
-        cv.create_text(ix0, top + 238 * u, anchor="w", fill=C["note"], font=self.font(12.5 * u, "normal"), tags="label",
-                       text=(f"Last saved {self.L.when_text(last)}" if last else "Nothing saved here yet: the game starts fresh."))
-        self._hint(ix0, top + 268 * u, "↵", "Play", u)
-        cv.create_text(ix0, top + 296 * u, text="First face-paint opening takes ~40 s (it builds a cache).",
+        ready = self.L.installed()
+        # Before the first install this card welcomes instead (the note balloon can sit below a small window).
+        first = "Welcome! Install builds the game from your own copy." if not ready else (
+            f"Last saved {self.L.when_text(last)}" if last else "Nothing saved here yet: the game starts fresh.")
+        second = ("It checks your computer first, then shows its progress." if not ready else
+                  "First face-paint opening takes ~40 s (it builds a cache).")
+        cv.create_text(ix0, top + 238 * u, anchor="w", fill=C["note"], tags="label", text=first,
+                       font=self.fit_font("x" * 52, 12.5 * u, ix1 - ix0, "normal"))
+        self._hint(ix0, top + 268 * u, "↵", "Play" if ready else "Install", u)
+        cv.create_text(ix0, top + 296 * u, text=second,
                        anchor="w", fill=C["note"], font=self.fit_font("x" * 52, 12.5 * u, ix1 - ix0, "normal"),
                        tags="label")
 
@@ -1293,7 +1306,10 @@ class Window:
 
     def on_play(self):
         L = self.L
-        if self.playing or not L.installed():
+        if not L.installed():
+            self.on_install()
+            return
+        if self.playing:
             return
         current = dict(self.settings)
         L.save_settings(current)
@@ -1375,6 +1391,32 @@ class Window:
 
     def on_controls(self):
         self.show_dialog("Controls", [("OK", "primary", None)], tabs=[t[0] for t in CONTROLS])
+
+    def on_install(self):
+        L = self.L
+        cmd = L.install_command()
+        if cmd is None:
+            self.info("Install", f"Open a terminal in this folder and run  ./install.sh\n\n{L.ROOT}")
+            return
+        try:
+            subprocess.Popen(cmd, cwd=L.ROOT)
+        except OSError as e:
+            self.info("Install", f"Could not open a terminal ({e}).\nOpen one in this folder and run  ./install.sh\n\n{L.ROOT}")
+            return
+        polling, self.installing = self.installing, True
+        self.set_note("The installer is running in its terminal window. Play turns on here when it finishes.")
+        self.refresh()
+        if not polling:
+            self._wait_for_install()
+
+    def _wait_for_install(self):
+        """Polls until the install is done, so Play turns on without restarting the launcher."""
+        if self.L.installed():
+            self.installing = False
+            self.set_note("Installed. Press Play!")
+            self.relayout()  # the Play card's texts change too
+            return
+        self.root.after(5000, self._wait_for_install)
 
     def on_check(self):
         L = self.L

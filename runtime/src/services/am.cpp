@@ -13,6 +13,7 @@
 #include "memory.h"
 #include "runtime.h"
 #include "services/common.h"
+#include "services/save_store.h"
 
 namespace nxrt::hle {
 
@@ -134,6 +135,7 @@ public:
     ISelfController() : ServiceObject("ISelfController") {
         Register(0, "Exit", [](Ctx&) {
             LOG_INFO("the game asked to exit");
+            HoldSaveCommitsForExit();
             std::fflush(nullptr);
             std::exit(0);
         });
