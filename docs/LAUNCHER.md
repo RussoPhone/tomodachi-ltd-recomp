@@ -62,6 +62,23 @@ What the launcher does for you:
 - it keeps copies of what the game **did** write, so an overwrite you regret, or a save cut in half because the game was killed while writing, can be undone;
 - when the game closes it says how long before closing your last save was (*Your last save in the game was 47 min before you closed it. Anything after it is lost.*), and, if the game was killed right after writing, offers to go back to the previous copy.
 
+### Bringing a save from another build or emulator
+
+The game's files are `Map.sav`, `Mii.sav`, `Player.sav` and the `Ugc` folder (your own designs, such as face paint). They go in the save's
+**inner folder**, not in its top folder:
+
+```text
+local/user-nxrt/save/1/010051f0207b2000/fedcba98765432100123456789abcdef/1/          (Main)
+local/profiles/<name>/save/1/010051f0207b2000/fedcba98765432100123456789abcdef/1/    (a save made with + New save…)
+```
+
+1. Close the game. Choose the save in the launcher and press **Back up now**, so you can go back.
+2. Copy `Map.sav`, `Mii.sav`, `Player.sav` and the whole `Ugc` folder into the inner folder (create it if it does not exist yet),
+   replacing what is there. Files left in the top folder are not read: the game then starts a new island.
+
+The older *TomodachiLife-recomp* project kept these files in `~/.local/share/tomodachi-recomp/userdata/save/` (issue #23). An emulator
+keeps them in its save folder for the game (title `010051F0207B2000`).
+
 ## Files it uses
 
 | File | What |

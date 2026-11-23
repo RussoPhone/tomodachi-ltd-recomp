@@ -62,6 +62,23 @@ O que o launcher faz por você:
 - guarda cópias do que o jogo **chegou a gravar**, então dá para desfazer uma sobrescrita de que você se arrependa, ou um save cortado no meio porque o jogo foi morto durante a gravação;
 - quando o jogo fecha, diz quanto tempo antes de você fechar foi o seu último save (*Your last save in the game was 47 min before you closed it. Anything after it is lost.*) e, se o jogo foi morto logo depois de gravar, oferece voltar à cópia anterior.
 
+### Trazer um save de outra build ou de um emulador
+
+Os arquivos do jogo são `Map.sav`, `Mii.sav`, `Player.sav` e a pasta `Ugc` (os seus próprios desenhos, como as pinturas de rosto). Eles
+ficam na **pasta interna** do save, não na pasta de cima:
+
+```text
+local/user-nxrt/save/1/010051f0207b2000/fedcba98765432100123456789abcdef/1/          (Main)
+local/profiles/<nome>/save/1/010051f0207b2000/fedcba98765432100123456789abcdef/1/    (um save criado com + New save…)
+```
+
+1. Feche o jogo. Escolha o save no launcher e clique em **Back up now**, para poder voltar atrás.
+2. Copie `Map.sav`, `Mii.sav`, `Player.sav` e a pasta `Ugc` inteira para a pasta interna (crie-a se ainda não existir), substituindo o que
+   estiver lá. Arquivos deixados na pasta de cima não são lidos: aí o jogo começa uma ilha nova.
+
+O projeto anterior *TomodachiLife-recomp* guardava esses arquivos em `~/.local/share/tomodachi-recomp/userdata/save/` (issue #23). Um
+emulador guarda na pasta de saves dele para o jogo (título `010051F0207B2000`).
+
 ## Arquivos que ele usa
 
 | Arquivo | O quê |

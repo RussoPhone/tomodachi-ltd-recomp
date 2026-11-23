@@ -1,5 +1,14 @@
 # Changelog
 
+## Unreleased
+- Installer, step 7: when the game code comes out in files too big to compile (hundreds of MB each, seen on a Steam Deck, issue #23), the
+  install stops right after the export and says how to rebuild the export tool, instead of failing for lack of memory hours into step 9.
+  The export tool also gets 5 minutes (was 1) to start the export, as reading the game took longer on a Steam Deck.
+- Installer, step 11: when the system has no fmt library (a SteamOS container, issue #23), the copy suyu downloaded is built once into
+  `local/deps/fmt` and used, instead of stopping at "Could not find fmt".
+- Launcher guide: how to bring a save from another build or an emulator (`Map.sav`, `Mii.sav`, `Player.sav` and the `Ugc` folder go in the
+  save's inner folder), including the older TomodachiLife-recomp project.
+
 ## Alpha 1.7.8 — 2026-11-12
 - Installer: the failure report now has an `error:` line with the exact message, so a step that stops before it writes its own log (issue #17, step 11)
   is no longer blank.
