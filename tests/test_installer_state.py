@@ -117,6 +117,48 @@ class NxrtStepHelpersTests(unittest.TestCase):
             with mock.patch.object(installer, 'SUYU', root), mock.patch.object(installer, 'ROOT', root):
                 self.assertEqual(installer.boost_source(), tree)
 
+    def test_fmt_prefix_is_none_when_the_system_has_fmt(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            (Path(tmp) / 'fmt').mkdir()
+            with mock.patch.object(installer, 'CMAKE_DIRS', (tmp,)), mock.patch.object(installer, 'run') as run:
+                self.assertIsNone(installer.fmt_prefix())
+            run.assert_not_called()
+
+    def test_fmt_prefix_builds_the_copy_suyu_downloaded(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            source = root / 'suyu/.cache/cpm/fmt/12.1.0'
+            source.mkdir(parents=True)
+            (source / 'CMakeLists.txt').write_text('')
+            with mock.patch.object(installer, 'CMAKE_DIRS', ()), mock.patch.object(installer, 'ROOT', root), \
+                    mock.patch.object(installer, 'SUYU', root / 'suyu'), mock.patch.object(installer, 'run') as run, \
+                    mock.patch.object(installer, 'say'):
+                self.assertEqual(installer.fmt_prefix(), root / 'local/deps/fmt')
+            configure = [str(a) for a in run.call_args_list[0].args[0]]
+            self.assertIn(str(source), configure)
+            self.assertIn('-DBUILD_SHARED_LIBS=OFF', configure)
+            # Built once: a second install finds it.
+            (root / 'local/deps/fmt/lib/cmake/fmt').mkdir(parents=True)
+            with mock.patch.object(installer, 'CMAKE_DIRS', ()), mock.patch.object(installer, 'ROOT', root), \
+                    mock.patch.object(installer, 'run') as run:
+                self.assertEqual(installer.fmt_prefix(), root / 'local/deps/fmt')
+            run.assert_not_called()
+
+    def test_export_with_unsplit_files_stops_before_the_compile(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            export = Path(tmp)
+            (export / 'main/src').mkdir(parents=True)
+            (export / 'main/src/recompiled_main_0.c').write_bytes(b'x' * 1000)
+            with mock.patch.object(installer, 'say'), mock.patch.object(installer, 'BIGGEST_UNIT_MB', 1 / 1024), \
+                    mock.patch.object(installer, 'fail', side_effect=SystemExit) as fail:
+                installer.check_unit_sizes(export)
+                fail.assert_not_called()
+                (export / 'main/src/recompiled_main_59.c').write_bytes(b'x' * 2048)
+                with self.assertRaises(SystemExit):
+                    installer.check_unit_sizes(export)
+            self.assertIn('recompiled_main_59.c', fail.call_args.args[0])
+            self.assertIn('--redo 4', fail.call_args.args[0])
+
     def test_steamos_hint_only_outside_a_container(self):
         osr = 'PRETTY_NAME="SteamOS"\nID=steamos\n'
         with mock.patch.object(installer.Path, 'read_text', return_value=osr), \

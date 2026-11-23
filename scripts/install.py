@@ -303,6 +303,9 @@ def check():
         fail(f'About 35 GB of free disk space is needed (you have {free:.0f} GB).')
 
 
+CMAKE_DIRS = ('/usr/lib/cmake', '/usr/lib64/cmake', '/usr/lib/x86_64-linux-gnu/cmake', '/usr/local/lib/cmake')
+
+
 def check_linux():
     if sys.platform != 'linux':
         fail('This installer works on Linux and Windows.')
@@ -314,7 +317,7 @@ def check_linux():
     except ImportError:
         missing.append('python-cryptography')
     import glob
-    cmake_dirs = ['/usr/lib/cmake', '/usr/lib64/cmake', '/usr/lib/x86_64-linux-gnu/cmake', '/usr/local/lib/cmake']
+    cmake_dirs = CMAKE_DIRS
     for package, config in (('qt6-base', 'Qt6Widgets'), ('qt6-svg', 'Qt6Svg'), ('qt6-5compat', 'Qt6Core5Compat'),
                             ('qt6-charts', 'Qt6Charts'), ('quazip-qt6', 'QuaZip-Qt6*'), ('sdl3', 'SDL3')):
         if not any(glob.glob(f'{d}/{config}') for d in cmake_dirs):
@@ -439,6 +442,26 @@ def export():
         fail('This step needs your desktop session (run the installer from a terminal window, not over SSH).')
     unit = json.loads((ROOT / f'adapters/{TARGET}/target.json').read_text())['aot']['unit_insns']
     run([sys.executable, 'scripts/export-aot.py', '--backend', 'hybrid', '--unit-insns', str(unit)], 'export-aot.log')
+    check_unit_sizes(current_export())
+
+
+# With unit_insns the biggest generated file is ~20 MB. The exporter's own layout (20000 blocks per file) makes files of
+# hundreds of MB, which need ~95 MB of compiler memory per MB of C: no 16 GB computer compiles them (issue #23).
+BIGGEST_UNIT_MB = 64
+
+
+def check_unit_sizes(export):
+    sizes = sorted((p.stat().st_size, p.name) for p in Path(export).rglob('*.c'))
+    if not sizes:
+        return
+    size, name = sizes[-1]
+    say(f'   {len(sizes)} files of C, the biggest {size / 2**20:.0f} MB.')
+    if size > BIGGEST_UNIT_MB * 2**20:
+        patches_step = [key for key, _, _ in STEPS].index('patches') + 1
+        fail(f'The game code was exported in files that are too big to compile ({name} is {size / 2**20:.0f} MB; '
+             f'they should be under {BIGGEST_UNIT_MB} MB). The export tool did not split it, which usually means it was '
+             f'built without this project\'s fixes. Run "{RERUN} --redo {patches_step}" to rebuild it with them; if this message '
+             'comes back, send the report to the project.')
 
 
 @step('Trim the generated code (makes the compile faster and the program smaller)')
@@ -510,6 +533,29 @@ def boost_source():
     return tree
 
 
+def fmt_prefix():
+    """A folder with fmt for the nxrt build, or None when the system has fmt.
+
+    suyu downloads fmt for itself when the system has none (as on SteamOS containers), but that copy is not installed
+    anywhere the nxrt build can find it (issue #23, step 11). Build it once, as a static library, into local/deps/fmt."""
+    if any(Path(d, 'fmt').is_dir() for d in CMAKE_DIRS):
+        return None
+    prefix = ROOT / 'local/deps/fmt'
+    if any((prefix / lib / 'cmake/fmt').is_dir() for lib in ('lib', 'lib64')):
+        return prefix
+    sources = sorted(p.parent for p in (SUYU / '.cache/cpm/fmt').glob('*/CMakeLists.txt'))
+    if not sources:
+        fail('The fmt library was not found. Install it with your system\'s package manager (fmt or libfmt-dev) '
+             f'and run {RERUN} again.')
+    say('   The system has no fmt library; building the copy suyu downloaded (about a minute)...')
+    build = ROOT / 'local/build-fmt'
+    run(['cmake', '-S', sources[-1], '-B', build, '-G', 'Ninja', '-DCMAKE_BUILD_TYPE=Release', '-DFMT_TEST=OFF',
+         '-DFMT_DOC=OFF', '-DBUILD_SHARED_LIBS=OFF', '-DCMAKE_POSITION_INDEPENDENT_CODE=ON',
+         f'-DCMAKE_INSTALL_PREFIX={prefix}', '-DCMAKE_INSTALL_LIBDIR=lib'], 'build-fmt.log')
+    run(['cmake', '--build', build, '--target', 'install'], 'build-fmt-install.log')
+    return prefix
+
+
 @step('Build the nxrt runtime (the unofficial native port) — about 20 to 40 minutes')
 def nxrt():
     if plat.IS_WINDOWS:
@@ -520,10 +566,14 @@ def nxrt():
     boost = boost_source()
     if not (recomp / 'main').is_dir():
         fail('The compiled game code was not found. Run the installer again so the compile step finishes.')
+    env = None
+    fmt = fmt_prefix()
+    if fmt:
+        env = dict(os.environ, CMAKE_PREFIX_PATH=os.pathsep.join(filter(None, [str(fmt), os.environ.get('CMAKE_PREFIX_PATH')])))
     say('   This builds the runtime on your computer; it contains code from your game and must not be shared.')
     run(['bash', 'runtime/scripts/install.sh', '--game-export', export, '--recomp-build', recomp,
          '--boost-root', boost, '--prefix', ROOT / 'local/nxrt', '--build-dir', ROOT / 'local/build-nxrt',
-         '-j', str(max(2, min(jobs(), 8)))], 'build-nxrt.log')
+         '-j', str(max(2, min(jobs(), 8)))], 'build-nxrt.log', env=env)
     if not (ROOT / 'local/nxrt/bin/nxrt').exists():
         fail('The nxrt build finished but the executable is missing. Send the report to the project.')
 
@@ -578,7 +628,7 @@ def stage_paths(index, key):
 
 CLEANED = STATE / 'cleaned'
 # Only needed to build: the game runs from local/nxrt, local/install and local/user-nxrt.
-CLEANABLE = ('upstream/mk8-recomp/build', 'local/build-nxrt', 'local/aot', 'local/cache/boost')
+CLEANABLE = ('upstream/mk8-recomp/build', 'local/build-nxrt', 'local/build-fmt', 'local/aot', 'local/cache/boost')
 
 
 def tree_bytes(path):
