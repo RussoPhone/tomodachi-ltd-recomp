@@ -164,7 +164,7 @@ def main():
         time.sleep(3)
         reply = call('trigger_ui_action', {'action': 'aot_test_export', 'rom_path': rom,
                                            'output_dir': str(out_dir), 'format': args.format,
-                                           'backend': args.backend, 'full_scan': True}, timeout=60)
+                                           'backend': args.backend, 'full_scan': True}, timeout=300)
         record['trigger'] = reply
         deadline = time.time() + args.timeout_min * 60
         last = None
