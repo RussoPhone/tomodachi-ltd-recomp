@@ -264,7 +264,15 @@ private:
             const char* e = std::getenv("NXRT_NO_PACE");
             return e && e[0] == '1';
         }();
-        if (plan.should_sleep && !no_pace) std::this_thread::sleep_until(next_vsync_);
+        // NXRT_NO_PACE_AFTER=<n> (diagnostic): pace normally for the first n presents, then stop sleeping. Lets a
+        // frame-indexed input replay reach a scene at the normal rate and then measure the scene's real frame time.
+        static const u64 no_pace_after = [] {
+            const char* e = std::getenv("NXRT_NO_PACE_AFTER");
+            return e ? std::strtoull(e, nullptr, 10) : u64{0};
+        }();
+        static u64 paced_presents = 0;
+        const bool unpaced = no_pace || (no_pace_after && ++paced_presents > no_pace_after);
+        if (plan.should_sleep && !unpaced) std::this_thread::sleep_until(next_vsync_);
         if (CounterTrace::Enabled()) {
             const auto end = clock::now();
             const auto ms = [](auto d) { return std::chrono::duration<double, std::milli>(d).count(); };
