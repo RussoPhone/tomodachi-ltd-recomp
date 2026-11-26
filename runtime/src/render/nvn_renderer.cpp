@@ -1462,6 +1462,12 @@ private:
     // Copy/compare only the vertices a draw reads instead of the whole bound vertex buffer (games bind one big
     // buffer per model and draw sub-ranges of it). NXRT_NO_VERTEX_RANGE=1 restores the whole-buffer copy.
     const bool vertex_range_ = std::getenv("NXRT_NO_VERTEX_RANGE") == nullptr;
+    const bool ubo_range_ = std::getenv("NXRT_NO_UBO_RANGE") == nullptr;
+    static u64 UboUsedBytes(const Shader::Info& info, u32 slot) {
+        if (info.uses_global_memory || slot >= info.constant_buffer_used_sizes.size()) return 0x10000;
+        const u32 used = info.constant_buffer_used_sizes[slot];
+        return used ? std::max<u64>(used, 16) : 0x10000;
+    }
     bool recording_ = false, in_render_pass_ = false, broken_ = false;
     u64 gpu_wait_timeout_ns_ = kHardwareGpuWaitTimeoutNs;
     Shader::Profile profile_{};
@@ -6098,12 +6104,15 @@ void NvnRenderer::Draw(const Command& c, u64 list_handle, int depth) {
                     std::memcpy(scratch.data() + 0x20, bound_.textures[s].data(), 8 * 32);
                 } else if (slot < 18) {
                     const auto [va, size] = bound_.uniform_buffers[s][slot];
+                    // Only the bytes the shader can read (the recompiler aligns them to 16; dynamic offsets and
+                    // global-memory shaders keep the whole 64 KiB). NXRT_NO_UBO_RANGE=1 compares/copies the bound size.
+                    const u64 ubo_size = std::min<u64>({size, 0x10000, ubo_range_ ? UboUsedBytes(*info, slot) : 0x10000});
                     const auto cpu = va ? GpuToCpu(va) : std::nullopt;
                     if (cpu && size && ubo_direct_ && ubo_dedup_ && !win_ubo) {
                         // Direct mode: compare the guest bytes with the stored snapshot in place; only a miss
                         // is copied (the Guard call is the one ReadBlock makes, so pending GPU results still land first).
                         ubo_key = *cpu;
-                        const size_t n = std::min<u64>(size, 0x10000);
+                        const size_t n = static_cast<size_t>(ubo_size);
                         if (is_guest_range_mapped(*cpu, n)) {
                             const auto read_start = frame_profile_ ? std::chrono::steady_clock::now()
                                                                   : std::chrono::steady_clock::time_point{};
@@ -6132,7 +6141,7 @@ void NvnRenderer::Draw(const Command& c, u64 list_handle, int depth) {
                         }
                     } else if (cpu && size) {
                         ubo_key = *cpu;
-                        scratch.resize(std::min<u64>(size, 0x10000));
+                        scratch.resize(ubo_size);
                         if (is_guest_range_mapped(*cpu, scratch.size())) {
                             const auto read_start = frame_profile_ ? std::chrono::steady_clock::now()
                                                                   : std::chrono::steady_clock::time_point{};
