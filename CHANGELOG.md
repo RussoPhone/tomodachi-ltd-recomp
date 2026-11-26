@@ -1,6 +1,12 @@
 # Changelog
 
 ## Unreleased
+- **Test build `Alpha 1.7.9-test1` (branch `deck-perf-teste`, issue #24): less CPU work per draw for big islands / slow CPUs.**
+  - Each draw copied and compared the whole vertex buffer the game bound (up to 16 MB) although it reads only part of it; now only the
+    vertices the draw uses are copied (on a 4-core test, 35 → 7 MB per frame).
+  - The same for uniform (constant) buffers: only the bytes the shader reads, not the bound 64 KB (38 → 7 MB per frame).
+  - Measured on the island with the game held to 4 slow cores: ~54 → ~48 ms per frame. Not yet measured on a Steam Deck.
+  - `NXRT_NO_VERTEX_RANGE=1` / `NXRT_NO_UBO_RANGE=1` turn each change off, to compare or if something draws wrong.
 - Installer, step 7: when the game code comes out in files too big to compile (hundreds of MB each, seen on a Steam Deck, issue #23), the
   install stops right after the export and says how to rebuild the export tool, instead of failing for lack of memory hours into step 9.
   The export tool also gets 5 minutes (was 1) to start the export, as reading the game took longer on a Steam Deck.
