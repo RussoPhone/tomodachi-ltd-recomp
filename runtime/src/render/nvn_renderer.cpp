@@ -1459,6 +1459,9 @@ private:
     }();
     // Vertex data compared in place against the cached upload (copy only on a miss). NXRT_NO_VERTEX_DIRECT=1 opts out.
     const bool vertex_direct_ = std::getenv("NXRT_NO_VERTEX_DIRECT") == nullptr && ubo_direct_;
+    // Copy/compare only the vertices a draw reads instead of the whole bound vertex buffer (games bind one big
+    // buffer per model and draw sub-ranges of it). NXRT_NO_VERTEX_RANGE=1 restores the whole-buffer copy.
+    const bool vertex_range_ = std::getenv("NXRT_NO_VERTEX_RANGE") == nullptr;
     bool recording_ = false, in_render_pass_ = false, broken_ = false;
     u64 gpu_wait_timeout_ns_ = kHardwareGpuWaitTimeoutNs;
     Shader::Profile profile_{};
@@ -6648,59 +6651,15 @@ void NvnRenderer::Draw(const Command& c, u64 list_handle, int depth) {
     // Vertex and index data, copied from guest memory.
     const auto buffers_start = frame_profile_ ? std::chrono::steady_clock::now()
                                                : std::chrono::steady_clock::time_point{};
-    std::array<VkBuffer, 16> vbufs{};
-    std::array<VkDeviceSize, 16> voffs{};
-    u32 max_stream = 0;
-    for (u32 i = 0; i < bound_.attribs.size() && i < 32; ++i) {
-        const u32 w = bound_.attribs[i];
-        if (!((w >> 6) & 1)) continue;
-        const u32 stream = w & 0x1f;
-        if (stream >= 16 || vbufs[stream]) continue;
-        const auto [va, size] = bound_.vertex_buffers[stream];
-        const auto cpu = va ? GpuToCpu(va) : std::nullopt;
-        if (!cpu || !size) return skip("vertex-buffer");
-        const u64 copy_size = std::min<u64>(size, 16 << 20);
-        if (!is_guest_range_mapped(*cpu, copy_size)) return skip("vertex-unmapped");
-        std::optional<u64> cached_offset;
-        if (vertex_direct_) {
-            // Compare against the guest bytes in place; only a miss copies them.
-            g_memory.Guard(*cpu, copy_size, false);
-#if defined(NXRT_ENABLE_GUEST_MEMORY_READ_OBSERVER)
-            g_memory.ObserveRead(*cpu, copy_size);
-#endif
-            cached_offset = frame_vertex_uploads_.Find(
-                *cpu, 16, std::span<const u8>(g_memory.RawPtr(*cpu), static_cast<size_t>(copy_size)), stream_offset_);
-            if (frame_profile_ && cached_offset) frame_vertex_bytes_ += copy_size;
-        }
-        if (!cached_offset) {
-            scratch.resize(copy_size);
-            const auto vertex_read_start = frame_profile_ ? std::chrono::steady_clock::now()
-                                                          : std::chrono::steady_clock::time_point{};
-            g_memory.ReadBlock(*cpu, scratch.data(), scratch.size());
-            if (frame_profile_) {
-                frame_vertex_read_ns_ += std::chrono::duration_cast<std::chrono::nanoseconds>(
-                                             std::chrono::steady_clock::now() - vertex_read_start)
-                                             .count();
-                frame_vertex_bytes_ += scratch.size();
-            }
-            if (!vertex_direct_) cached_offset = frame_vertex_uploads_.Find(*cpu, 16, scratch, stream_offset_);
-            if (!cached_offset) {
-                voffs[stream] = Upload(scratch.data(), scratch.size(), 16);
-                if (voffs[stream] == ~u64{0}) return skip("stream-full");
-                frame_vertex_uploads_.Store(*cpu, 16, scratch, voffs[stream]);
-            }
-        }
-        if (cached_offset) voffs[stream] = *cached_offset;
-        if (frame_profile_) {
-            ++frame_vertex_range_uses_;
-            if (cached_offset) {
-                frame_vertex_reused_bytes_ += copy_size;
-            } else {
-                ++frame_vertex_range_unique_;
-            }
-        }
-        vbufs[stream] = stream_.buffer;
-        max_stream = std::max(max_stream, stream + 1);
+    // Vertex range the draw reads: [vertex_lo, vertex_hi] in vertex-index space (indexed draws: base vertex plus the
+    // smallest/largest index). Only those bytes of each per-vertex stream are compared/copied. When no stage reads
+    // the vertex/instance id, the copy starts at vertex_lo and the draw is rebased so it starts at vertex 0 of it.
+    u32 vertex_lo = 0, vertex_hi = 0;
+    bool vertex_known = false;
+    if (vertex_range_ && c.op != Op::DrawElements && c.a[2] > 0 && c.a[1] + c.a[2] <= (u64{1} << 31)) {
+        vertex_lo = static_cast<u32>(c.a[1]);
+        vertex_hi = static_cast<u32>(c.a[1] + c.a[2] - 1);
+        vertex_known = true;
     }
     u64 index_offset = 0;
     VkIndexType index_type = VK_INDEX_TYPE_UINT16;
@@ -6722,6 +6681,26 @@ void NvnRenderer::Draw(const Command& c, u64 list_handle, int depth) {
                                         .count();
             frame_index_bytes_ += scratch.size();
         }
+        if (vertex_range_ && !scratch.empty()) {
+            // Vertex indices this draw reads (no primitive restart is enabled, so every index is a vertex).
+            u32 lo = ~0u, hi = 0;
+            const size_t n = scratch.size() / index_size;
+            if (index_size == 1) {
+                for (size_t i = 0; i < n; ++i) { lo = std::min<u32>(lo, scratch[i]); hi = std::max<u32>(hi, scratch[i]); }
+            } else if (index_size == 2) {
+                const u16* x = reinterpret_cast<const u16*>(scratch.data());
+                for (size_t i = 0; i < n; ++i) { lo = std::min<u32>(lo, x[i]); hi = std::max<u32>(hi, x[i]); }
+            } else {
+                const u32* x = reinterpret_cast<const u32*>(scratch.data());
+                for (size_t i = 0; i < n; ++i) { lo = std::min<u32>(lo, x[i]); hi = std::max<u32>(hi, x[i]); }
+            }
+            const s64 base = static_cast<s32>(c.a[4]);
+            if (base + lo >= 0 && base + hi < (s64{1} << 31)) {
+                vertex_lo = static_cast<u32>(base + lo);
+                vertex_hi = static_cast<u32>(base + hi);
+                vertex_known = true;
+            }
+        }
         if (index_size == 1) { // widen 8-bit indices
             ScratchBytes wide;
             wide.assign(scratch.size() * 2, 0);
@@ -6730,6 +6709,91 @@ void NvnRenderer::Draw(const Command& c, u64 list_handle, int depth) {
         }
         index_offset = Upload(scratch.data(), scratch.size(), 4);
         if (index_offset == ~u64{0}) return skip("stream-full");
+    }
+    std::array<u64, 16> stream_attr_end{};
+    for (u32 i = 0; i < bound_.attribs.size() && i < 32; ++i) {
+        const u32 w = bound_.attribs[i];
+        if (!((w >> 6) & 1)) continue;
+        const u32 stream = w & 0x1f;
+        if (stream < 16) stream_attr_end[stream] = std::max<u64>(stream_attr_end[stream], ((w >> 7) & 0x3fff) + 16);
+    }
+    bool vertex_rebase = vertex_known && vertex_lo > 0;
+    if (vertex_rebase) {
+        for (const Shader::Info* info : p->infos) {
+            if (info && (info->loads_indexed_attributes || info->loads[Shader::IR::Attribute::VertexId] ||
+                         info->loads[Shader::IR::Attribute::InstanceId] ||
+                         info->loads[Shader::IR::Attribute::BaseVertex] ||
+                         info->loads[Shader::IR::Attribute::BaseInstance])) {
+                vertex_rebase = false;
+                break;
+            }
+        }
+    }
+    std::array<VkBuffer, 16> vbufs{};
+    std::array<VkDeviceSize, 16> voffs{};
+    u32 max_stream = 0;
+    for (u32 i = 0; i < bound_.attribs.size() && i < 32; ++i) {
+        const u32 w = bound_.attribs[i];
+        if (!((w >> 6) & 1)) continue;
+        const u32 stream = w & 0x1f;
+        if (stream >= 16 || vbufs[stream]) continue;
+        const auto [va, size] = bound_.vertex_buffers[stream];
+        const auto cpu = va ? GpuToCpu(va) : std::nullopt;
+        if (!cpu || !size) return skip("vertex-buffer");
+        u64 copy_begin = 0;
+        u64 copy_size = std::min<u64>(size, 16 << 20);
+        const u32 stride = 2 * stream < bound_.streams.size() ? bound_.streams[2 * stream] : 0;
+        const u32 divisor = 2 * stream + 1 < bound_.streams.size() ? bound_.streams[2 * stream + 1] : 0;
+        if (vertex_known && stride && !divisor) {
+            const u64 begin = vertex_rebase ? u64{vertex_lo} * stride : 0;
+            const u64 end = u64{vertex_hi} * stride + std::max<u64>(stride, stream_attr_end[stream]);
+            if (begin < copy_size) {
+                copy_begin = begin;
+                copy_size = std::min<u64>(copy_size, end) - begin;
+            }
+        }
+        const GuestAddr vcpu = *cpu + copy_begin;
+        if (!is_guest_range_mapped(vcpu, copy_size)) return skip("vertex-unmapped");
+        std::optional<u64> cached_offset;
+        if (vertex_direct_) {
+            // Compare against the guest bytes in place; only a miss copies them.
+            g_memory.Guard(vcpu, copy_size, false);
+#if defined(NXRT_ENABLE_GUEST_MEMORY_READ_OBSERVER)
+            g_memory.ObserveRead(vcpu, copy_size);
+#endif
+            cached_offset = frame_vertex_uploads_.Find(
+                vcpu, 16, std::span<const u8>(g_memory.RawPtr(vcpu), static_cast<size_t>(copy_size)), stream_offset_);
+            if (frame_profile_ && cached_offset) frame_vertex_bytes_ += copy_size;
+        }
+        if (!cached_offset) {
+            scratch.resize(copy_size);
+            const auto vertex_read_start = frame_profile_ ? std::chrono::steady_clock::now()
+                                                          : std::chrono::steady_clock::time_point{};
+            g_memory.ReadBlock(vcpu, scratch.data(), scratch.size());
+            if (frame_profile_) {
+                frame_vertex_read_ns_ += std::chrono::duration_cast<std::chrono::nanoseconds>(
+                                             std::chrono::steady_clock::now() - vertex_read_start)
+                                             .count();
+                frame_vertex_bytes_ += scratch.size();
+            }
+            if (!vertex_direct_) cached_offset = frame_vertex_uploads_.Find(vcpu, 16, scratch, stream_offset_);
+            if (!cached_offset) {
+                voffs[stream] = Upload(scratch.data(), scratch.size(), 16);
+                if (voffs[stream] == ~u64{0}) return skip("stream-full");
+                frame_vertex_uploads_.Store(vcpu, 16, scratch, voffs[stream]);
+            }
+        }
+        if (cached_offset) voffs[stream] = *cached_offset;
+        if (frame_profile_) {
+            ++frame_vertex_range_uses_;
+            if (cached_offset) {
+                frame_vertex_reused_bytes_ += copy_size;
+            } else {
+                ++frame_vertex_range_unique_;
+            }
+        }
+        vbufs[stream] = stream_.buffer;
+        max_stream = std::max(max_stream, stream + 1);
     }
 
     if (frame_profile_) {
@@ -6883,11 +6947,11 @@ void NvnRenderer::Draw(const Command& c, u64 list_handle, int depth) {
     if (indexed) {
         vkCmdBindIndexBuffer(cmd, stream_.buffer, index_offset, index_type);
         const u32 instances = c.words.empty() ? 1 : std::max<u32>(1, c.words[0]);
-        vkCmdDrawIndexed(cmd, static_cast<u32>(c.a[2]), instances, 0, static_cast<s32>(c.a[4]),
-                         static_cast<u32>(c.a[5]));
+        const s32 vertex_offset = static_cast<s32>(c.a[4]) - (vertex_rebase ? static_cast<s32>(vertex_lo) : 0);
+        vkCmdDrawIndexed(cmd, static_cast<u32>(c.a[2]), instances, 0, vertex_offset, static_cast<u32>(c.a[5]));
     } else {
-        vkCmdDraw(cmd, static_cast<u32>(c.a[2]), std::max<u32>(1, static_cast<u32>(c.a[4])), static_cast<u32>(c.a[1]),
-                  static_cast<u32>(c.a[3]));
+        vkCmdDraw(cmd, static_cast<u32>(c.a[2]), std::max<u32>(1, static_cast<u32>(c.a[4])),
+                  static_cast<u32>(c.a[1]) - (vertex_rebase ? vertex_lo : 0u), static_cast<u32>(c.a[3]));
     }
     if (census_query != ~0u) vkCmdEndQuery(cmd, census_queries_, census_query);
     emit_win_draw_result(true, {});
